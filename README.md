@@ -9,7 +9,16 @@
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Rust 1.98" src="https://img.shields.io/badge/rust-1.98-orange.svg">
   <img alt="macOS and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg">
+  <img alt="Status: very early" src="https://img.shields.io/badge/status-very%20early-red.svg">
 </p>
+
+> [!WARNING]
+> **Very early. Use with caution.** studio is a young project that runs AI
+> agents with real tools on your repositories. Expect bugs, breaking changes
+> between versions and rough edges. Try it on a repo you have backed up, keep
+> its budget limits low, set a spending limit in your Claude account too, and
+> read what it lands before you merge. The web UI in particular is rough and
+> is being reworked.
 
 <p align="center"><img src="docs/board.png" alt="The studio's board: work that needs you, running tickets and what is ready" width="900"></p>
 
@@ -55,7 +64,7 @@ what you like.
 
 ## The web UI
 
-A local web UI shows the board, a live run log for every ticket, the asks
+A local web UI (rough for now, and being reworked) shows the board, a live run log for every ticket, the asks
 inbox, goals, budget, hires and rules, and an office where you can watch your
 hires at their desks.
 
@@ -118,8 +127,9 @@ Answer asks from the web UI or `studio asks`, and merge a finished goal with
 
 ## Status
 
-0.1.0, early. Expect breaking changes. Claude Code is the only agent runtime
-for now. The studio is largely built by itself: this repo is one of its
+0.1.0, very early: use with caution (see the warning at the top). Expect
+bugs and breaking changes, and a web UI that is still rough and being
+reworked. Claude Code is the only agent runtime for now. The studio is largely built by itself: this repo is one of its
 projects.
 
 ## License
