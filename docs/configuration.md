@@ -127,7 +127,7 @@ This file sits in a project's root. Every field is optional.
 | `capture` | `[]` | Command that plays the game and writes screenshots into `{out}`. |
 | `capture_paths` | `[]` | Changed-file globs that call for a capture. Empty means any change. |
 | `gates` | `[]` | Critic gates, below. |
-| `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict leaves it ready. Never merges into the integration branch; that stays `studio merge`. |
+| `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |
 
 Each `[[gates]]` entry:
 

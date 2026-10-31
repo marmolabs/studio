@@ -94,6 +94,7 @@ fn sent_back(event: &TicketEvent, after: &TicketState) -> bool {
         TicketEvent::ChecksFailed { .. }
             | TicketEvent::ReviewFailed { .. }
             | TicketEvent::ChangesRequested { .. }
+            | TicketEvent::Conflicted { .. }
     ) || matches!(after, TicketState::Failed { .. })
 }
 

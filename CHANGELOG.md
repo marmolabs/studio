@@ -20,8 +20,13 @@ budget limits low.
 - Ready work lands on its goal branch, by itself with `auto_land`, and
   `studio merge` brings a finished goal into your branch. The studio commits
   as you and never pushes.
-- A ticket that was running when the daemon stopped is held, not lost, and
-  tickets held for budget start again by themselves.
+- A ticket that was running when the daemon stopped is held, not lost.
+  Tickets held for budget start again by themselves, and so do tickets held
+  for Claude's usage limit, once the limit resets.
+- When newer work on the goal branch conflicts with a ticket, landing merges
+  it into the ticket's worktree and sends the ticket back to its agent to
+  resolve. When merging a goal into your branch conflicts, the studio files a
+  ticket that resolves it.
 
 ### Rules and asks
 

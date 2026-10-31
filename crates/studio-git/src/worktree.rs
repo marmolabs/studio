@@ -110,6 +110,47 @@ impl Worktree {
         Ok(RebaseOutcome::Clean { new_base })
     }
 
+    /// Starts merging `rev` into the ticket's branch and leaves it for the
+    /// agent to finish: conflicted files keep their markers, and the next
+    /// commit concludes the merge. Returns the conflicted files.
+    pub fn merge_in(&self, rev: &str) -> Result<Vec<String>> {
+        let args = ["merge", "--no-ff", "--no-commit", rev];
+        let out = output(&self.path, &args)?;
+        let files = conflicted_files(&self.path)?;
+        if !out.status.success() && files.is_empty() {
+            return Err(failed(&args, &out));
+        }
+        Ok(files)
+    }
+
+    /// Files a merge left conflicted that are not staged yet, whatever the
+    /// agent has done to them since.
+    pub fn conflicted_files(&self) -> Result<Vec<String>> {
+        conflicted_files(&self.path)
+    }
+
+    /// The subject git gave the merge in progress, if there is one.
+    pub fn merge_subject(&self) -> Result<Option<String>> {
+        let head = output(&self.path, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])?;
+        if !head.status.success() {
+            return Ok(None);
+        }
+        let path = run(&self.path, &["rev-parse", "--git-path", "MERGE_MSG"])?;
+        let text = std::fs::read_to_string(self.path.join(path.trim())).unwrap_or_default();
+        let subject = text.lines().next().unwrap_or_default().trim();
+        Ok(Some(
+            if subject.is_empty() { "Merge" } else { subject }.to_string(),
+        ))
+    }
+
+    /// Measures the ticket's changes from `rev` from now on.
+    pub fn set_base(&mut self, rev: &str) -> Result<()> {
+        let new_base = resolve_in(&self.path, rev)?;
+        run(&self.path, &["config", &base_key(&self.branch), &new_base])?;
+        self.base_commit = new_base;
+        Ok(())
+    }
+
     fn untracked(&self) -> Result<Vec<String>> {
         let listing = run(&self.path, &["ls-files", "--others", "--exclude-standard"])?;
         Ok(listing.lines().map(str::to_string).collect())

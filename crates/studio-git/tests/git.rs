@@ -205,6 +205,55 @@ fn rebase_conflict_leaves_the_worktree_alone() {
 }
 
 #[test]
+fn a_merge_in_leaves_conflicts_for_the_agent_and_the_next_commit_ends_it() {
+    let (_dir, repo) = init();
+    let mut wt = repo.create_worktree(&ticket("t1"), "master").unwrap();
+    fs::write(wt.path.join("README.md"), "ticket\n").unwrap();
+    wt.commit("Ticket edit").unwrap();
+    let new_master = commit_on_master(repo.root(), "README.md", "master\n");
+
+    assert_eq!(wt.merge_subject().unwrap(), None);
+    assert_eq!(wt.merge_in("master").unwrap(), vec!["README.md"]);
+    assert_eq!(wt.conflicted_files().unwrap(), vec!["README.md"]);
+    assert_eq!(
+        wt.merge_subject().unwrap().as_deref(),
+        Some("Merge branch 'master' into studio/t1")
+    );
+    let text = fs::read_to_string(wt.path.join("README.md")).unwrap();
+    assert!(text.contains("<<<<<<< ") && text.contains(">>>>>>> master"));
+
+    wt.set_base("master").unwrap();
+    assert_eq!(wt.base_commit, new_master);
+    assert_eq!(repo.studio_worktrees().unwrap()[0].base_commit, new_master);
+    // Measured from the new base, the ticket's change is all that's left.
+    fs::write(wt.path.join("README.md"), "master\nticket\n").unwrap();
+    assert_eq!(
+        wt.changed_files().unwrap(),
+        vec![PathBuf::from("README.md")]
+    );
+
+    wt.commit("Ticket edit").unwrap().unwrap();
+    assert!(wt.conflicted_files().unwrap().is_empty());
+    assert_eq!(wt.merge_subject().unwrap(), None);
+    let parents = git(&wt.path, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert_eq!(parents.split(' ').count(), 3, "a merge commit: {parents}");
+    assert!(repo.is_merged(&new_master, "studio/t1"));
+}
+
+#[test]
+fn a_clean_merge_in_has_no_conflicts() {
+    let (_dir, repo) = init();
+    let wt = repo.create_worktree(&ticket("t1"), "master").unwrap();
+    fs::write(wt.path.join("ticket.txt"), "work\n").unwrap();
+    wt.commit("Ticket work").unwrap();
+    commit_on_master(repo.root(), "other.txt", "other\n");
+
+    assert!(wt.merge_in("master").unwrap().is_empty());
+    assert!(wt.path.join("other.txt").exists());
+    wt.commit("Ticket work").unwrap().unwrap();
+}
+
+#[test]
 fn tickets_land_on_one_goal_branch() {
     let (_dir, repo) = init();
     let goal = repo.ensure_goal_branch("Daily mode", "master").unwrap();

@@ -46,7 +46,7 @@ States:
 | `landed` | Merged into the goal branch. |
 | `cancelled` | Stopped by you. |
 | `asking` | The agent is waiting on an ask. |
-| `held` | Paused: `budget`, `quota`, `auth`, `conflict` or `paused`. |
+| `held` | Paused. `budget` and `quota` holds resume by themselves, a quota hold when the provider's limit resets; `auth` and `paused` wait for you. |
 | `failed` | Ended with a class: `crash`, `timeout`, `checks`, `review`, `tooling` or `denied`. |
 
 A ticket gets up to three attempts. When checks or review fail, the failure
@@ -70,8 +70,15 @@ the ones before. A ticket with no goal is its own goal. Different goals run
 side by side.
 
 With `auto_land = true` in a project's `.studio.toml`, a ticket that passes
-review and gates lands on its goal branch by itself. A conflict leaves it
-`ready` for you. Merging a goal into your branch is always `studio merge`.
+review and gates lands on its goal branch by itself. Merging a goal into your
+branch is always `studio merge`.
+
+If the goal branch has moved on and conflicts with a ticket, landing merges
+that work into the ticket's worktree instead and sends the ticket back to its
+agent, which resolves the conflicts before its checks and review run again.
+Nothing is committed while conflict markers remain. If merging a goal into
+your branch conflicts, the studio files a ticket on the goal that merges your
+branch into it and resolves the conflicts; merge again once it lands.
 
 ## Asks
 

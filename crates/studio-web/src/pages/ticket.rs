@@ -750,6 +750,10 @@ async fn head(ticket: Ticket, filer: Filer) -> topcoat::Result<impl View> {
         Filer::Studio(source) if source.starts_with("ci:") => {
             (None, "The studio filed this after a CI run failed")
         }
+        Filer::Studio(source) if source.starts_with("merge:") => (
+            None,
+            "The studio filed this when merging the goal conflicted",
+        ),
         Filer::Studio(_) => (None, "The studio filed this"),
         Filer::Owner if ticket.kind == TicketKind::Plan => (None, "You set this goal"),
         Filer::Owner => (None, "You filed this"),

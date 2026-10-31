@@ -188,8 +188,21 @@ struct LiveConfig {
     checked: std::time::Instant,
 }
 
-/// How often budget-held tickets are checked for a resume.
+/// How often held tickets are checked for a resume.
 const RESUME_EVERY: Duration = Duration::from_secs(60);
+
+/// How long a ticket held for the provider's quota waits to try again when
+/// the provider didn't say when its limit resets.
+const QUOTA_RETRY_MS: u64 = 15 * 60 * 1000;
+
+/// When a ticket held for quota at `held_at` tries again: a minute after the
+/// limit resets, if the provider said when, else `QUOTA_RETRY_MS` later.
+pub(crate) fn quota_retry_at(held_at: u64, resets_at: Option<u64>) -> u64 {
+    match resets_at {
+        Some(reset) if reset > held_at => reset + 60_000,
+        _ => held_at + QUOTA_RETRY_MS,
+    }
+}
 
 /// How often the config file's time stamp is looked at.
 const CONFIG_CHECK: Duration = Duration::from_secs(1);
@@ -424,6 +437,7 @@ impl Studio {
                 *last = Some(std::time::Instant::now());
                 drop(last);
                 self.resume_budget_held()?;
+                self.resume_quota_held(now_ms())?;
             }
         }
         while lock(&self.active).len() < capacity {
@@ -442,9 +456,12 @@ impl Studio {
     }
 
     /// The oldest queued ticket whose goal has no other ticket in progress.
-    /// A ticket with no goal is its own goal.
+    /// A ticket with no goal is its own goal. A ticket its own worker sent
+    /// back (a landing that conflicted) waits until that worker has ended.
     fn next_queued(&self) -> Result<Option<TicketId>, StudioError> {
         let tickets = lock(&self.store).tickets()?;
+        let working: std::collections::HashSet<String> =
+            lock(&self.active).keys().cloned().collect();
         let busy: std::collections::HashSet<(ProjectId, String)> = tickets
             .iter()
             .filter(|t| {
@@ -464,7 +481,9 @@ impl Studio {
         Ok(tickets
             .into_iter()
             .find(|t| {
-                t.state == TicketState::Queued && !busy.contains(&(t.project.clone(), goal_of(t)))
+                t.state == TicketState::Queued
+                    && !busy.contains(&(t.project.clone(), goal_of(t)))
+                    && !working.contains(&t.id.to_string())
             })
             .map(|t| t.id))
     }
@@ -500,6 +519,39 @@ impl Studio {
             self.append(&ticket.id, Event::Resumed)?;
             crate::runlog::RunLog::new(&self.paths.data_dir, &ticket.id.to_string())
                 .note("resumed: budget is available again");
+            resumed += 1;
+        }
+        if resumed > 0 {
+            self.wake.notify_one();
+        }
+        Ok(resumed)
+    }
+
+    /// Resumes each ticket held for the provider's quota whose wait is over
+    /// at `now`; see `quota_retry_at`. Returns how many resumed.
+    pub fn resume_quota_held(&self, now: u64) -> Result<usize, StudioError> {
+        let (held, since) = {
+            let store = lock(&self.store);
+            (store.tickets_in("held")?, store.state_since()?)
+        };
+        let mut resumed = 0;
+        for ticket in held {
+            if ticket.state
+                != (TicketState::Held {
+                    reason: HeldReason::Quota,
+                })
+            {
+                continue;
+            }
+            let Some(&held_at) = since.get(&ticket.id.to_string()) else {
+                continue;
+            };
+            let log = crate::runlog::RunLog::new(&self.paths.data_dir, &ticket.id.to_string());
+            if now < quota_retry_at(held_at, log.quota_resets_at()) {
+                continue;
+            }
+            self.append(&ticket.id, Event::Resumed)?;
+            log.note("resumed: trying the provider again");
             resumed += 1;
         }
         if resumed > 0 {
@@ -1189,7 +1241,22 @@ impl Studio {
                 let _ = pending.reply.send(decision);
                 Ok(Response::ok(json!({ "ask": ask })))
             }
-            Request::Land { ticket } => self.land(&TicketId::new(&ticket)),
+            Request::Land { ticket } => {
+                let id = TicketId::new(&ticket);
+                match self.land(&id)? {
+                    Landing::Landed {
+                        ticket,
+                        branch,
+                        sha,
+                    } => Ok(Response::ok(
+                        json!({ "ticket": ticket, "branch": branch, "sha": sha }),
+                    )),
+                    Landing::SentBack { branch, files } => Err(other(format!(
+                        "{id} conflicts with {branch} in: {}; it went back to its agent to resolve them",
+                        files.join(", ")
+                    ))),
+                }
+            }
             Request::Merge { ticket } => self.merge(&TicketId::new(&ticket)),
             Request::MergedTickets => Ok(Response::ok(self.merged_tickets()?)),
             Request::Cancel { ticket } => {
@@ -1758,7 +1825,10 @@ impl Studio {
     }
 
     /// Merges a ready ticket into its goal branch and removes its worktree.
-    pub(crate) fn land(&self, id: &TicketId) -> Result<Response, StudioError> {
+    /// If the goal branch has moved on and conflicts with it, the branch is
+    /// merged into the ticket's worktree instead, and the ticket goes back to
+    /// its agent to resolve the conflicts.
+    pub(crate) fn land(&self, id: &TicketId) -> Result<Landing, StudioError> {
         let ticket = self.ticket(id)?;
         if ticket.state != TicketState::Ready {
             return Err(other(format!("{id} is {}, not ready", ticket.state.kind())));
@@ -1769,16 +1839,28 @@ impl Studio {
         let branch = repo.ensure_goal_branch(&goal_of(&ticket), &ticket.base_branch)?;
         match repo.land(&worktree, &branch)? {
             LandOutcome::Merged { sha } => {
-                let updated = self.append(id, Event::Landed)?;
+                let ticket = self.append(id, Event::Landed)?;
                 let _ = repo.remove_worktree(&worktree, false);
-                Ok(Response::ok(
-                    json!({ "ticket": updated, "branch": branch, "sha": sha }),
-                ))
+                Ok(Landing::Landed {
+                    ticket: Box::new(ticket),
+                    branch,
+                    sha,
+                })
             }
-            LandOutcome::Conflict { files } => Err(other(format!(
-                "{id} conflicts with {branch} in: {}",
-                files.join(", ")
-            ))),
+            LandOutcome::Conflict { files } => {
+                let mut worktree = worktree;
+                worktree.merge_in(&branch)?;
+                // Review then reads only what the ticket adds to the branch.
+                worktree.set_base(&branch)?;
+                self.append(
+                    id,
+                    Event::Conflicted {
+                        branch: branch.clone(),
+                        files: files.clone(),
+                    },
+                )?;
+                Ok(Landing::SentBack { branch, files })
+            }
         }
     }
 
@@ -1826,6 +1908,53 @@ impl Studio {
         Ok(merged)
     }
 
+    /// A ticket on the goal of `landed` that merges `into` into the goal's
+    /// branch and resolves the conflicts, so the goal then merges cleanly.
+    /// One that is already open is reused.
+    fn merge_ticket(
+        &self,
+        landed: &Ticket,
+        into: &str,
+        files: &[String],
+    ) -> Result<Ticket, StudioError> {
+        let goal = goal_of(landed);
+        let source = format!("{MERGE_SOURCE}{into}");
+        let open = lock(&self.store).tickets()?.into_iter().find(|t| {
+            t.project == landed.project
+                && goal_of(t) == goal
+                && t.source.as_deref() == Some(source.as_str())
+                && !matches!(
+                    t.state,
+                    TicketState::Landed | TicketState::Cancelled | TicketState::Failed { .. }
+                )
+        });
+        if let Some(open) = open {
+            return Ok(open);
+        }
+        // Whoever did the goal's work knows it best.
+        let hire = match self.hire(&landed.hire) {
+            Ok(hire) if landed.kind == TicketKind::Work => hire,
+            _ => self
+                .first_with_role("engineer")
+                .ok_or_else(|| other("no hire has the engineer role"))?,
+        };
+        self.create_ticket(NewTicket {
+            project: landed.project.0.clone(),
+            title: format!("Merge {into} into the goal and resolve the conflicts"),
+            goal,
+            hire: hire.id.0,
+            base: Some(landed.base_branch.clone()),
+            kind: TicketKind::Work,
+            parent: None,
+            detail: format!(
+                "Merging the goal into {into} conflicts in: {}. The studio merges {into} \
+                 into this ticket's worktree; once this lands, the goal merges cleanly.",
+                files.join(", ")
+            ),
+            source: Some(source),
+        })
+    }
+
     /// Merges the goal branch a landed ticket is on into the branch its work
     /// started from. Tickets of the goal still open come along later.
     fn merge(&self, id: &TicketId) -> Result<Response, StudioError> {
@@ -1852,10 +1981,15 @@ impl Studio {
             MergeOutcome::Merged { sha } => Ok(Response::ok(
                 json!({ "branch": branch, "into": into, "sha": sha, "open": open }),
             )),
-            MergeOutcome::Conflict { files } => Err(other(format!(
-                "{branch} conflicts with {into} in: {}; merge it yourself",
-                files.join(", ")
-            ))),
+            MergeOutcome::Conflict { files } => {
+                let fix = self.merge_ticket(&ticket, &into, &files)?;
+                Err(other(format!(
+                    "{branch} conflicts with {into} in: {}; {} merges {into} into the goal \
+                     and resolves them, then merge again",
+                    files.join(", "),
+                    fix.id
+                )))
+            }
             MergeOutcome::Dirty { path } => Err(other(format!(
                 "{into} is checked out at {} with uncommitted changes; commit or stash them first",
                 path.display()
@@ -1863,6 +1997,22 @@ impl Studio {
         }
     }
 }
+
+/// What landing a ready ticket did.
+pub(crate) enum Landing {
+    Landed {
+        ticket: Box<Ticket>,
+        branch: String,
+        sha: String,
+    },
+    /// The goal branch conflicts with the ticket in `files`; the ticket went
+    /// back to its agent with the branch merged into its worktree.
+    SentBack { branch: String, files: Vec<String> },
+}
+
+/// Where a ticket filed to merge a branch into its goal comes from, followed
+/// by the branch: `merge:master`.
+pub(crate) const MERGE_SOURCE: &str = "merge:";
 
 /// The goal a ticket lands under: its goal, or its own id when it has none.
 pub(crate) fn goal_of(ticket: &Ticket) -> String {
@@ -1922,4 +2072,17 @@ fn project_rules(project: &ProjectEntry) -> Vec<studio_core::rule::Rule> {
         });
     }
     rules
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_waits_for_the_reset_or_a_while() {
+        assert_eq!(quota_retry_at(1_000, Some(5_000)), 65_000);
+        // No reset time, or one already past: a while after the hold.
+        assert_eq!(quota_retry_at(1_000, None), 1_000 + QUOTA_RETRY_MS);
+        assert_eq!(quota_retry_at(10_000, Some(5_000)), 10_000 + QUOTA_RETRY_MS);
+    }
 }

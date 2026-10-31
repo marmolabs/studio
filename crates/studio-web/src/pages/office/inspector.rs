@@ -490,8 +490,8 @@ fn try_started(events: &[client::Stamped]) -> Option<u64> {
 }
 
 /// Why the work before this try was sent back, and by what: the latest
-/// failed checks, failed review or the owner's request for changes between
-/// the previous claim and the current one.
+/// failed checks, failed review, conflict or the owner's request for changes
+/// between the previous claim and the current one.
 fn sent_back(events: &[client::Stamped]) -> Option<(&'static str, String)> {
     let claimed = |e: &client::Stamped| matches!(e.event, TicketEvent::Claimed);
     let current = events.iter().rposition(claimed)?;
@@ -503,6 +503,10 @@ fn sent_back(events: &[client::Stamped]) -> Option<(&'static str, String)> {
             TicketEvent::ChecksFailed { detail } => Some(("the checks", detail.clone())),
             TicketEvent::ReviewFailed { detail } => Some(("review", detail.clone())),
             TicketEvent::ChangesRequested { detail } => Some(("you", detail.clone())),
+            TicketEvent::Conflicted { branch, files } => Some((
+                "a conflict",
+                format!("newer work on {branch} conflicts in {}", files.join(", ")),
+            )),
             _ => None,
         })
 }
@@ -558,10 +562,11 @@ async fn work_panel(ticket: Ticket, office: Office, detail: Detail) -> topcoat::
         .as_ref()
         .map(|(by, _)| format!(", after {by} sent it back"))
         .unwrap_or_default();
-    // Failed checks or review use up a try; the owner's request doesn't.
+    // Failed checks or review use up a try; the owner's request and a
+    // conflict don't.
     let back_line = back.map(|(by, why)| {
         let on = match by {
-            "you" => String::new(),
+            "you" | "a conflict" => String::new(),
             _ => format!(" on try {}", ticket.attempts),
         };
         format!("Sent back by {by}{on}: “{}”", plain(&why))
@@ -1546,6 +1551,7 @@ fn event_words(event: &TicketEvent, asks: &[AskView]) -> (&'static str, String) 
         TicketEvent::Failed { .. } => words("failed", "failed"),
         TicketEvent::Retried => words("queued", "was queued again"),
         TicketEvent::ChangesRequested { .. } => words("failed", "was sent back by you"),
+        TicketEvent::Conflicted { .. } => words("queued", "went back to resolve a conflict"),
     }
 }
 

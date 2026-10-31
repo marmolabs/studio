@@ -136,8 +136,9 @@ studio merge <ticket>
 ```
 
 That merges in your own checkout when the branch is checked out there, and
-only if the checkout has no uncommitted changes. A conflict is backed out and
-left to you. Nothing is pushed. Once a goal branch is in the branch it started
+only if the checkout has no uncommitted changes. A conflict is backed out, and
+the studio files a ticket on the goal that merges your branch into it and
+resolves the conflicts; merge again once that ticket lands. Nothing is pushed. Once a goal branch is in the branch it started
 from, the web UI shows "merged" in place of the merge button. Clients can ask
 the daemon with the `MergedTickets` request, which lists the landed tickets
 whose goal is merged.

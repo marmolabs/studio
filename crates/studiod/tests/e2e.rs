@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use studio_config::StudioPaths;
-use studio_runtime::{Cost, FakeRuntime, Outcome, RunEvent, Runtime};
+use studio_runtime::{Cost, FailureKind, FakeRuntime, Outcome, RunEvent, Runtime};
 use studiod::api::{FileKind, Request, Response};
 use studiod::{CiWatcher, Studio};
 use tempfile::TempDir;
@@ -2885,4 +2885,207 @@ async fn recent_events_and_check_notes_say_what_happened_when() {
     assert_eq!(kinds, ["ask_opened", "checks_started"]);
     // The run log names each check as it starts.
     assert!(run_log(&setup).contains("check: sh -c test -f README.md"));
+}
+
+/// Waits until some ask is open.
+async fn an_ask(studio: &Arc<Studio>) {
+    until(async || {
+        !ok(studio, Request::Asks)
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+}
+
+fn commit_on(repo: &Path, file: &str, text: &str, message: &str) {
+    fs::write(repo.join(file), text).unwrap();
+    git(repo, &["add", file]);
+    git(repo, &["commit", "-q", "-m", message]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_landing_that_conflicts_goes_back_to_its_agent_to_resolve() {
+    let setup = setup("");
+    let runtime = FakeRuntime::new(script());
+    let studio = studio(&setup, runtime.clone());
+    ok(&studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    an_ask(&studio).await;
+    let worktree = setup.repo.join(".studio/worktrees/game-1");
+    fs::write(worktree.join("README.md"), "game\nticket\n").unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    // Meanwhile the owner changed the same line on master, where the goal
+    // branch starts.
+    commit_on(&setup.repo, "README.md", "game\nowner\n", "Owner edit");
+
+    let landing = studio
+        .handle(Request::Land {
+            ticket: "GAME-1".into(),
+        })
+        .await;
+    assert!(!landing.ok);
+    let error = landing.error.unwrap();
+    assert!(
+        error.contains("conflicts with studio/goal/first-level in: README.md"),
+        "{error}"
+    );
+    let events = events_of(&studio, "GAME-1").await;
+    assert!(events.iter().any(|e| e["type"] == "conflicted"));
+
+    // It runs again with the goal branch merged in and its agent told why.
+    an_ask(&studio).await;
+    let text = fs::read_to_string(worktree.join("README.md")).unwrap();
+    assert!(text.contains("<<<<<<< ") && text.contains("owner") && text.contains("ticket"));
+    let prompt = runtime.specs().last().unwrap().prompt.clone();
+    assert!(
+        prompt.contains("conflicts with it in: README.md"),
+        "{prompt}"
+    );
+    // Markers left in send it back without a commit.
+    approve_all(&studio).await;
+    until(async || run_log(&setup).contains("conflict markers are still in: README.md")).await;
+    an_ask(&studio).await;
+    fs::write(worktree.join("README.md"), "game\nowner\nticket\n").unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+
+    ok(
+        &studio,
+        Request::Land {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    let goal = "studio/goal/first-level";
+    assert_eq!(
+        git(&setup.repo, &["show", &format!("{goal}:README.md")]),
+        "game\nowner\nticket"
+    );
+    let subjects = git(&setup.repo, &["log", "--format=%s", goal]);
+    assert!(
+        subjects.contains("Merge branch 'studio/goal/first-level' into studio/game-1"),
+        "{subjects}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_that_conflicts_with_its_base_gets_a_ticket_to_merge_it() {
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(script()));
+    ok(&studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    an_ask(&studio).await;
+    fs::write(
+        setup.repo.join(".studio/worktrees/game-1/README.md"),
+        "game\nticket\n",
+    )
+    .unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    ok(
+        &studio,
+        Request::Land {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    commit_on(&setup.repo, "README.md", "game\nowner\n", "Owner edit");
+
+    let merge = || {
+        studio.handle(Request::Merge {
+            ticket: "GAME-1".into(),
+        })
+    };
+    let first = merge().await;
+    assert!(!first.ok);
+    let error = first.error.unwrap();
+    assert!(
+        error.contains("conflicts with master in: README.md; GAME-2 merges master"),
+        "{error}"
+    );
+    // Asking again points at the same ticket instead of filing another.
+    assert!(merge().await.error.unwrap().contains("GAME-2"));
+    let tickets = ok(&studio, Request::Tickets).await;
+    let tickets = tickets.as_array().unwrap();
+    assert_eq!(tickets.len(), 2);
+    let fix = tickets.iter().find(|t| t["id"] == "GAME-2").unwrap();
+    assert_eq!(fix["goal"], "First level");
+    assert_eq!(fix["source"], "merge:master");
+
+    an_ask(&studio).await;
+    let worktree = setup.repo.join(".studio/worktrees/game-2");
+    let text = fs::read_to_string(worktree.join("README.md")).unwrap();
+    assert!(text.contains("<<<<<<< "), "{text}");
+    let log = fs::read_to_string(setup.paths.data_dir.join("runs/GAME-2.jsonl")).unwrap();
+    assert!(log.contains("merged master; conflicts in: README.md"));
+    fs::write(worktree.join("README.md"), "game\nowner\nticket\n").unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-2").await == "ready").await;
+    ok(
+        &studio,
+        Request::Land {
+            ticket: "GAME-2".into(),
+        },
+    )
+    .await;
+
+    ok(
+        &studio,
+        Request::Merge {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    assert_eq!(
+        git(&setup.repo, &["show", "master:README.md"]),
+        "game\nowner\nticket"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_held_for_quota_tries_again_once_the_limit_resets() {
+    let setup = setup("");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let resets = now + 3600;
+    let refused = vec![
+        RunEvent::Started {
+            session: "s1".into(),
+            model: Some("fake-1".into()),
+        },
+        RunEvent::RateLimit {
+            status: "rejected".into(),
+            resets_at: Some(resets),
+        },
+        RunEvent::Finished {
+            outcome: Outcome::Failed {
+                kind: FailureKind::Quota,
+                message: "Claude usage limit reached".into(),
+            },
+            session: Some("s1".into()),
+            cost: Cost::default(),
+            summary: None,
+        },
+    ];
+    let studio = studio(&setup, FakeRuntime::sequence(vec![refused, script()]));
+    ok(&studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    until(async || state_of(&studio, "GAME-1").await["held"]["reason"] == "quota").await;
+    let log = run_log(&setup);
+    assert!(
+        log.contains("Claude usage limit reached; trying again in 1 h"),
+        "{log}"
+    );
+
+    // Not before the limit resets, but a minute after.
+    assert_eq!(studio.resume_quota_held(resets * 1000).unwrap(), 0);
+    assert_eq!(studio.resume_quota_held(resets * 1000 + 60_000).unwrap(), 1);
+    an_ask(&studio).await;
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
 }
