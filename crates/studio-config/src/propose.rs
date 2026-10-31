@@ -221,7 +221,7 @@ cargo clippy --locked \
 
     #[test]
     fn proposes_protect_rules_from_owner_lines() {
-        let text = "Only the owner may edit `crates/engine/src/rules.rs` or `delivery.toml`.";
+        let text = "Only the owner may edit `crates/engine/src/rules.rs` or `release.toml`.";
         let rules = propose_from_text(text);
         assert_eq!(rules.len(), 2);
         assert!(
@@ -243,7 +243,7 @@ cargo clippy --locked \
 
     #[test]
     fn ignores_backticked_non_paths() {
-        let text = "Out of bounds without the owner: save formats, bundle `com.example.Game` (never renamed), and the tuning in `rules.rs`.";
+        let text = "Out of bounds without the owner: data formats, the app id `com.example.Shop` (never renamed), and the tuning in `rules.rs`.";
         let rules = propose_from_text(text);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].kind, RuleKind::Protect);

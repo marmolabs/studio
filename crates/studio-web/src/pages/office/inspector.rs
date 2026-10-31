@@ -1275,8 +1275,8 @@ async fn hire_panel(
 }
 
 /// One of the approver's calls, worded as the design has them: "Allowed
-/// `cargo test` in GAME-12", "Denied `curl` in GAME-15: not needed", "Sent
-/// you GAME-14: `cargo run`". The approver's reason shows on hover.
+/// `cargo test` in SHOP-12", "Denied `curl` in SHOP-15: not needed", "Sent
+/// you SHOP-14: `cargo run`". The approver's reason shows on hover.
 #[component]
 async fn call_row(call: ApproverCall, now: u64) -> topcoat::Result<impl View> {
     let what = if call.what.is_empty() {

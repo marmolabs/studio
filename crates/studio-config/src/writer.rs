@@ -84,13 +84,13 @@ mod tests {
             kind: RuleKind::Lint,
             level: Level::Block,
             when: Scope {
-                paths: vec!["delivery.toml".to_string()],
+                paths: vec!["product.toml".to_string()],
                 ..Default::default()
             },
-            pattern: Some(r"store\.[^.]+\.name".to_string()),
+            pattern: Some(r"^name =".to_string()),
             command: None,
             action: None,
-            why: "Never change the App Store name.".to_string(),
+            why: "Never change the product name.".to_string(),
         };
         let rule_dir = tmp.path().join("rules");
         write_rule(&rule_dir, &rule).unwrap();

@@ -494,7 +494,7 @@ mod tests {
     use super::*;
 
     const CTX: Context = Context {
-        project: "lantern",
+        project: "shop",
         hire: "rook",
         role: "engineer",
     };
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(verdict.decision, Decision::Ask);
         assert!(verdict.findings[0].why.contains("rules.rs is protected"));
         assert_eq!(
-            evaluate(&rules, &CTX, &write("delivery.toml")).decision,
+            evaluate(&rules, &CTX, &write("release.toml")).decision,
             Decision::Ask
         );
         assert_eq!(
@@ -699,7 +699,7 @@ mod tests {
         };
         let decide = |a: &Action| evaluate(&rules, &CTX, a).decision;
         assert_eq!(
-            decide(&read("/home/me/.cargo/registry/src/bevy/lib.rs")),
+            decide(&read("/home/me/.cargo/registry/src/serde/lib.rs")),
             Decision::Allow
         );
         assert_eq!(decide(&read("/home/me/.ssh/id_rsa")), Decision::Ask);
@@ -757,7 +757,7 @@ mod tests {
             evaluate(&[r.clone()], &CTX, &bash("git push")).decision,
             Decision::Ask
         );
-        r.when.projects = vec!["lantern".into()];
+        r.when.projects = vec!["shop".into()];
         r.when.roles = vec!["artist".into()];
         assert_eq!(
             evaluate(&[r.clone()], &CTX, &bash("git push")).decision,

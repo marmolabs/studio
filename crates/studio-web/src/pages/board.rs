@@ -215,7 +215,7 @@ async fn board_page(cx: &Cx) -> topcoat::Result<impl View> {
         if no_projects {
             <div class="rounded-[10px] border border-dashed border-line-2 px-4 py-6 text-center">
                 <p class="font-medium">"No projects yet"</p>
-                <p class="mt-1 text-fg-3">"Add a game project to start filing tickets:"</p>
+                <p class="mt-1 text-fg-3">"Add a project to start filing tickets:"</p>
                 <p class="mt-2"><code class=(ui::CODE)>"studio project add <path>"</code></p>
             </div>
         } else {

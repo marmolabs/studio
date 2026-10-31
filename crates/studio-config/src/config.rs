@@ -285,18 +285,18 @@ daily_usd = 10.0
 max_runs = 1
 
 [[projects]]
-name = "lantern"
-path = "../games/lantern"
+name = "shop"
+path = "../code/shop"
 integration_branch = "master"
 
 [[packs]]
-name = "bevy-ios"
-path = "packs/bevy-ios"
+name = "acme"
+path = "packs/acme"
 "#,
         );
         let config = StudioConfig::load(&paths).unwrap();
-        assert_eq!(config.projects[0].path, tmp.path().join("../games/lantern"));
-        assert_eq!(config.packs[0].path, tmp.path().join("packs/bevy-ios"));
+        assert_eq!(config.projects[0].path, tmp.path().join("../code/shop"));
+        assert_eq!(config.packs[0].path, tmp.path().join("packs/acme"));
     }
 
     #[test]

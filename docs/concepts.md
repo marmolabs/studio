@@ -143,7 +143,7 @@ For each changed `png`, `jpg` or `gif` that matches the gate's globs (up to
 `before-*` and `after-*` files in the attempt's evidence folder. A new file has
 only the `after-` image. A deleted image is skipped, and so is a file reached
 through a symlink, with a note in the run log. On the ticket, these files
-appear in the "Art · shipped vs new" section, not among the screenshots.
+appear in the "Images · shipped vs new" section, not among the screenshots.
 
 ## Evidence
 

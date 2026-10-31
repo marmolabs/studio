@@ -12,7 +12,7 @@ pub struct ProjectConfig {
     pub protected: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub integration_branch: Option<String>,
-    /// Command that plays the game and writes screenshots into `{out}`.
+    /// Command that runs the project and writes screenshots into `{out}`.
     #[serde(default)]
     pub capture: Vec<String>,
     /// Changed files (globs) that call for a capture; empty means any change.
@@ -115,7 +115,7 @@ mod tests {
         file.write_all(
             br#"
 verify = [["cargo", "test"], ["cargo", "clippy"]]
-protected = ["delivery.toml"]
+protected = ["release.toml"]
 integration_branch = "master"
 "#,
         )
@@ -126,7 +126,7 @@ integration_branch = "master"
             config.verify,
             vec![vec!["cargo", "test"], vec!["cargo", "clippy"]]
         );
-        assert_eq!(config.protected, vec!["delivery.toml"]);
+        assert_eq!(config.protected, vec!["release.toml"]);
         assert_eq!(config.integration_branch, Some("master".to_string()));
         assert!(!config.auto_land);
     }

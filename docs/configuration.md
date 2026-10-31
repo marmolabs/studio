@@ -57,7 +57,7 @@ always available without an entry.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `disable` | `[]` | Ids of pack rules to turn off, like `pack/bevy-ios/no-push`. Studio and project rules can't be disabled this way; delete the file. |
+| `disable` | `[]` | Ids of pack rules to turn off, like `pack/my-pack/no-push`. Studio and project rules can't be disabled this way; delete the file. |
 
 ### `[prices."<model id>"]`
 
@@ -101,18 +101,18 @@ ticket_usd = 2.0
 max_runs = 2
 
 [[projects]]
-name = "my-game"
-path = "/Users/me/games/my-game"
+name = "my-app"
+path = "/Users/me/code/my-app"
 integration_branch = "master"
 daily_usd = 5.0
 watch_ci = true
 
 [[packs]]
-name = "bevy-ios"
-path = "packs/bevy-ios"
+name = "my-pack"
+path = "packs/my-pack"
 
 [rules]
-disable = ["pack/bevy-ios/no-push"]
+disable = ["pack/my-pack/no-push"]
 ```
 
 ## .studio.toml
@@ -124,7 +124,7 @@ This file sits in a project's root. Every field is optional.
 | `verify` | `[]` | Commands that must pass after each attempt, each an array: `["cargo", "test"]`. Agents may also run them (program and subcommand, like `cargo test`) without asking. |
 | `protected` | `[]` | Path globs agents may not change without asking you. Same as an ask-level `protect` rule for this project. |
 | `integration_branch` | none | Branch for this repo. |
-| `capture` | `[]` | Command that plays the game and writes screenshots into `{out}`. |
+| `capture` | `[]` | Command that runs the project and writes screenshots into `{out}`. |
 | `capture_paths` | `[]` | Changed-file globs that call for a capture. Empty means any change. |
 | `gates` | `[]` | Critic gates, below. |
 | `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |
@@ -154,10 +154,10 @@ capture = ["cargo", "run", "--release", "--", "--capture", "{out}"]
 capture_paths = ["src/**"]
 
 [[gates]]
-name = "art"
-paths = ["assets/**/*.png"]
-hire = "art-critic"
-prompt = "Judge the new art against the screenshots."
+name = "design"
+paths = ["static/img/**/*.png", "templates/**"]
+hire = "design-critic"
+prompt = "Judge the new screens against the screenshots."
 ```
 
 ## Hires
@@ -180,14 +180,14 @@ One file per hire in `hires/` (or a pack's `hires/`). The file name, without
 
 ```markdown
 ---
-name: Marketing
-role: marketing
+name: Writer
+role: writer
 runtime: claude-code
 model: sonnet
 escalate: [opus]
 daily_usd: 1.0
 ---
-You write App Store copy that reads like a person wrote it.
+You write product copy and release notes that read like a person wrote them.
 ```
 
 A pack's hires are read-only. A studio hire with the same id wins.
@@ -252,7 +252,7 @@ Agents may read dependency sources.
 ### Command prefixes
 
 A `bash:` gate that blocks or asks matches its prefix anywhere in the command,
-so `bash:git push` also catches `cd game && git push`.
+so `bash:git push` also catches `cd app && git push`.
 
 A `bash:` gate that allows is stricter. The command is split on `&&`, `||`,
 `;`, `|` and `&`, and every part must start with an allowed prefix. A part

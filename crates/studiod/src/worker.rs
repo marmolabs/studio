@@ -1333,10 +1333,10 @@ fn brief(ticket: &Ticket) -> String {
 
 fn screenshots(images: &[String]) -> String {
     if images.is_empty() {
-        return "The game produced no screenshots for this change.\n\n".to_string();
+        return "The capture produced no screenshots for this change.\n\n".to_string();
     }
     format!(
-        "Screenshots from running the game with this change (read them to see them):\n{}\n\n",
+        "Screenshots from running the project with this change (read them to see them):\n{}\n\n",
         images
             .iter()
             .map(|i| format!("- {i}"))
@@ -1466,8 +1466,8 @@ async fn run_gates(
     Ok(GateEnd::Pass)
 }
 
-/// Runs the project's capture command when the change calls for it. A game
-/// that crashes or hangs fails the checks.
+/// Runs the project's capture command when the change calls for it. A
+/// capture that crashes or hangs fails the checks.
 async fn capture(
     repo: &Repo,
     worktree: &Worktree,
@@ -1496,7 +1496,7 @@ async fn capture(
     std::fs::create_dir_all(&out).map_err(|e| format!("can't create {}: {e}", out.display()))?;
     checks::capture(&worktree.path, &config.capture, &out)
         .await
-        .map_err(|detail| format!("The game crashed or hung while capturing:\n{detail}"))?;
+        .map_err(|detail| format!("The capture crashed or hung:\n{detail}"))?;
     let made: Vec<String> = evidence::list(&worktree.path)
         .into_iter()
         .filter(|f| f.attempt == attempt)

@@ -47,8 +47,8 @@ mod tests {
     fn relative_paths_resolve_against_config_dir() {
         let paths = StudioPaths::resolve(Some(PathBuf::from("/custom/home")));
         assert_eq!(
-            paths.resolve_path("packs/bevy-ios"),
-            PathBuf::from("/custom/home/packs/bevy-ios")
+            paths.resolve_path("packs/acme"),
+            PathBuf::from("/custom/home/packs/acme")
         );
     }
 

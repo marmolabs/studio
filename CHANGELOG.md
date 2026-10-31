@@ -58,8 +58,8 @@ budget limits low.
 - `studio up` and `down`, `init`, `project add`, `ticket`, `goal`, `asks`,
   `approve`, `deny`, `land`, `merge`, `budget`, `doctor`, `export`, `gc` and
   more. `--json` prints the raw reply.
-- Packs bundle hires, rules, skills and a project template; `packs/bevy-ios` is
-  the first. `examples/starter-2d` is a small Bevy game to try the studio on.
+- Packs bundle hires, rules, skills and a project template to reuse across
+  projects.
 - A project with `watch_ci` gets a fix ticket when CI fails on its integration
   branch. Desktop notifications when a ticket asks, is ready, is held or fails.
 - Claude Code is the only runtime. It runs with your own `claude` login; the

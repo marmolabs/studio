@@ -1,7 +1,9 @@
 # Packs
 
 A pack is a folder of things you want to reuse across projects: hires, rules,
-skills and a template for `.studio.toml`. The studio ships one, `packs/bevy-ios`.
+skills and a template for `.studio.toml`. A team keeps its own packs, for
+example one for its web services and another for its mobile apps; the studio
+ships none.
 
 ## Layout
 
@@ -20,8 +22,8 @@ Only `pack.toml` is required.
 ## pack.toml
 
 ```toml
-name = "bevy-ios"
-description = "Hires, rules and skills for a Bevy game that ships on iOS."
+name = "my-pack"
+description = "Hires, rules and skills for our web services."
 version = "0.1.0"
 ```
 
@@ -32,7 +34,7 @@ version = "0.1.0"
 
 ```sh
 studio pack add path/to/my-pack      # adds it to studio.toml
-studio project add ~/games/g --pack my-pack
+studio project add ~/code/my-app --pack my-pack
 ```
 
 `pack add` appends a `[[packs]]` entry to `studio.toml`. `--pack` copies the
@@ -63,17 +65,3 @@ has none yet. Restart `studiod` to pick up a new pack.
 5. Add a `project.toml` with sensible `verify` commands and any gates.
 6. Add it to a test studio with `studio pack add`, then run `studio doctor`.
    It loads every hire and rule and reports problems.
-
-## bevy-ios
-
-The `bevy-ios` pack is for a Bevy game that ships on iOS.
-
-- Hires: `engineer`, `producer`, `reviewer`, `artist`, `art-critic` and `store`.
-- Rules: block `git push`; ask before changing signing files and entitlements
-  or the Xcode project; tell agents to run the repo's own checks.
-- Skills: `bevy-capture` (add or use a `--capture` mode) and
-  `ios-release-checklist`.
-- Template: `cargo fmt`, `clippy` and `test` as `verify`, a capture command, and
-  gates that send art to the art critic and store copy to the reviewer.
-
-`examples/starter-2d` is a small game that follows its conventions.

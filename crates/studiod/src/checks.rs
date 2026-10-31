@@ -17,7 +17,7 @@ pub(crate) async fn run(dir: &Path, command: &[String]) -> Result<(), String> {
     exec(dir, command, TIMEOUT).await
 }
 
-/// Runs the game's capture command, with `{out}` in its arguments replaced by
+/// Runs the project's capture command, with `{out}` in its arguments replaced by
 /// the folder to write into.
 pub(crate) async fn capture(dir: &Path, command: &[String], out: &Path) -> Result<(), String> {
     let out = out.to_string_lossy();

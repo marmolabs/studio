@@ -532,7 +532,7 @@ pub async fn dot(state: &'static str) -> topcoat::Result<impl View> {
     })
 }
 
-/// Up to two letters for a hire: "EN" for `engineer`, "LD" for `level-designer`.
+/// Up to two letters for a hire: "EN" for `engineer`, "DC" for `design-critic`.
 pub fn initials(hire: &str) -> String {
     let words: Vec<&str> = hire
         .split(|c: char| !c.is_alphanumeric())
@@ -1142,7 +1142,7 @@ mod tests {
     #[test]
     fn hires_get_initials_and_a_steady_hue() {
         assert_eq!(initials("engineer"), "EN");
-        assert_eq!(initials("level-designer"), "LD");
+        assert_eq!(initials("design-critic"), "DC");
         assert_eq!(initials("x"), "X");
         assert_eq!(initials(""), "?");
         assert_eq!(hue("engineer"), hue("engineer"));
