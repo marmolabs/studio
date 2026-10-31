@@ -3,7 +3,8 @@
 ## Requirements
 
 - macOS or Linux. Windows is not supported: the daemon talks to its clients
-  over a Unix socket.
+  over a Unix socket. The Linux release builds need glibc 2.34 or newer
+  (Ubuntu 22.04, Debian 12, RHEL 9 or later).
 - `git`.
 - The [Claude Code](https://claude.com/claude-code) CLI (`claude`), installed
   and logged in. The studio uses your login and never reads your credentials.
@@ -22,11 +23,10 @@ curl -fsSL https://raw.githubusercontent.com/marmolabs/studio/master/install.sh 
 Set `STUDIO_INSTALL_DIR` to install somewhere else, or `STUDIO_VERSION` to pick
 a release.
 
-Or build from source. This needs Rust 1.98; the repo pins it, so `rustup`
-fetches it.
+Or build from source. This needs Rust 1.98 or newer (`rustup update`).
 
 ```sh
-cargo install --git https://github.com/marmolabs/studio studio studiod studio-web
+cargo install --locked --git https://github.com/marmolabs/studio studio studiod studio-web
 ```
 
 Check the setup at any time with `studio doctor`.

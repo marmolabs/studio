@@ -106,9 +106,8 @@ esac
 
 say ""
 say "Next steps:"
-say "  studio init                        write a starter studio.toml and hires"
+say "  studio init                        write studio.toml, starter hires and rules"
 say "  studio project add <path-to-repo>  register a git repository"
-say "  studiod                            start the daemon and leave it running"
-say "  studio-web                         in another terminal; open the link it prints"
+say "  studio up                          start the studio and open the web UI"
 say ""
 say "You also need the claude CLI installed and logged in."

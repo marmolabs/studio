@@ -103,3 +103,17 @@ loading it, as `crates/studio-config/tests/bevy_ios.rs` does for `bevy-ios`.
 
 Agents write code for this project too. Their code is reviewed like anyone's:
 it needs the same checks, the same tests, and a human who has read the diff.
+
+## Releases
+
+1. Set the version in `[workspace.package]` in `Cargo.toml` and give it a
+   section in `CHANGELOG.md` (`## 0.2.0`). The release notes come from that
+   section.
+2. Once that is on `master`, push the tag (`v0.2.0`).
+3. The release workflow checks that the tag matches the version, builds the
+   macOS and Linux archives, and creates a draft release with them and
+   `SHA256SUMS`. Read it, then publish it: `install.sh` installs the latest
+   published release.
+
+A pull request that changes the release workflow, `install.sh`, `Cargo.lock`,
+the toolchain or a build script runs the same builds, without publishing.
