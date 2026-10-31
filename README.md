@@ -90,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/marmolabs/studio/master/install.sh 
 With Cargo:
 
 ```sh
-cargo install --git https://github.com/marmolabs/studio studio studiod studio-web
+cargo install --locked --git https://github.com/marmolabs/studio studio studiod studio-web
 ```
 
 ## Quickstart
@@ -116,11 +116,13 @@ Answer asks from the web UI or `studio asks`, and merge a finished goal with
 ## Requirements
 
 - macOS or Linux. Windows is not supported: the daemon uses a Unix socket.
+  The Linux release builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12,
+  RHEL 9 or later).
 - The [Claude Code](https://claude.com/claude-code) CLI (`claude`), installed
   and logged in. The studio runs it with your login and never reads your
   credentials.
 - `git`. Optional: `gh`, to turn failing CI on your integration branch into tickets.
-- Rust 1.98 to build from source (pinned in `rust-toolchain.toml`).
+- Rust 1.98 or newer to build from source.
 
 ## Docs
 
@@ -135,8 +137,8 @@ Answer asks from the web UI or `studio asks`, and merge a finished goal with
 
 0.1.0, very early: use with caution (see the warning at the top). Expect
 bugs and breaking changes, and a web UI that is still rough and being
-reworked. Claude Code is the only agent runtime for now. The studio is largely built by itself: this repo is one of its
-projects.
+reworked. Claude Code is the only agent runtime for now. The studio is largely
+built by itself: this repo is one of its projects.
 
 ## License
 
