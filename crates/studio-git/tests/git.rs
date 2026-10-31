@@ -323,6 +323,29 @@ fn a_goal_merges_into_the_checked_out_target() {
 }
 
 #[test]
+fn a_goal_is_merged_only_once_its_target_holds_it() {
+    let (_dir, repo) = init();
+    let goal = landed_goal(&repo, "level.txt");
+    assert!(!repo.is_merged(&goal, "master"));
+    assert!(!repo.is_merged("studio/goal/missing", "master"));
+    assert!(!repo.is_merged(&goal, "no-such-branch"));
+    repo.merge_goal(&goal, "master").unwrap();
+    assert!(repo.is_merged(&goal, "master"));
+}
+
+#[test]
+fn branch_tips_name_local_branches_and_head() {
+    let (_dir, repo) = init();
+    let goal = landed_goal(&repo, "level.txt");
+    git(repo.root(), &["tag", "v1"]);
+    let tips = repo.branch_tips().unwrap();
+    assert_eq!(tips[&goal], git(repo.root(), &["rev-parse", &goal]));
+    assert_eq!(tips["master"], git(repo.root(), &["rev-parse", "master"]));
+    assert_eq!(tips["HEAD"], tips["master"]);
+    assert!(!tips.contains_key("v1"));
+}
+
+#[test]
 fn a_dirty_checkout_is_left_alone() {
     let (_dir, repo) = init();
     let goal = landed_goal(&repo, "level.txt");

@@ -317,6 +317,81 @@ fn events_since_order_and_limit() {
 }
 
 #[test]
+fn updated_at_is_each_tickets_latest_event() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (a, _, a_event) = created("t-a", "p-1", 1);
+    store.append(&a, 1, &a_event).unwrap();
+    let (b, _, b_event) = created("t-b", "p-1", 2);
+    store.append(&b, 2, &b_event).unwrap();
+    store.append(&a, 7, &Event::Claimed).unwrap();
+
+    let times = store.updated_at().unwrap();
+    assert_eq!((times["t-a"], times["t-b"]), (7, 2));
+    store.rebuild_projections().unwrap();
+    assert_eq!(store.updated_at().unwrap(), times);
+}
+
+#[test]
+fn state_since_is_the_last_claim_or_hold() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (run, _, event) = created("t-run", "p-1", 1);
+    store.append(&run, 1, &event).unwrap();
+    store.append(&run, 2, &Event::Claimed).unwrap();
+    let paused = Event::Held {
+        reason: HeldReason::Paused,
+    };
+    store.append(&run, 3, &paused).unwrap();
+    store.append(&run, 4, &Event::Resumed).unwrap();
+    let (held, _, event) = created("t-held", "p-1", 6);
+    store.append(&held, 6, &event).unwrap();
+    store.append(&held, 7, &Event::Claimed).unwrap();
+    store.append(&held, 8, &paused).unwrap();
+    let (queued, _, event) = created("t-queued", "p-1", 9);
+    store.append(&queued, 9, &event).unwrap();
+
+    let since = store.state_since().unwrap();
+    assert_eq!(since.len(), 2, "{since:?}");
+    assert_eq!((since["t-run"], since["t-held"]), (2, 8));
+}
+
+#[test]
+fn activity_is_whole_histories_of_recent_or_running_tickets() {
+    let mut store = Store::open_in_memory().unwrap();
+    // Busy long ago, nothing since.
+    let (old, _, event) = created("t-old", "p-1", 1);
+    store.append(&old, 1, &event).unwrap();
+    // Claimed long ago and still running.
+    let (running, _, event) = created("t-run", "p-1", 2);
+    store.append(&running, 2, &event).unwrap();
+    store.append(&running, 3, &Event::Claimed).unwrap();
+    // Filed long ago, claimed recently.
+    let (recent, _, event) = created("t-new", "p-1", 4);
+    store.append(&recent, 4, &event).unwrap();
+    store.append(&recent, 100, &Event::Claimed).unwrap();
+    store
+        .append(
+            &recent,
+            101,
+            &Event::Held {
+                reason: HeldReason::Paused,
+            },
+        )
+        .unwrap();
+
+    let events = store.activity_since(100).unwrap();
+    let tickets: Vec<String> = events.iter().map(|e| e.ticket_id.to_string()).collect();
+    assert_eq!(tickets, ["t-run", "t-run", "t-new", "t-new", "t-new"]);
+    assert!(events.windows(2).all(|w| w[0].seq < w[1].seq));
+    assert!(
+        store
+            .activity_since(200)
+            .unwrap()
+            .iter()
+            .all(|e| e.ticket_id == running)
+    );
+}
+
+#[test]
 fn in_flight_states() {
     let mut store = Store::open_in_memory().unwrap();
 
@@ -445,7 +520,15 @@ fn migrates_from_schema_version_1() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "3");
+    assert_eq!(version, "4");
+    let index: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name = 'idx_events_at'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(index, 1);
 }
 
 #[test]

@@ -4,6 +4,7 @@ use crate::quick::{self, Reply};
 use crate::studio::{Studio, StudioError, other};
 use std::path::Path;
 use std::sync::Arc;
+use studio_config::ProjectConfig;
 use studio_core::rule::Hire;
 
 /// Roles that never take tickets, so the router is never offered them.
@@ -17,11 +18,12 @@ pub(crate) struct Routed {
     pub reply: Option<Reply>,
 }
 
-/// Hires that may be offered for a ticket, by id.
-pub(crate) fn candidates(hires: &[Hire]) -> Vec<&Hire> {
+/// Hires that may be offered for a ticket, by id. A gate's critic judges work,
+/// so it never takes a ticket either.
+pub(crate) fn candidates<'a>(hires: &'a [Hire], critics: &[String]) -> Vec<&'a Hire> {
     let mut found: Vec<&Hire> = hires
         .iter()
-        .filter(|h| !NOT_CANDIDATES.contains(&h.role.as_str()))
+        .filter(|h| !NOT_CANDIDATES.contains(&h.role.as_str()) && !critics.contains(&h.id.0))
         .collect();
     found.sort_by(|a, b| a.id.0.cmp(&b.id.0));
     found
@@ -107,7 +109,12 @@ pub(crate) async fn pick(
         });
     };
     let hires = studio.all_hires();
-    let found = candidates(&hires);
+    let critics: Vec<String> = ProjectConfig::load(path)
+        .ok()
+        .flatten()
+        .map(|config| config.gates.into_iter().map(|g| g.hire).collect())
+        .unwrap_or_default();
+    let found = candidates(&hires, &critics);
     let asked = quick::ask(
         studio,
         None,
@@ -173,14 +180,23 @@ mod tests {
             hire("critic", "reviewer"),
             hire("art", "artist"),
         ];
-        let ids: Vec<&str> = candidates(&hires).iter().map(|h| h.id.0.as_str()).collect();
+        let ids: Vec<&str> = candidates(&hires, &[])
+            .iter()
+            .map(|h| h.id.0.as_str())
+            .collect();
         assert_eq!(ids, ["art", "dev"]);
+        let critics = ["art".to_string()];
+        let ids: Vec<&str> = candidates(&hires, &critics)
+            .iter()
+            .map(|h| h.id.0.as_str())
+            .collect();
+        assert_eq!(ids, ["dev"]);
     }
 
     #[test]
     fn the_prompt_lists_hires_and_the_ticket() {
         let hires = vec![hire("dev", "engineer")];
-        let text = prompt(&candidates(&hires), "Add a menu", "Escape opens it.");
+        let text = prompt(&candidates(&hires, &[]), "Add a menu", "Escape opens it.");
         assert!(text.contains("- dev: DEV, role engineer, model m. You write code."));
         assert!(text.contains("Add a menu"));
         assert!(text.contains("Escape opens it."));
@@ -189,7 +205,7 @@ mod tests {
     #[test]
     fn the_last_hire_line_must_name_a_candidate() {
         let hires = vec![hire("dev", "engineer"), hire("art", "artist")];
-        let found = candidates(&hires);
+        let found = candidates(&hires, &[]);
         assert_eq!(
             parse("It is code work.\nHIRE: dev", &found),
             Some(("dev".into(), "It is code work.".into()))

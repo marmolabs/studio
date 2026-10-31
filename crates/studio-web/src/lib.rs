@@ -12,15 +12,17 @@ use topcoat::{
 
 mod auth;
 mod client;
+mod diffstat;
 mod layout;
 mod live;
-mod office;
+mod markdown;
 mod pages;
 mod statics;
 mod summary;
 mod ui;
+mod words;
 
-pub use auth::generate_token;
+pub use auth::load_token;
 
 /// What every request needs: where studiod is, and the token that guards
 /// the page.

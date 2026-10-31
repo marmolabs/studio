@@ -137,7 +137,10 @@ studio merge <ticket>
 
 That merges in your own checkout when the branch is checked out there, and
 only if the checkout has no uncommitted changes. A conflict is backed out and
-left to you. Nothing is pushed.
+left to you. Nothing is pushed. Once a goal branch is in the branch it started
+from, the web UI shows "merged" in place of the merge button. Clients can ask
+the daemon with the `MergedTickets` request, which lists the landed tickets
+whose goal is merged.
 
 ## Your first goal
 
@@ -158,12 +161,25 @@ of tickets one planner may file is `goals.max_filed` (default 8).
 
 `studio up` opens it for you. To run it alone, `studio-web` prints a link like
 `http://127.0.0.1:4870/?token=...`. The token becomes a cookie, and the page
-redirects without it. Each start makes a new token.
+redirects without it. The link stays the same across restarts;
+`studio up --new-token` makes a new one and the old link stops working.
 
-The UI has the board, the office, goals, asks, budget, hires and rules. Each
-ticket has its facts as chips (with a live estimate and elapsed time while it
-runs), a live run log that folds repeated tool calls into rows you can open, a
-timeline and its evidence. See
+`studio up --host <your LAN address>` lets a phone or another computer on
+your network open the UI. Anyone on the network with the link can act as you,
+and the link travels as plain HTTP, so use it only on a network you trust.
+
+The link opens the Office: the whole studio on one floor, with tickets at
+their desks, in checks, in review and ready to land, goals on the planning
+whiteboard, idle hires in the lounge, and the approver and router at the front
+desk. Pick anything to see it beside the floor and act on it there: allow or
+deny an ask, land, resume, cancel, or give a hire work. "Last hour" under the
+floor shows what each ticket did, minute by minute. The board, goals, asks,
+budget, hires and rules pages have the lists and the detail. Each ticket page shows the ticket's detail, any ask waiting on it, and one live
+activity feed: the studio's events, the agent's messages as Markdown, and its
+tool calls folded into groups you can open. A rail beside it has the status,
+hire and model, branch, try, spend against the ticket's cap, time, progress
+through checks, review and gates, and the changed files. Ready and finished
+tickets say how they ended and offer only the actions that still apply. See
 [security](security.md) for how access works.
 
 ## Next

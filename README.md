@@ -20,7 +20,7 @@
 > read what it lands before you merge. The web UI in particular is rough and
 > is being reworked.
 
-<p align="center"><img src="docs/board.png" alt="The studio's board: work that needs you, running tickets and what is ready" width="900"></p>
+<p align="center"><img src="docs/office.png" alt="The Office: tickets at their desks, in checks, in review and ready to land, with what needs you beside the floor" width="900"></p>
 
 studio is a local orchestrator for AI coding agents on game repos. You give it
 a goal. A producer agent splits the goal into tickets; engineers work on them
@@ -64,13 +64,19 @@ what you like.
 
 ## The web UI
 
-A local web UI (rough for now, and being reworked) shows the board, a live run log for every ticket, the asks
-inbox, goals, budget, hires and rules, and an office where you can watch your
-hires at their desks.
+A local web UI opens on the Office: the whole studio as one floor plan, with
+tickets at their desks, in checks, in review and ready to land, goals on the
+planning whiteboard, idle hires in the lounge, and the approver and router at
+the front desk. Pick anything to see it beside the floor and do what it needs
+there: answer an ask, land a ticket, merge a goal, resume or cancel work, or
+give a hire a ticket. A "Last hour" drawer shows what every ticket did, minute
+by minute. The board, goals, asks, budget, hires and rules pages hold the lists
+and the detail, and each ticket has a live activity feed. On a phone the
+sidebar becomes a top bar.
 
 <p align="center">
-  <img src="docs/ticket.png" alt="A ticket with its timeline, changes and grouped run log" width="49%">
-  <img src="docs/office.png" alt="The office view with hires at their desks" width="49%">
+  <img src="docs/board.png" alt="The board: what needs you, what is running, what is ready and what is up next" width="49%">
+  <img src="docs/ticket.png" alt="A ticket with its activity feed, the ask waiting on it and its progress" width="49%">
 </p>
 
 ## Install

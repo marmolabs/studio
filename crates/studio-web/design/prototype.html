@@ -1,0 +1,1521 @@
+<title>studio UI redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+/* Layout: a 232px sidebar beside a fluid main column; content sits in a centred 1200px column; rows and tables, not stacks of cards. */
+:root {
+  color-scheme: dark;
+  --bg: #111113; --bg-2: #18191b; --bg-3: #212225; --bg-4: #272a2d; --hover: #17181a;
+  --line: #26282b; --line-2: #363a3f; --line-3: #43484e;
+  --fg: #edeef0; --fg-2: #b0b4ba; --fg-3: #8b8f98;
+  --primary: #edeef0; --primary-hover: #ffffff; --on-primary: #111113;
+  --attn: #ffc53d; --attn-fg: #ffca16; --attn-bg: #2b1f08; --attn-line: #5c3d05;
+  --run: #3b9eff; --run-fg: #70b8ff; --run-bg: #0d2847; --run-line: #104d87;
+  --ok: #46a758; --ok-fg: #71d083; --ok-bg: #1b2a1e; --ok-line: #2d5736;
+  --bad: #e5484d; --bad-fg: #ff9592; --bad-bg: #3b1219; --bad-line: #72232d;
+  --ring: #3b9eff; --seg-check: #2870bd;
+  --h-cyan: #4ccce6; --h-violet: #b399ff; --h-pink: #f19ed2; --h-teal: #0bd8b6; --h-gray: #b0b4ba; --h-gold: #e2c36b;
+  --pop: 0 16px 40px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-2);
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #ffffff; --bg-2: #f9f9fb; --bg-3: #f0f0f3; --bg-4: #e8e8ec; --hover: #fafafb;
+    --line: #e8e8ec; --line-2: #d9d9e0; --line-3: #cdced6;
+    --fg: #1c2024; --fg-2: #4d5159; --fg-3: #6f737c;
+    --primary: #1c2024; --primary-hover: #000000; --on-primary: #ffffff;
+    --attn: #ffb224; --attn-fg: #ab6400; --attn-bg: #fefbe9; --attn-line: #f3d673;
+    --run: #0090ff; --run-fg: #0d74ce; --run-bg: #e6f4fe; --run-line: #8ec8f6;
+    --ok: #46a758; --ok-fg: #2a7e3b; --ok-bg: #e9f6e9; --ok-line: #94ce9a;
+    --bad: #e5484d; --bad-fg: #ce2c31; --bad-bg: #feebec; --bad-line: #f4a9aa;
+    --ring: #0090ff; --seg-check: #8ec8f6;
+    --h-cyan: #0c7792; --h-violet: #6550b9; --h-pink: #c2298a; --h-teal: #008573; --h-gray: #60646c; --h-gold: #8a6100;
+    --pop: 0 16px 40px rgba(17, 24, 39, .14), 0 0 0 1px var(--line-2);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff; --bg-2: #f9f9fb; --bg-3: #f0f0f3; --bg-4: #e8e8ec; --hover: #fafafb;
+  --line: #e8e8ec; --line-2: #d9d9e0; --line-3: #cdced6;
+  --fg: #1c2024; --fg-2: #4d5159; --fg-3: #6f737c;
+  --primary: #1c2024; --primary-hover: #000000; --on-primary: #ffffff;
+  --attn: #ffb224; --attn-fg: #ab6400; --attn-bg: #fefbe9; --attn-line: #f3d673;
+  --run: #0090ff; --run-fg: #0d74ce; --run-bg: #e6f4fe; --run-line: #8ec8f6;
+  --ok: #46a758; --ok-fg: #2a7e3b; --ok-bg: #e9f6e9; --ok-line: #94ce9a;
+  --bad: #e5484d; --bad-fg: #ce2c31; --bad-bg: #feebec; --bad-line: #f4a9aa;
+  --ring: #0090ff; --seg-check: #8ec8f6;
+  --h-cyan: #0c7792; --h-violet: #6550b9; --h-pink: #c2298a; --h-teal: #008573; --h-gray: #60646c; --h-gold: #8a6100;
+  --pop: 0 16px 40px rgba(17, 24, 39, .14), 0 0 0 1px var(--line-2);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111113; --bg-2: #18191b; --bg-3: #212225; --bg-4: #272a2d; --hover: #17181a;
+  --line: #26282b; --line-2: #363a3f; --line-3: #43484e;
+  --fg: #edeef0; --fg-2: #b0b4ba; --fg-3: #8b8f98;
+  --primary: #edeef0; --primary-hover: #ffffff; --on-primary: #111113;
+  --attn: #ffc53d; --attn-fg: #ffca16; --attn-bg: #2b1f08; --attn-line: #5c3d05;
+  --run: #3b9eff; --run-fg: #70b8ff; --run-bg: #0d2847; --run-line: #104d87;
+  --ok: #46a758; --ok-fg: #71d083; --ok-bg: #1b2a1e; --ok-line: #2d5736;
+  --bad: #e5484d; --bad-fg: #ff9592; --bad-bg: #3b1219; --bad-line: #72232d;
+  --ring: #3b9eff; --seg-check: #2870bd;
+  --h-cyan: #4ccce6; --h-violet: #b399ff; --h-pink: #f19ed2; --h-teal: #0bd8b6; --h-gray: #b0b4ba; --h-gold: #e2c36b;
+  --pop: 0 16px 40px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-2);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 14px/20px var(--sans); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--fg-2); }
+.faint { color: var(--fg-3); }
+.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.i.sm { width: 14px; height: 14px; }
+@media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } }
+
+/* Shell */
+.app { display: flex; min-height: 100vh; }
+.side { width: 232px; flex: none; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; padding: 14px 12px 12px; border-right: 1px solid var(--line); background: var(--bg); }
+.brand { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 6px; margin-bottom: 10px; }
+.mark { width: 22px; height: 22px; border-radius: 6px; background: var(--primary); color: var(--on-primary); display: grid; place-items: center; flex: none; }
+.mark svg { width: 14px; height: 14px; }
+.brand b { font-weight: 600; font-size: 14.5px; letter-spacing: -.01em; }
+.tag-proto { margin-left: auto; font: 500 11px/1 var(--sans); color: var(--fg-3); border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 7px; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--fg-2); font-weight: 500; transition: background .12s, color .12s; }
+.nav a:hover { background: var(--bg-3); color: var(--fg); }
+.nav a[aria-current="page"] { background: var(--bg-3); color: var(--fg); }
+.nav .count { margin-left: auto; font: 500 12px/1 var(--sans); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.nav .count.attn { color: #1d1400; background: var(--attn); border-radius: 999px; padding: 3px 7px; }
+.nav-label { padding: 18px 8px 6px; font: 500 12px/16px var(--sans); color: var(--fg-3); }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 8px 4px; border-top: 1px solid var(--line); }
+.live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg-2); }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--run); box-shadow: 0 0 0 0 var(--run); animation: pulse 2s infinite; flex: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.spend-line { display: flex; align-items: baseline; justify-content: space-between; font-size: 13px; }
+.meter { height: 4px; border-radius: 2px; background: var(--bg-4); overflow: hidden; }
+.meter > i { display: block; height: 100%; border-radius: 2px; background: var(--fg-2); }
+.foot-row { display: flex; align-items: center; justify-content: space-between; }
+
+/* The office collapses the sidebar to an icon rail, so the floor gets the width. */
+@media (min-width: 761px) {
+  .app.rail .side { width: 64px; padding: 14px 10px 12px; align-items: center; }
+  .app.rail .brand { padding: 0; margin-bottom: 14px; justify-content: center; }
+  .app.rail .brand b, .app.rail .tag-proto, .app.rail .nav .lbl, .app.rail .nav .count:not(.attn) { display: none; }
+  .app.rail .nav-label { padding: 10px 0; font-size: 0; }
+  .app.rail .nav-label::before { content: ""; display: block; width: 24px; height: 1px; background: var(--line); }
+  .app.rail .nav a { position: relative; width: 40px; padding: 0; justify-content: center; }
+  .app.rail .nav .count.attn { position: absolute; top: 1px; right: -2px; padding: 2px 5px; font-size: 10px; }
+  .app.rail .side-foot { align-items: center; padding: 12px 0 4px; }
+  .app.rail .side-foot .mini, .app.rail .live > span:not(.pulse), .app.rail .foot-row > span { display: none; }
+}
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.top { position: sticky; top: 0; z-index: 5; height: 56px; display: flex; align-items: center; gap: 12px; padding-inline: 32px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: saturate(140%) blur(10px); }
+.top h1 { font: 600 15px/20px var(--sans); letter-spacing: -.005em; }
+.crumbs { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--fg-3); min-width: 0; }
+.crumbs a:hover { color: var(--fg); }
+.crumbs .here { color: var(--fg); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top .actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.page { width: 100%; max-width: 1200px; margin-inline: auto; padding: 28px 32px 72px; display: flex; flex-direction: column; gap: 28px; }
+
+/* Controls */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--fg); font: 500 13px/1 var(--sans); cursor: pointer; white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
+.btn:hover { background: var(--bg-3); border-color: var(--line-3); }
+.btn.primary { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--fg-2); }
+.btn.ghost:hover { background: var(--bg-3); color: var(--fg); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 6px; }
+.btn.icon { width: 32px; padding: 0; }
+.btn.icon.sm { width: 28px; }
+.btn.danger:hover { color: var(--bad-fg); border-color: var(--bad-line); background: var(--bad-bg); }
+.kbd { font: 500 11px/1 var(--mono); padding: 3px 5px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--fg-3); }
+.code { font: 12px/18px var(--mono); color: var(--fg); background: var(--bg-3); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; white-space: nowrap; }
+
+/* State glyphs */
+.st { width: 16px; height: 16px; flex: none; }
+.st.queued { color: var(--fg-3); }
+.st.attn, .st.held { color: var(--attn); }
+.st.ready, .st.landed { color: var(--ok); }
+.st.failed { color: var(--bad); }
+.st.cancelled { color: var(--fg-3); }
+.prog { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 1.5px solid var(--run); padding: 2px; background: conic-gradient(var(--run) calc(var(--p, 25) * 1%), transparent 0) content-box; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 7px; border-radius: 999px; font: 500 12.5px/1 var(--sans); white-space: nowrap; }
+.pill .st, .pill .prog { width: 14px; height: 14px; }
+.pill.attn { color: var(--attn-fg); background: var(--attn-bg); }
+.pill.run { color: var(--run-fg); background: var(--run-bg); }
+.pill.ok { color: var(--ok-fg); background: var(--ok-bg); }
+.pill.bad { color: var(--bad-fg); background: var(--bad-bg); }
+.pill.neutral { color: var(--fg-2); background: var(--bg-3); }
+
+.av { --h: var(--h-gray); width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; font: 600 9.5px/1 var(--sans); letter-spacing: .02em; color: var(--h); background: color-mix(in srgb, var(--h) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h) 32%, transparent); }
+.av.cyan { --h: var(--h-cyan); } .av.violet { --h: var(--h-violet); } .av.pink { --h: var(--h-pink); } .av.teal { --h: var(--h-teal); } .av.gold { --h: var(--h-gold); }
+.who { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid var(--line); color: var(--fg-2); font-size: 12px; white-space: nowrap; max-width: 100%; }
+.chip .i { width: 12px; height: 12px; color: var(--fg-3); }
+.model { font: 500 11.5px/1 var(--mono); color: var(--fg-2); background: var(--bg-3); border-radius: 5px; padding: 4px 6px; white-space: nowrap; }
+.add { color: var(--ok-fg); } .del { color: var(--bad-fg); }
+
+/* Sections, lists and tables */
+.sec { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.sec h2 { font: 600 14px/20px var(--sans); }
+.sec .n { color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.sec .link { margin-left: auto; font-size: 13px; color: var(--fg-3); display: inline-flex; align-items: center; gap: 4px; }
+.sec .link:hover { color: var(--fg); }
+.box { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.kpi { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--line); min-width: 0; }
+.kpi:first-child { border-left: 0; }
+.kpi .label { display: flex; align-items: center; gap: 8px; font: 500 12.5px/16px var(--sans); color: var(--fg-2); }
+.kpi .value { font: 600 24px/32px var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 12.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .value small { font: 500 13px var(--sans); color: var(--fg-3); letter-spacing: 0; margin-left: 4px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.attn { background: var(--attn); } .dot.run { background: var(--run); } .dot.ok { background: var(--ok); }
+.spark { display: block; width: 100%; height: 20px; margin-top: 2px; }
+
+.grp { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 16px; background: var(--bg-2); border-top: 1px solid var(--line); font: 500 13px/1 var(--sans); }
+.grp:first-child { border-top: 0; }
+.grp .n { color: var(--fg-3); font-weight: 400; }
+.grp .side-note { margin-left: auto; color: var(--fg-3); font-weight: 400; font-size: 12.5px; }
+.grp .side-note:hover { color: var(--fg); }
+.row { display: grid; grid-template-columns: 16px 64px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 56px; padding: 9px 16px; border-top: 1px solid var(--line); transition: background .1s; }
+.row:hover { background: var(--hover); }
+.row .id { font: 500 12.5px/1 var(--mono); color: var(--fg-3); }
+.row .main-col { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.row .t { font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .t:hover { text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; }
+.row .d { display: block; min-width: 0; font-size: 12.5px; line-height: 20px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .d .code { margin: 0 2px; }
+.row .d .reason { margin-left: 6px; }
+.row .d .reason { color: var(--attn-fg); }
+.row .right { display: flex; align-items: center; gap: 16px; font-size: 12.5px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.row .right .w { min-width: 44px; text-align: right; }
+.row.compact { min-height: 44px; }
+.steps { display: flex; flex-direction: column; gap: 5px; width: 132px; }
+.steps .bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.steps .bar i { height: 3px; border-radius: 2px; background: var(--bg-4); }
+.steps .bar i.done { background: var(--run); }
+.steps .bar i.now { background: linear-gradient(90deg, var(--run) 55%, var(--bg-4) 55%); }
+.steps .lbl { font-size: 12px; color: var(--fg-3); white-space: nowrap; }
+.steps .lbl b { color: var(--run-fg); font-weight: 500; }
+
+.table { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font: 500 12px/16px var(--sans); color: var(--fg-3); padding: 10px 16px; background: var(--bg-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 11px 16px; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+tbody tr:first-child td { border-top: 0; }
+tbody tr:hover td { background: var(--hover); }
+.r { text-align: right; }
+td.title { white-space: normal; font-weight: 500; min-width: 220px; }
+td .cellflex { display: flex; align-items: center; gap: 8px; }
+.track { height: 4px; border-radius: 2px; background: var(--bg-4); overflow: hidden; width: 120px; }
+.track > i { display: block; height: 100%; background: var(--ok); border-radius: 2px; }
+.track.run > i { background: var(--run); }
+.track.neutral > i { background: var(--fg-3); }
+.share { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.share .track { width: 88px; }
+.share .track > i { background: var(--fg-3); }
+.goals .track { width: 96px; }
+.gname { display: flex; align-items: center; gap: 10px; }
+.gname > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gname b { font-weight: 500; }
+.gname .faint { font-size: 12px; }
+tr.sub td { background: var(--bg-2); padding-top: 8px; padding-bottom: 8px; padding-left: 42px; font-size: 13px; }
+tr.sub a:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-3); }
+
+/* Ticket */
+.ticket { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 56px; align-items: start; }
+.t-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.t-head { display: flex; flex-direction: column; gap: 10px; }
+.t-title { font: 600 26px/34px var(--sans); letter-spacing: -.02em; text-wrap: balance; }
+.byline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--fg-3); }
+.prose { max-width: 68ch; color: var(--fg-2); line-height: 22px; display: flex; flex-direction: column; gap: 10px; }
+.prose b { color: var(--fg); font-weight: 600; }
+.prose code, .msg code { font: 12.5px/18px var(--mono); color: var(--fg); background: var(--bg-3); border-radius: 4px; padding: 1px 5px; }
+.ask { border: 1px solid var(--attn-line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.ask-h { display: flex; align-items: center; gap: 10px; padding: 11px 16px; background: var(--attn-bg); color: var(--attn-fg); font-weight: 500; }
+.ask-h .t-ago { margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--attn-fg); opacity: .85; }
+.ask-b { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cmd { font: 13px/20px var(--mono); background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; overflow-x: auto; white-space: pre; color: var(--fg); }
+.diff { font: 12.5px/20px var(--mono); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.diff .f { padding: 8px 14px; background: var(--bg-2); border-bottom: 1px solid var(--line); color: var(--fg-2); }
+.diff .l { padding: 0 14px; white-space: pre; overflow-x: auto; }
+.diff .l.m { background: var(--bad-bg); color: var(--bad-fg); }
+.diff .l.p { background: var(--ok-bg); color: var(--ok-fg); }
+.said { display: flex; gap: 10px; color: var(--fg-2); }
+.said .av { margin-top: 1px; }
+.why { font-size: 13px; line-height: 20px; color: var(--fg-3); }
+.why > .i { vertical-align: -2px; margin-right: 6px; }
+.why a { margin-left: 6px; }
+.why a { color: var(--fg-2); text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; }
+.why a:hover { color: var(--fg); }
+.ask-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ask-actions .spacer { flex: 1; }
+.note-toggle { font-size: 13px; color: var(--fg-3); background: none; border: 0; padding: 4px 2px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.note-toggle:hover { color: var(--fg); }
+
+.feed { display: flex; flex-direction: column; }
+.ev { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 14px; position: relative; padding-bottom: 20px; }
+.ev::before { content: ""; position: absolute; left: 11.5px; top: 28px; bottom: 4px; width: 1px; background: var(--line); }
+.ev:last-child::before { display: none; }
+.ev .ic { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--line); color: var(--fg-3); }
+.ev .ic .i { width: 13px; height: 13px; }
+.ev .ic.av { width: 24px; height: 24px; font-size: 10px; border: 0; }
+.ev .ic.attn { color: var(--attn-fg); background: var(--attn-bg); border-color: var(--attn-line); }
+.ev .ic.ok { color: var(--ok-fg); background: var(--ok-bg); border-color: var(--ok-line); }
+.ev .hd { min-height: 24px; padding-top: 2px; font-size: 13px; line-height: 20px; color: var(--fg-3); }
+.ev .hd .model, .ev .hd .code { margin: 0 2px; }
+.ev .hd b { color: var(--fg); font-weight: 500; }
+.msg { margin-top: 4px; color: var(--fg); line-height: 22px; max-width: 68ch; display: flex; flex-direction: column; gap: 8px; }
+.msg ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
+.tools { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tools summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--fg-2); background: var(--bg-2); }
+.tools summary::-webkit-details-marker { display: none; }
+.tools summary .chev { transition: transform .15s; color: var(--fg-3); }
+.tools[open] summary .chev { transform: rotate(90deg); }
+.tools summary > span:first-of-type { white-space: nowrap; color: var(--fg); font-weight: 500; }
+.tools summary .sum { color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool { display: grid; grid-template-columns: 16px 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.tool .i { width: 14px; height: 14px; color: var(--fg-3); }
+.tool .k { color: var(--fg-2); font-weight: 500; }
+.tool .v { font: 12px/18px var(--mono); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool .res { color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tool .res.ok { color: var(--ok-fg); }
+
+.props { position: sticky; top: 80px; display: flex; flex-direction: column; gap: 22px; font-size: 13px; }
+.props h3 { font: 500 12px/16px var(--sans); color: var(--fg-3); margin-bottom: 8px; }
+.prop { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; column-gap: 10px; min-height: 30px; }
+.prop dt { color: var(--fg-3); }
+.prop dd { margin: 0; display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--fg); }
+.prop dd .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dl { margin: 0; }
+.mini { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.mini .meter > i { background: var(--fg-2); }
+.vsteps { display: flex; flex-direction: column; }
+.vstep { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 30px; color: var(--fg-3); }
+.vstep.now { color: var(--fg); font-weight: 500; }
+.vstep.done { color: var(--fg-2); }
+.vstep .ring { width: 12px; height: 12px; margin: 2px; border-radius: 50%; border: 1.5px solid var(--line-3); }
+.vstep.now .ring { border-color: var(--attn); background: var(--attn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--attn) 22%, transparent); }
+.files { display: flex; flex-direction: column; gap: 6px; }
+.file { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.file .mono { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.file .num { margin-left: auto; white-space: nowrap; }
+.sep { height: 1px; background: var(--line); }
+
+/* Budget */
+.chart { padding: 18px 20px 14px; }
+.chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.chart-head h2 { font: 600 14px/20px var(--sans); }
+.plot { position: relative; height: 180px; margin-left: 40px; }
+.gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
+.gridline span { position: absolute; left: -40px; top: -8px; width: 32px; text-align: right; font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.gridline.limit { border-top: 1px dashed var(--attn-line); }
+.gridline.limit em { position: absolute; right: 0; top: 4px; font-style: normal; font-size: 11.5px; color: var(--attn-fg); }
+.bars { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.bars i { display: block; border-radius: 3px 3px 0 0; background: var(--line-3); min-height: 2px; }
+.bars i.today { background: var(--fg); }
+.xlabels { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 8px; margin-left: 40px; margin-top: 8px; font-size: 11.5px; color: var(--fg-3); text-align: center; font-variant-numeric: tabular-nums; }
+.cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+
+/* Rules */
+.split { display: grid; grid-template-columns: 300px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 520px; }
+.rl { border-right: 1px solid var(--line); background: var(--bg-2); display: flex; flex-direction: column; }
+.rl .scope { padding: 14px 14px 6px; font: 500 12px/16px var(--sans); color: var(--fg-3); }
+.rl a { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-left: 2px solid transparent; }
+.rl a:hover { background: var(--bg-3); }
+.rl a[aria-current="true"] { background: var(--bg-3); border-left-color: var(--fg); }
+.rl .nm { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.rl .nm .kind { margin-left: auto; font: 500 11.5px/1 var(--sans); color: var(--fg-3); }
+.rl .first { font-size: 12.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed { display: flex; flex-direction: column; min-width: 0; }
+.ed-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.ed-h h2 { font: 600 15px/20px var(--sans); }
+.src { flex: 1; margin: 0; padding: 14px 0; font: 13px/22px var(--mono); counter-reset: ln; overflow-x: auto; }
+.src > span { display: block; padding: 0 18px 0 0; white-space: pre; color: var(--fg); }
+.src > span::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 44px; padding-right: 16px; text-align: right; color: var(--fg-3); opacity: .7; }
+.src .k { color: var(--fg-3); }
+.ed-f { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.ed-f .spacer { flex: 1; }
+
+/* Live */
+.lanes { padding: 16px 20px 18px; }
+.lanes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.lanes-head h2 { font: 600 14px/20px var(--sans); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12.5px; color: var(--fg-2); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+.sw.work, .seg.work { background: var(--run); }
+.sw.check, .seg.check { background: var(--seg-check); }
+.sw.review, .seg.review { background: var(--h-violet); }
+.sw.wait, .seg.wait { background: var(--attn); }
+.sw.fail, .seg.fail { background: var(--bad); }
+.sw.ready { background: var(--ok); }
+.lane-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); row-gap: 6px; column-gap: 16px; align-items: center; }
+.axis { position: relative; height: 18px; font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.axis span:first-child { transform: none; }
+.axis span:last-child { transform: translateX(-100%); color: var(--fg); }
+.lane-label { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.lane-label .mono { color: var(--fg-3); font-size: 12px; flex: none; }
+.lane-label .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-lane { position: relative; height: 28px; border-radius: 6px; background-color: var(--bg-2); background-image: linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 25% 100%; }
+.seg { position: absolute; top: 8px; height: 12px; border-radius: 3px; }
+.seg.ready { top: 13px; height: 2px; border-radius: 1px; background: repeating-linear-gradient(90deg, var(--ok) 0 6px, transparent 6px 10px); }
+.now-line { position: absolute; right: -1px; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--fg); }
+.live-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 32px; align-items: start; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); min-width: 0; }
+.card.attn { border-color: var(--attn-line); }
+.c-top { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.c-top .mono { margin-left: auto; color: var(--fg-3); font-size: 12px; }
+.c-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doing { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg-2); font: 12.5px/18px var(--mono); color: var(--fg-2); }
+.doing .i { width: 14px; height: 14px; color: var(--fg-3); }
+.doing span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doing .tm { margin-left: auto; flex: none; font: 12px/18px var(--sans); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.card.attn .doing { background: var(--attn-bg); border-color: var(--attn-line); color: var(--attn-fg); }
+.card.attn .doing .i { color: var(--attn-fg); }
+.c-foot { display: flex; align-items: center; gap: 12px; font-size: 12.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.c-foot .go { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--fg-2); }
+.c-foot .go:hover { color: var(--fg); }
+.idle { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 14px; font-size: 13px; color: var(--fg-3); }
+.idle .who { color: var(--fg-2); }
+.events { display: flex; flex-direction: column; }
+.e { display: grid; grid-template-columns: 36px 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 20px; }
+.e:first-child { border-top: 0; padding-top: 2px; }
+.e .when { color: var(--fg-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.e .st, .e .i { margin-top: 2px; }
+.e .txt { color: var(--fg-2); min-width: 0; }
+.e .txt b { color: var(--fg); font-weight: 500; }
+.e .txt .code { white-space: normal; }
+
+/* Office */
+.office-page { max-width: 1480px; }
+.segctl { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--bg-3); }
+.segctl a { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; font: 500 12.5px/1 var(--sans); color: var(--fg-2); }
+.segctl a:hover { color: var(--fg); }
+.segctl a[aria-current="page"] { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--line-2); }
+.hud { display: flex; align-items: center; gap: 16px; margin-left: 6px; font-size: 13px; color: var(--fg-2); white-space: nowrap; min-width: 0; overflow: hidden; }
+.hud > span { display: inline-flex; align-items: center; gap: 6px; }
+.hud b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.hud .meter { width: 56px; display: inline-block; margin-left: 2px; }
+.office { display: grid; grid-template-columns: minmax(0, 1fr) 360px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.floor { min-width: 0; padding: 16px; display: grid; gap: 14px; align-content: start; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "work checks plan" "work review ready" "lounge front shipped"; background-color: var(--bg-2); background-image: radial-gradient(color-mix(in srgb, var(--fg-3) 30%, transparent) 1px, transparent 1.3px); background-size: 18px 18px; }
+.inspector { border-left: 1px solid var(--line); min-width: 0; display: flex; flex-direction: column; max-height: 860px; overflow: auto; background: var(--bg); }
+.ins-h { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.ins-h h2 { font: 600 14px/20px var(--sans); }
+.ins-h .n { color: var(--fg-3); }
+.ins-h .spacer, .ins-actions .spacer { flex: 1; }
+.ins-b { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+.ins-sec h3 { font: 500 12px/16px var(--sans); color: var(--fg-3); margin-bottom: 8px; }
+.ins-title { font: 600 16px/22px var(--sans); letter-spacing: -.01em; text-wrap: balance; }
+.ins-title + .mono { color: var(--fg-3); font-size: 12px; }
+.ins-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mini-ask { border: 1px solid var(--attn-line); border-radius: 10px; overflow: hidden; }
+.mini-ask .mh { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--attn-bg); color: var(--attn-fg); font-size: 12.5px; font-weight: 500; }
+.mini-ask .mh .t-ago { margin-left: auto; font-weight: 400; }
+.mini-ask .mb { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.mini-ask .cmd { font-size: 12px; padding: 7px 10px; }
+.mini-ask .why { font-size: 12.5px; }
+.kv { display: grid; grid-template-columns: 84px minmax(0, 1fr); row-gap: 8px; column-gap: 10px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--fg-3); }
+.kv dd { margin: 0; min-width: 0; }
+.steps-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.steps-list .tool:first-child { border-top: 0; }
+.lasthour { padding: 0; }
+.lasthour summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 14px 18px; cursor: pointer; }
+.lasthour summary::-webkit-details-marker { display: none; }
+.lasthour summary h2 { font: 600 14px/20px var(--sans); }
+.lasthour summary .chev { color: var(--fg-3); transition: transform .15s; }
+.lasthour[open] summary .chev { transform: rotate(90deg); }
+.lasthour summary .faint { font-size: 13px; }
+.lasthour-b { padding: 0 18px 18px; }
+/* The floor: rooms on a dotted plan; people are avatars with a progress ring. */
+.r-work { grid-area: work; } .r-checks { grid-area: checks; } .r-plan { grid-area: plan; } .r-review { grid-area: review; }
+.r-ready { grid-area: ready; } .r-lounge { grid-area: lounge; } .r-front { grid-area: front; } .r-shipped { grid-area: shipped; }
+.room { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px 14px 14px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--bg); }
+.room-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rl { font: 600 10.5px/14px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
+.rc { font-size: 12px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.station { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; padding: 8px 6px 10px; border: 1px solid transparent; border-radius: 10px; background: none; color: inherit; text-align: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.station:hover, .station[aria-pressed="true"] { background: var(--bg-2); border-color: var(--line-2); }
+.station.free { cursor: default; }
+.station.free:hover { background: none; border-color: transparent; }
+.bubble, .bubble-slot { height: 24px; margin-bottom: 4px; flex: none; }
+.bubble { position: relative; max-width: 150px; padding: 3px 9px; border: 1px solid var(--attn-line); border-radius: 7px; background: var(--attn-bg); color: var(--attn-fg); font: 500 11.5px/16px var(--sans); }
+.bubble > span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; background: var(--attn-bg); border-right: 1px solid var(--attn-line); border-bottom: 1px solid var(--attn-line); transform: translateX(-50%) rotate(45deg); }
+.person { --h: var(--h-gray); --rc: var(--run); --p: 0; position: relative; width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--rc) calc(var(--p) * 1%), var(--line-2) 0); }
+.person::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--bg); }
+.station:hover .person::before, .station[aria-pressed="true"] .person::before { background: var(--bg-2); }
+.person .face { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 600 11px/1 var(--sans); color: var(--h); background: color-mix(in srgb, var(--h) 20%, var(--bg)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--h) 55%, transparent); }
+.person.cyan { --h: var(--h-cyan); } .person.violet { --h: var(--h-violet); } .person.pink { --h: var(--h-pink); } .person.teal { --h: var(--h-teal); } .person.gold { --h: var(--h-gold); }
+.person.attn { --rc: var(--attn); }
+.person.review { --rc: var(--h-violet); }
+.person.run, .person.attn, .person.review { animation: halo 2.4s ease-out infinite; }
+.person.attn { animation-duration: 1.7s; }
+@keyframes halo { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rc) 45%, transparent); } 75%, 100% { box-shadow: 0 0 0 9px transparent; } }
+.person.idle, .person.plain { background: none; }
+.person.idle::before, .person.plain::before { display: none; }
+.person.idle .face { width: 36px; height: 36px; color: var(--fg-2); background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--line-3); }
+.person.plain .face { width: 36px; height: 36px; color: var(--fg-2); background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-3); }
+.person .badge { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; border-radius: 50%; background: var(--attn); color: #1d1400; font: 700 10px/16px var(--sans); text-align: center; box-shadow: 0 0 0 2px var(--bg); }
+.seat { width: 36px; height: 36px; margin: 3px; border-radius: 50%; border: 1.5px dashed var(--line-3); flex: none; }
+.workdesk { width: 100%; max-width: 116px; height: 24px; flex: none; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 7px; background: var(--bg-3); }
+.workdesk i { width: 42%; height: 5px; border-radius: 2px; background: var(--line-3); }
+.workdesk i.run { background: var(--run); box-shadow: 0 0 10px color-mix(in srgb, var(--run) 55%, transparent); }
+.workdesk i.attn { background: var(--attn); box-shadow: 0 0 10px color-mix(in srgb, var(--attn) 50%, transparent); }
+.station.free .workdesk { background: transparent; border-style: dashed; }
+.station .tid { margin-top: 3px; font: 500 11px/14px var(--mono); color: var(--fg-3); }
+.station .tt { max-width: 100%; font: 500 12.5px/16px var(--sans); color: var(--fg); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: balance; }
+.station .ts, .sitter .ts { max-width: 100%; font-size: 11.5px; line-height: 16px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts b { color: var(--fg); font-weight: 500; }
+.ts .attn-t { color: var(--attn-fg); }
+.ts.attn { color: var(--attn-fg); }
+.ts.run { color: var(--run-fg); }
+.ts.review { color: var(--h-violet); }
+.racks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rack { display: grid; grid-template-columns: repeat(4, 6px); justify-content: center; gap: 7px; padding: 10px 6px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--bg-3); }
+.rack i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-3); }
+.rack i.on { background: var(--run); animation: blink 1.6s steps(2, jump-none) infinite; }
+.rack i.on.b { animation-delay: .6s; }
+@keyframes blink { 50% { opacity: .3; } }
+.tcard { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--bg); color: inherit; text-align: left; cursor: pointer; font-size: 12.5px; transition: border-color .12s, background .12s; }
+.tcard.run { border-color: var(--run-line); }
+.tcard.ok { border-color: var(--ok-line); }
+.tcard:hover, .tcard[aria-pressed="true"] { background: var(--bg-2); }
+.tc-top, .tc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tc-top .mono { font-size: 11.5px; color: var(--fg-3); }
+.tc-cmd { color: var(--fg); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot { display: grid; place-items: center; min-height: 40px; border: 1px dashed var(--line-2); border-radius: 9px; font-size: 12px; color: var(--fg-3); }
+.whiteboard { display: flex; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--bg-2); }
+.goalrow { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 7px 8px; border: 0; border-radius: 6px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.goalrow:hover, .goalrow[aria-pressed="true"] { background: var(--bg-3); }
+.goalrow .gl { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.roundtable { width: 72px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 999px; background: var(--bg-3); }
+.roundtable i { width: 28px; height: 14px; border: 1px solid var(--run-line); border-radius: 3px; background: var(--run-bg); }
+.r-review .station { margin-block: auto; }
+.sitter { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; border: 1px solid transparent; border-radius: 10px; background: none; color: inherit; cursor: pointer; }
+.sitter:hover, .sitter[aria-pressed="true"] { background: var(--bg-2); border-color: var(--line-2); }
+.lounge { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.sofa { display: flex; gap: 6px; padding: 10px 10px 8px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--bg-3); box-shadow: inset 0 7px 0 var(--bg-4); }
+.props { display: flex; gap: 8px; }
+.prop-ic { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 9px; background: var(--bg-2); color: var(--fg-3); }
+.prop-ic.plant { color: color-mix(in srgb, var(--ok) 75%, var(--fg-3)); }
+.frontdesk { display: flex; justify-content: space-around; gap: 8px; padding-bottom: 10px; border-bottom: 8px solid var(--bg-3); border-radius: 0 0 6px 6px; }
+.upnext { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.qcard { height: 28px; padding: 0 10px; border: 1px dashed var(--line-3); border-radius: 7px; background: none; color: var(--fg-2); font: 500 11.5px/1 var(--mono); cursor: pointer; }
+.qcard:hover, .qcard[aria-pressed="true"] { border-style: solid; color: var(--fg); background: var(--bg-2); }
+.shiplist { display: flex; flex-direction: column; }
+.ship { display: grid; grid-template-columns: 16px 58px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; padding: 0 6px; border-radius: 6px; font-size: 12.5px; }
+.ship:hover { background: var(--bg-2); }
+.ship .mono { font-size: 11.5px; }
+.ship .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* New ticket dialog */
+.dialog { width: min(560px, calc(100vw - 32px)); border: 0; border-radius: 14px; padding: 0; background: var(--bg); color: var(--fg); box-shadow: var(--pop); }
+.dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.dialog form { display: flex; flex-direction: column; }
+.dialog .dh { display: flex; align-items: center; gap: 10px; padding: 16px 18px 6px; }
+.dialog .dh h2 { font: 600 16px/24px var(--sans); }
+.dialog .db { display: flex; flex-direction: column; gap: 14px; padding: 10px 18px 18px; }
+.dialog .df { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--bg-2); }
+.dialog .df .spacer { flex: 1; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font: 500 12.5px/16px var(--sans); color: var(--fg-2); }
+.field .hint { font-size: 12px; color: var(--fg-3); }
+.input { height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--fg); }
+textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-height: 20px; resize: vertical; }
+.input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent); }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+.toast { position: fixed; right: max(20px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--bg-2); color: var(--fg); box-shadow: var(--pop); font-size: 13px; transform: translateY(12px); opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 20; }
+.toast.show { opacity: 1; transform: none; }
+.view { display: contents; }
+[hidden] { display: none !important; }
+
+/* Phone: the sidebar becomes a top bar with a scrolling nav; rails stack. */
+@media (max-width: 1180px) {
+  .cols-2, .live-grid, .office { grid-template-columns: minmax(0, 1fr); }
+  .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: none; }
+  .hud { display: none; }
+}
+@media (max-width: 900px) {
+  .floor { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "work work" "checks review" "plan ready" "lounge front" "shipped shipped"; }
+}
+@media (max-width: 560px) {
+  .floor { grid-template-columns: minmax(0, 1fr); grid-template-areas: "work" "checks" "review" "plan" "ready" "lounge" "front" "shipped"; padding: 12px; }
+  .desks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .ticket { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .props { position: static; }
+}
+@media (max-width: 760px) {
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+  .app { flex-direction: column; }
+  .side { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; width: 100%; height: auto; flex-direction: column; gap: 0; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px)); border-right: 0; border-bottom: 1px solid var(--line); }
+  .brand { margin-bottom: 6px; padding: 0; }
+  .navs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin-inline: -4px; }
+  .navs::-webkit-scrollbar { display: none; }
+  .nav { flex-direction: row; gap: 2px; }
+  .nav a { height: 30px; padding: 0 10px; white-space: nowrap; }
+  .nav .i { display: none; }
+  .nav-label, .side-foot { display: none; }
+  .phone-spend { display: inline-flex !important; }
+  .tag-proto { display: none; }
+  .top { position: static; height: auto; min-height: 52px; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px)); flex-wrap: wrap; }
+  .top .actions .label { display: none; }
+  .page { padding: 20px max(16px, env(safe-area-inset-right, 0px)) 56px max(16px, env(safe-area-inset-left, 0px)); gap: 24px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi:nth-child(3) { border-left: 0; }
+  .kpi:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .row { grid-template-columns: 16px minmax(0, 1fr); row-gap: 8px; }
+  .row .id { display: none; }
+  .row .d { white-space: normal; }
+  .row .right { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; gap: 10px; }
+  .row .right .w { min-width: 0; text-align: left; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .rl { border-right: 0; border-bottom: 1px solid var(--line); }
+  .two, .cards { grid-template-columns: minmax(0, 1fr); }
+  .lane-grid { grid-template-columns: 112px minmax(0, 1fr); column-gap: 10px; }
+  .lane-label .t, .lane-label .av { display: none; }
+  .t-title { font-size: 22px; line-height: 30px; }
+}
+.phone-spend { display: none; margin-left: auto; font-size: 12.5px; color: var(--fg-2); align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+<symbol id="i-armchair" viewBox="0 0 24 24"><path d="M19 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v3"/> <path d="M3 16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v1.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V11a2 2 0 0 0-4 0z"/> <path d="M5 18v2"/> <path d="M19 18v2"/></symbol>
+<symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/> <path d="m12 5 7 7-7 7"/></symbol>
+<symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/> <rect width="16" height="12" x="4" y="8" rx="2"/> <path d="M2 14h2"/> <path d="M20 14h2"/> <path d="M15 13v2"/> <path d="M9 13v2"/></symbol>
+<symbol id="i-building-2" viewBox="0 0 24 24"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/> <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/> <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/> <path d="M10 6h4"/> <path d="M10 10h4"/> <path d="M10 14h4"/> <path d="M10 18h4"/></symbol>
+<symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v4"/> <path d="M16 2v4"/> <rect width="18" height="18" x="3" y="4" rx="2"/> <path d="M3 10h18"/></symbol>
+<symbol id="i-chart-column" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/> <path d="M18 17V9"/> <path d="M13 17V5"/> <path d="M8 17v-3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="i-circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <line x1="12" x2="12" y1="8" y2="12"/> <line x1="12" x2="12.01" y1="16" y2="16"/></symbol>
+<symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="i-circle-dashed" viewBox="0 0 24 24"><path d="M10.1 2.182a10 10 0 0 1 3.8 0"/> <path d="M13.9 21.818a10 10 0 0 1-3.8 0"/> <path d="M17.609 3.721a10 10 0 0 1 2.69 2.7"/> <path d="M2.182 13.9a10 10 0 0 1 0-3.8"/> <path d="M20.279 17.609a10 10 0 0 1-2.7 2.69"/> <path d="M21.818 10.1a10 10 0 0 1 0 3.8"/> <path d="M3.721 6.391a10 10 0 0 1 2.7-2.69"/> <path d="M6.391 20.279a10 10 0 0 1-2.69-2.7"/></symbol>
+<symbol id="i-circle-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <line x1="10" x2="10" y1="15" y2="9"/> <line x1="14" x2="14" y1="15" y2="9"/></symbol>
+<symbol id="i-circle-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <polygon points="10 8 16 12 10 16 10 8"/></symbol>
+<symbol id="i-circle-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <path d="m15 9-6 6"/> <path d="m9 9 6 6"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <polyline points="12 6 12 12 16 14"/></symbol>
+<symbol id="i-coffee" viewBox="0 0 24 24"><path d="M10 2v2"/> <path d="M14 2v2"/> <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/> <path d="M6 2v2"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/> <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+<symbol id="i-corner-down-right" viewBox="0 0 24 24"><polyline points="15 10 20 15 15 20"/> <path d="M4 4v7a4 4 0 0 0 4 4h12"/></symbol>
+<symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/> <circle cx="19" cy="12" r="1"/> <circle cx="5" cy="12" r="1"/></symbol>
+<symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/> <path d="M10 14 21 3"/> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/> <circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-file-code" viewBox="0 0 24 24"><path d="M10 12.5 8 15l2 2.5"/> <path d="m14 12.5 2 2.5-2 2.5"/> <path d="M14 2v4a2 2 0 0 0 2 2h4"/> <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></symbol>
+<symbol id="i-file-diff" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/> <path d="M9 10h6"/> <path d="M12 13V7"/> <path d="M9 17h6"/></symbol>
+<symbol id="i-file-pen-line" viewBox="0 0 24 24"><path d="m18 5-2.414-2.414A2 2 0 0 0 14.172 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2"/> <path d="M21.378 12.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/> <path d="M8 18h1"/></symbol>
+<symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/> <path d="M14 2v4a2 2 0 0 0 2 2h4"/> <path d="M10 9H8"/> <path d="M16 13H8"/> <path d="M16 17H8"/></symbol>
+<symbol id="i-flask-conical" viewBox="0 0 24 24"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/> <path d="M8.5 2h7"/> <path d="M7 16h10"/></symbol>
+<symbol id="i-folder-git-2" viewBox="0 0 24 24"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5"/> <circle cx="13" cy="12" r="2"/> <path d="M18 19c-2.8 0-5-2.2-5-5v8"/> <circle cx="20" cy="19" r="2"/></symbol>
+<symbol id="i-git-branch" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15"/> <circle cx="18" cy="6" r="3"/> <circle cx="6" cy="18" r="3"/> <path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+<symbol id="i-git-merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/> <circle cx="6" cy="6" r="3"/> <path d="M6 21V9a9 9 0 0 0 9 9"/></symbol>
+<symbol id="i-git-pull-request" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/> <circle cx="6" cy="6" r="3"/> <path d="M13 6h3a2 2 0 0 1 2 2v7"/> <line x1="6" x2="6" y1="9" y2="21"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/> <path d="M3 3v5h5"/> <path d="M12 7v5l4 2"/></symbol>
+<symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M5 22h14"/> <path d="M5 2h14"/> <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/> <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></symbol>
+<symbol id="i-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/> <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <path d="M12 16v-4"/> <path d="M12 8h.01"/></symbol>
+<symbol id="i-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/> <circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+<symbol id="i-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/> <rect width="7" height="5" x="14" y="3" rx="1"/> <rect width="7" height="9" x="14" y="12" rx="1"/> <rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
+<symbol id="i-list-checks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4"/> <path d="m3 7 2 2 4-4"/> <path d="M13 6h8"/> <path d="M13 12h8"/> <path d="M13 18h8"/></symbol>
+<symbol id="i-list-filter" viewBox="0 0 24 24"><path d="M3 6h18"/> <path d="M7 12h10"/> <path d="M10 18h4"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/> <path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="i-log-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/> <polyline points="16 17 21 12 16 7"/> <line x1="21" x2="9" y1="12" y2="12"/></symbol>
+<symbol id="i-message-square-text" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/> <path d="M13 8H7"/> <path d="M17 12H7"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+<symbol id="i-panel-left" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/> <path d="M9 3v18"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/> <rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/> <path d="M12 5v14"/></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/> <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/> <circle cx="12" cy="12" r="2"/> <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/> <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></symbol>
+<symbol id="i-refresh-cw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/> <path d="M21 3v5h-5"/> <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/> <path d="M8 16H3v5"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/> <path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/> <path d="m21.854 2.147-10.94 10.939"/></symbol>
+<symbol id="i-settings-2" viewBox="0 0 24 24"><path d="M20 7h-9"/> <path d="M14 17H5"/> <circle cx="17" cy="17" r="3"/> <circle cx="7" cy="7" r="3"/></symbol>
+<symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/> <path d="M12 8v4"/> <path d="M12 16h.01"/></symbol>
+<symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/> <path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="i-sliders-horizontal" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/> <line x1="10" x2="3" y1="4" y2="4"/> <line x1="21" x2="12" y1="12" y2="12"/> <line x1="8" x2="3" y1="12" y2="12"/> <line x1="21" x2="16" y1="20" y2="20"/> <line x1="12" x2="3" y1="20" y2="20"/> <line x1="14" x2="14" y1="2" y2="6"/> <line x1="8" x2="8" y1="10" y2="14"/> <line x1="16" x2="16" y1="18" y2="22"/></symbol>
+<symbol id="i-sprout" viewBox="0 0 24 24"><path d="M7 20h10"/> <path d="M10 20c5.5-2.5.8-6.4 3-10"/> <path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/> <path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></symbol>
+<symbol id="i-square-pen" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/> <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/> <path d="M12 2v2"/> <path d="M12 20v2"/> <path d="m4.93 4.93 1.41 1.41"/> <path d="m17.66 17.66 1.41 1.41"/> <path d="M2 12h2"/> <path d="M20 12h2"/> <path d="m6.34 17.66-1.41 1.41"/> <path d="m19.07 4.93-1.41 1.41"/></symbol>
+<symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <circle cx="12" cy="12" r="6"/> <circle cx="12" cy="12" r="2"/></symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/> <line x1="12" x2="20" y1="19" y2="19"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2"/> <line x1="12" x2="15" y1="14" y2="11"/> <circle cx="12" cy="14" r="8"/></symbol>
+<symbol id="i-trash-2" viewBox="0 0 24 24"><path d="M3 6h18"/> <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/> <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/> <line x1="10" x2="10" y1="11" y2="17"/> <line x1="14" x2="14" y1="11" y2="17"/></symbol>
+<symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/> <path d="M12 9v4"/> <path d="M12 17h.01"/></symbol>
+<symbol id="i-user-round" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/> <path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/> <circle cx="9" cy="7" r="4"/> <path d="M22 21v-2a4 4 0 0 0-3-3.87"/> <path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/> <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/> <path d="m6 6 12 12"/></symbol>
+<symbol id="s-queued" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 2.2"/></symbol>
+<symbol id="s-attn" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><rect x="7.1" y="3.9" width="1.8" height="5.2" rx=".9" style="fill:var(--bg)"/><circle cx="8" cy="11.4" r="1.05" style="fill:var(--bg)"/></symbol>
+<symbol id="s-held" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="5.6" y="5.2" width="1.6" height="5.6" rx=".6" fill="currentColor"/><rect x="8.8" y="5.2" width="1.6" height="5.6" rx=".6" fill="currentColor"/></symbol>
+<symbol id="s-ready" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.2 8.3l1.9 1.9 3.8-4.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="s-landed" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5.1 8.3l1.95 1.95 3.85-4.15" fill="none" style="stroke:var(--bg)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="s-failed" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" fill="none" style="stroke:var(--bg)" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="s-cancelled" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.2 11.8l7.6-7.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+<symbol id="logo" viewBox="0 0 16 16"><rect x="2.5" y="5.5" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.5 2.5h6a2 2 0 0 1 2 2v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="side" aria-label="Studio">
+    <div class="brand">
+      <span class="mark"><svg aria-hidden="true"><use href="#logo"/></svg></span>
+      <b>studio</b>
+      <span class="tag-proto">Prototype</span>
+      <span class="phone-spend"><span class="pulse"></span>3 running · $34.12</span>
+    </div>
+    <div class="navs">
+      <nav class="nav" aria-label="Work">
+        <a href="#office" data-nav="office" title="Office"><svg class="i" aria-hidden="true"><use href="#i-building-2"/></svg><span class="lbl">Office</span></a>
+        <a href="#board" data-nav="board" title="Board"><svg class="i" aria-hidden="true"><use href="#i-layout-dashboard"/></svg><span class="lbl">Board</span></a>
+        <a href="#asks" data-nav="asks" title="Asks"><svg class="i" aria-hidden="true"><use href="#i-inbox"/></svg><span class="lbl">Asks</span><span class="count attn" aria-label="2 waiting">2</span></a>
+        <a href="#goals" data-nav="goals" title="Goals"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="lbl">Goals</span><span class="count">4</span></a>
+      </nav>
+      <div class="nav-label">Studio</div>
+      <nav class="nav" aria-label="Studio">
+        <a href="#hires" data-nav="hires" title="Hires"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="lbl">Hires</span><span class="count">7</span></a>
+        <a href="#rules" data-nav="rules" title="Rules"><svg class="i" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="lbl">Rules</span><span class="count">5</span></a>
+        <a href="#budget" data-nav="budget" title="Budget"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span class="lbl">Budget</span></a>
+      </nav>
+    </div>
+    <div class="side-foot">
+      <div class="live" title="3 running, 2 queued"><span class="pulse"></span><span><b style="color:var(--fg);font-weight:500">3 running</b> · 2 queued</span></div>
+      <div class="mini">
+        <div class="spend-line"><span class="num">$34.12 <span class="faint">of $100</span></span><span class="faint">today</span></div>
+        <div class="meter" role="img" aria-label="34% of today's limit"><i style="width:34%"></i></div>
+      </div>
+      <div class="foot-row">
+        <span class="faint" style="font-size:12.5px">Sample data</span>
+        <button class="btn ghost icon sm" id="theme" type="button" aria-label="Switch light or dark"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+<!-- OFFICE -->
+<section class="view" data-view="office">
+  <header class="top">
+    <h1>Office</h1>
+    <nav class="segctl" aria-label="View"><a href="#office" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
+    <div class="hud" aria-label="Today">
+      <span><span class="dot attn"></span><b>2</b> need you</span>
+      <span><span class="dot run"></span><b>3</b> running</span>
+      <span><span class="dot ok"></span><b>1</b> ready</span>
+      <span><b>$34.12</b> of $100 <span class="meter"><i style="width:34%"></i></span></span>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
+      <button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
+    </div>
+  </header>
+  <div class="page office-page">
+    <div class="office">
+      <div class="floor" role="group" aria-label="The office floor: select anyone to see their work">
+
+        <div class="room r-work">
+          <div class="room-h"><span class="rl">Workspace</span><span class="rc">3 at their desks</span></div>
+          <div class="desks">
+            <button class="station" type="button" data-sel="GAME-14" aria-label="engineer on GAME-14 needs you">
+              <span class="bubble" title="cargo run --example waves"><span>Run a command</span></span>
+              <span class="person attn cyan" style="--p:25"><span class="face">EN</span><span class="badge" aria-hidden="true">!</span></span>
+              <span class="workdesk"><i class="attn"></i></span>
+              <span class="tid">GAME-14</span>
+              <span class="tt">Spawn enemies in waves</span>
+              <span class="ts attn">Needs you · 2m</span>
+            </button>
+            <button class="station" type="button" data-sel="GAME-17" aria-label="engineer on GAME-17 needs you">
+              <span class="bubble" title="Edit src/player/movement.rs"><span>Edit a protected file</span></span>
+              <span class="person attn cyan" style="--p:25"><span class="face">EN</span><span class="badge" aria-hidden="true">!</span></span>
+              <span class="workdesk"><i class="attn"></i></span>
+              <span class="tid">GAME-17</span>
+              <span class="tt">Tune coyote time to 120 ms</span>
+              <span class="ts attn">Needs you · 2m</span>
+            </button>
+            <button class="station" type="button" data-sel="GAME-15" aria-label="artist working on GAME-15">
+              <span class="bubble-slot"></span>
+              <span class="person run pink" style="--p:25"><span class="face">AR</span></span>
+              <span class="workdesk"><i class="run"></i></span>
+              <span class="tid">GAME-15</span>
+              <span class="tt">Draw the title screen logo</span>
+              <span class="ts run">Working · try 2</span>
+            </button>
+            <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
+            <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
+            <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
+          </div>
+        </div>
+
+        <div class="room r-checks">
+          <div class="room-h"><span class="rl">Checks</span><span class="rc">1 running</span></div>
+          <div class="racks" aria-hidden="true">
+            <span class="rack"><i class="on"></i><i></i><i class="on b"></i><i></i><i></i><i class="on b"></i><i></i><i class="on"></i></span>
+            <span class="rack"><i></i><i class="on b"></i><i></i><i></i><i class="on"></i><i></i><i></i><i class="on b"></i></span>
+            <span class="rack"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <button class="tcard run" type="button" data-sel="GAME-12" aria-label="GAME-12 in checks">
+            <span class="tc-top"><span class="mono">GAME-12</span><span class="faint num">1m 12s</span></span>
+            <span class="mono tc-cmd">cargo test --workspace</span>
+            <span class="track run" style="width:100%"><i style="width:60%"></i></span>
+          </button>
+        </div>
+
+        <div class="room r-plan">
+          <div class="room-h"><span class="rl">Planning</span><span class="rc">3 goals open</span></div>
+          <div class="whiteboard">
+            <button class="goalrow" type="button" data-sel="goal-menus"><span class="gl"><span>Polish the menus</span><span class="faint num">3/6</span></span><span class="track" style="width:100%"><i style="width:50%"></i></span></button>
+            <button class="goalrow" type="button" data-sel="goal-waves"><span class="gl"><span>Enemy waves</span><span class="num" style="color:var(--attn-fg)">0/3</span></span><span class="track" style="width:100%"><i style="width:3%;background:var(--attn)"></i></span></button>
+            <button class="goalrow" type="button" data-sel="goal-editor"><span class="gl"><span>Editor basics</span><span class="faint num">1/3</span></span><span class="track" style="width:100%"><i style="width:33%"></i></span></button>
+          </div>
+        </div>
+
+        <div class="room r-review">
+          <div class="room-h"><span class="rl">Review</span><span class="rc">1 reviewing</span></div>
+          <button class="station" type="button" data-sel="GAME-11" aria-label="reviewer on GAME-11">
+            <span class="person review violet" style="--p:85"><span class="face">RV</span></span>
+            <span class="roundtable"><i></i></span>
+            <span class="tid">GAME-11</span>
+            <span class="tt">Pause menu with resume and quit</span>
+            <span class="ts review">Reading src/pause.rs</span>
+          </button>
+        </div>
+
+        <div class="room r-ready">
+          <div class="room-h"><span class="rl">Ready to land</span><span class="rc">1 ticket</span></div>
+          <div class="tcard ok" data-sel="GAME-9" role="button" tabindex="0" aria-label="GAME-9 ready to land">
+            <span class="tc-top"><span class="mono">GAME-9</span><span class="num"><span class="add">+184</span> <span class="del">−12</span></span></span>
+            <span class="tc-title">Title screen with Start and Quit</span>
+            <span class="tc-foot"><span class="faint num">$2.06</span><button class="btn sm primary" type="button" data-act="Landed GAME-9"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></span>
+          </div>
+          <div class="slot">Nothing else ready</div>
+        </div>
+
+        <div class="room r-lounge">
+          <div class="room-h"><span class="rl">Lounge</span><span class="rc">2 resting</span></div>
+          <div class="lounge">
+            <div class="sofa">
+              <button class="sitter" type="button" data-sel="producer" aria-label="producer, resting"><span class="person idle gold"><span class="face">PR</span></span><span class="ts">producer · 2h</span></button>
+              <button class="sitter" type="button" data-sel="designer" aria-label="designer, resting"><span class="person idle teal"><span class="face">DE</span></span><span class="ts">designer · 12m</span></button>
+            </div>
+            <div class="props" aria-hidden="true"><span class="prop-ic"><svg class="i"><use href="#i-coffee"/></svg></span><span class="prop-ic plant"><svg class="i"><use href="#i-sprout"/></svg></span></div>
+          </div>
+        </div>
+
+        <div class="room r-front">
+          <div class="room-h"><span class="rl">Front desk</span><span class="rc">Calls and routing</span></div>
+          <div class="frontdesk">
+            <button class="sitter" type="button" data-sel="approver" aria-label="approver"><span class="person plain"><span class="face">AP</span></span><span class="ts"><b>96</b> decided · <b class="attn-t">4</b> to you</span></button>
+            <button class="sitter" type="button" data-sel="router" aria-label="router"><span class="person plain"><span class="face">RO</span></span><span class="ts"><b>12</b> routed</span></button>
+          </div>
+          <div class="upnext"><span class="faint">Up next</span><button class="qcard" type="button" data-sel="GAME-18">GAME-18</button><button class="qcard" type="button" data-sel="EDIT-4">EDIT-4</button></div>
+        </div>
+
+        <div class="room r-shipped">
+          <div class="room-h"><span class="rl">Shipped today</span><span class="rc">4 landed · 1 failed</span></div>
+          <div class="shiplist">
+            <a class="ship" href="#ticket"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">GAME-10</span><span class="t">Save settings between sessions</span><span class="num faint">$1.12</span></a>
+            <a class="ship" href="#ticket"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">GAME-8</span><span class="t">Volume sliders</span><span class="num faint">$0.84</span></a>
+            <a class="ship" href="#ticket"><svg class="st failed" aria-hidden="true"><use href="#s-failed"/></svg><span class="mono faint">GAME-7</span><span class="t">Port the renderer to wgpu 30</span><span class="num faint">$3.96</span></a>
+            <a class="ship" href="#ticket"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">EDIT-3</span><span class="t">Undo for tile placement</span><span class="num faint">$0.66</span></a>
+            <a class="ship" href="#ticket"><svg class="st cancelled" aria-hidden="true"><use href="#s-cancelled"/></svg><span class="mono faint">GAME-6</span><span class="t faint">Minimised window crash</span><span class="num faint">$0.12</span></a>
+          </div>
+        </div>
+      </div>
+
+      <aside class="inspector" id="inspector" aria-label="Inspector" aria-live="polite">
+        <div class="ins-h"><h2>Needs you</h2><span class="n">2</span><span class="spacer"></span><a class="btn ghost sm" href="#asks">All asks</a></div>
+        <div class="ins-b">
+          <div class="mini-ask">
+            <div class="mh"><svg class="i sm" aria-hidden="true"><use href="#i-shield-alert"/></svg><span class="mono">GAME-14</span>Run a command<span class="t-ago">2m</span></div>
+            <div class="mb"><div class="cmd">cargo run --example waves</div><div class="why">No rule covers running examples in <span class="mono">game</span>.</div>
+              <div class="ask-actions"><button class="btn sm primary" type="button" data-act="Allowed GAME-14">Allow</button><button class="btn sm" type="button" data-act="Denied GAME-14">Deny</button><button class="btn sm ghost" type="button" data-sel="GAME-14">Details</button></div></div>
+          </div>
+          <div class="mini-ask">
+            <div class="mh"><svg class="i sm" aria-hidden="true"><use href="#i-shield-alert"/></svg><span class="mono">GAME-17</span>Edit a protected file<span class="t-ago">2m</span></div>
+            <div class="mb"><div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div>
+              <div class="ask-actions"><button class="btn sm primary" type="button" data-act="Allowed GAME-17">Allow</button><button class="btn sm" type="button" data-act="Denied GAME-17">Deny</button><button class="btn sm ghost" type="button" data-sel="GAME-17">Details</button></div></div>
+          </div>
+          <div class="ins-sec">
+            <h3>Ready to land</h3>
+            <div class="row compact" style="border:1px solid var(--line);border-radius:10px;grid-template-columns:16px minmax(0,1fr) auto"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><div class="main-col"><span class="t">Title screen with Start and Quit</span><span class="d">GAME-9 · <span class="add">+184</span> <span class="del">−12</span></span></div><button class="btn sm" type="button" data-act="Landed GAME-9">Land</button></div>
+          </div>
+          <div class="ins-sec">
+            <h3>Today</h3>
+            <dl class="kv"><dt>Spent</dt><dd><div class="mini"><span class="num">$34.12 <span class="faint">of $100</span></span><div class="meter"><i style="width:34%"></i></div></div></dd><dt>Shipped</dt><dd>4 landed, 1 failed</dd><dt>Approver</dt><dd>96 calls, 4 sent to you</dd></dl>
+          </div>
+          <div class="ins-sec">
+            <h3>Recent</h3>
+            <div class="events">
+              <div class="e"><span class="when">2m</span><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg><span class="txt"><b>GAME-17</b> asked to edit a protected file</span></div>
+              <div class="e"><span class="when">7m</span><span class="prog" style="--p:50" aria-hidden="true"></span><span class="txt"><b>GAME-12</b> checks started</span></div>
+              <div class="e"><span class="when">9m</span><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="txt"><b>GAME-11</b> passed the design critic</span></div>
+              <div class="e"><span class="when">27m</span><svg class="st failed" aria-hidden="true"><use href="#s-failed"/></svg><span class="txt">Design critic sent <b>GAME-15</b> back</span></div>
+            </div>
+          </div>
+          <p class="faint" style="font-size:12.5px">Click anyone on the floor to see their work.</p>
+        </div>
+      </aside>
+    </div>
+
+    <details class="box lasthour">
+      <summary><svg class="i sm chev" aria-hidden="true"><use href="#i-chevron-right"/></svg><h2>Last hour</h2><span class="faint">What every ticket did, minute by minute</span></summary>
+      <div class="lasthour-b"><div class="legend" style="margin-bottom:12px"><span><i class="sw work"></i>Working</span><span><i class="sw check"></i>Checks</span><span><i class="sw review"></i>Critic or review</span><span><i class="sw wait"></i>Waiting for you</span><span><i class="sw fail"></i>Sent back</span><span><i class="sw ready"></i>Ready to land</span></div>
+      <div class="lane-grid">
+        <div></div>
+        <div class="axis"><span style="left:0">60 min ago</span><span style="left:25%">45</span><span style="left:50%">30</span><span style="left:75%">15</span><span style="left:100%">Now</span></div>
+
+        <div class="lane-label"><span class="av cyan">EN</span><span class="mono">GAME-12</span><span class="t">Fix the jump buffer dropping early presses</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-12: working from 24 to 7 minutes ago, then checks until now"><i class="seg work" style="left:60%;width:28%"></i><i class="seg check" style="left:88.3%;width:11.7%"></i><span class="now-line"></span></div>
+
+        <div class="lane-label"><span class="av cyan">EN</span><span class="mono">GAME-14</span><span class="t">Spawn enemies in waves</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-14: working from 18 to 2 minutes ago, then waiting for you"><i class="seg work" style="left:70%;width:26.7%"></i><i class="seg wait" style="left:96.7%;width:3.3%"></i><span class="now-line"></span></div>
+
+        <div class="lane-label"><span class="av cyan">EN</span><span class="mono">GAME-17</span><span class="t">Tune coyote time to 120 ms</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-17: working from 9 to 2 minutes ago, then waiting for you"><i class="seg work" style="left:85%;width:11.7%"></i><i class="seg wait" style="left:96.7%;width:3.3%"></i><span class="now-line"></span></div>
+
+        <div class="lane-label"><span class="av pink">AR</span><span class="mono">GAME-15</span><span class="t">Draw the title screen logo</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-15: first try from 50 to 30 minutes ago, sent back by the design critic, second try from 12 minutes ago"><i class="seg work" style="left:16.7%;width:30%"></i><i class="seg check" style="left:46.7%;width:3.3%"></i><i class="seg review" style="left:50%;width:4%"></i><i class="seg fail" style="left:54%;width:1.5%"></i><i class="seg work" style="left:80%;width:20%"></i><span class="now-line"></span></div>
+
+        <div class="lane-label"><span class="av violet">RV</span><span class="mono">GAME-11</span><span class="t">Pause menu with resume and quit</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-11: working, checks, design critic, then review since 9 minutes ago"><i class="seg work" style="left:48.3%;width:26.7%"></i><i class="seg check" style="left:75%;width:5%"></i><i class="seg review" style="left:80%;width:20%"></i><span class="now-line"></span></div>
+
+        <div class="lane-label"><span class="av cyan">EN</span><span class="mono">GAME-9</span><span class="t">Title screen with Start and Quit</span></div>
+        <div class="track-lane" role="img" aria-label="GAME-9: worked, checked and reviewed until 24 minutes ago, ready to land since"><i class="seg work" style="left:0;width:40%"></i><i class="seg check" style="left:40%;width:5%"></i><i class="seg review" style="left:45%;width:15%"></i><i class="seg ready" style="left:60%;width:40%"></i><span class="now-line"></span></div>
+      </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- Inspector panels for things on the floor (prototype only: the app renders these on the server). -->
+  <template id="t-GAME-14">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Spawn enemies in waves</div><span class="mono">GAME-14 · Enemy waves</span></div>
+      <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to run a command<span class="t-ago">2m ago</span></div>
+        <div class="ask-b"><div class="cmd">cargo run --example waves</div><div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.</div>
+          <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed GAME-14"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied GAME-14"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span></button></div></div></section>
+      <dl class="kv"><dt>Spent</dt><dd>$0.42 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>18m</dd><dt>Changes</dt><dd><span class="add">+79</span> <span class="del">−25</span> in 2 files</dd></dl>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+    </div>
+  </template>
+  <template id="t-GAME-17">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Tune coyote time to 120 ms</div><span class="mono">GAME-17 · no goal</span></div>
+      <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to edit a protected file<span class="t-ago">2m ago</span></div>
+        <div class="ask-b"><div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div><div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 120 ms. This is the only line that changes.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/player</span> is protected by your rule <a href="#rules">protect-player</a>.</div>
+          <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed GAME-17"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied GAME-17"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button></div></div></section>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+    </div>
+  </template>
+  <template id="t-GAME-15">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av pink">AR</span><b style="font-weight:500">artist</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:25"></span>Working</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Draw the title screen logo</div><span class="mono">GAME-15 · Polish the menus</span></div>
+      <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span>Writing assets/ui/logo.png</span><span class="tm">40s</span></div>
+      <div class="steps" style="width:100%"><div class="bar"><i class="now"></i><i></i><i></i><i></i></div><span class="lbl"><b>Working</b> · try 2 of 3, after the design critic sent it back</span></div>
+      <div class="ins-sec"><h3>Latest steps</h3><div class="steps-list">
+        <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span class="k">Read</span><span class="v">assets/ui/palette.png</span><span class="res">2m</span></div>
+        <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span class="k">Write</span><span class="v">assets/ui/logo.png</span><span class="res">now</span></div>
+      </div></div>
+      <div class="said" style="font-size:13px"><svg class="i sm" style="color:var(--bad-fg);margin-top:3px" aria-hidden="true"><use href="#i-circle-x"/></svg><span>Design critic on try 1: “The logo strokes vanish at 1x. Use 2px strokes and the palette's darkest blue.”</span></div>
+      <dl class="kv"><dt>Spent</dt><dd>$0.91 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>12m on this try</dd><dt>Branch</dt><dd class="mono" style="font-size:12px">studio/game-15</dd></dl>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a><button class="btn ghost" type="button" data-act="Paused GAME-15"><svg class="i sm" aria-hidden="true"><use href="#i-pause"/></svg>Pause</button><button class="btn ghost danger" type="button" data-act="Cancelled GAME-15">Cancel</button></div>
+    </div>
+  </template>
+  <template id="t-GAME-12">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-flask-conical"/></svg><b style="font-weight:500">Checks</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Fix the jump buffer dropping early presses</div><span class="mono">GAME-12 · engineer finished try 1</span></div>
+      <div class="ins-sec"><h3>Project checks</h3><div class="steps-list">
+        <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">fmt</span><span class="v">cargo fmt --all --check</span><span class="res ok">4s</span></div>
+        <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">clippy</span><span class="v">cargo clippy -- -D warnings</span><span class="res ok">38s</span></div>
+        <div class="tool"><span class="prog" style="--p:60;width:14px;height:14px"></span><span class="k">test</span><span class="v">cargo test --workspace</span><span class="res">1m 12s</span></div>
+      </div></div>
+      <p class="faint" style="font-size:13px">Then the design critic and the reviewer read it.</p>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+    </div>
+  </template>
+  <template id="t-GAME-11">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av violet">RV</span><b style="font-weight:500">reviewer</b><span class="model">opus</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:85"></span>Reviewing</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Pause menu with resume and quit</div><span class="mono">GAME-11 · Polish the menus</span></div>
+      <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span>Reading src/pause.rs</span><span class="tm">8s</span></div>
+      <div class="steps" style="width:100%"><div class="bar"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><span class="lbl"><b>Review</b> · checks and the design critic passed</span></div>
+      <dl class="kv"><dt>Written by</dt><dd><span class="who"><span class="av cyan">EN</span>engineer, sonnet</span></dd><dt>Changes</dt><dd><span class="add">+212</span> <span class="del">−18</span> in 4 files</dd><dt>Spent</dt><dd>$1.24 <span class="faint">of $8.00</span></dd></dl>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+    </div>
+  </template>
+  <template id="t-GAME-9">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><b style="font-weight:500">Ready to land</b><span class="spacer"></span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Title screen with Start and Quit</div><span class="mono">GAME-9 · Polish the menus</span></div>
+      <p class="muted" style="font-size:13px">Passed checks, the design critic and review on the first try.</p>
+      <div class="files"><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/title.rs</span><span class="num"><span class="add">+168</span> <span class="del">−0</span></span></div><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/main.rs</span><span class="num"><span class="add">+16</span> <span class="del">−12</span></span></div></div>
+      <div class="ins-actions"><button class="btn primary" type="button" data-act="Landed GAME-9"><svg class="i" aria-hidden="true"><use href="#i-git-merge"/></svg>Land on Polish the menus</button><a class="btn" href="#ticket">Open ticket</a></div>
+    </div>
+  </template>
+  <template id="t-producer">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av gold">PR</span><b style="font-weight:500">producer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
+    <div class="ins-b">
+      <p class="muted" style="font-size:13px">Plans goals into tickets. Idle for 2 hours; planned 2 goals today.</p>
+      <div class="ins-actions"><button class="btn primary" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Give it a goal</button><a class="btn ghost" href="#hires">Edit hire</a></div>
+    </div>
+  </template>
+  <template id="t-designer">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av teal">DE</span><b style="font-weight:500">designer</b><span class="model">opus</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
+    <div class="ins-b">
+      <p class="muted" style="font-size:13px">Judges web and art changes from their screenshots before review. Idle for 12 minutes; 4 critiques today, 1 sent back.</p>
+      <div class="ins-actions"><a class="btn ghost" href="#hires">Edit hire</a></div>
+    </div>
+  </template>
+  <template id="t-approver">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av">AP</span><b style="font-weight:500">approver</b><span class="model">haiku</span><span class="spacer"></span></div>
+    <div class="ins-b">
+      <p class="muted" style="font-size:13px">Decides the tool calls no rule covers, so only the risky ones reach you.</p>
+      <dl class="kv"><dt>Today</dt><dd>96 calls: 81 allowed, 11 denied, 4 sent to you</dd><dt>Spent</dt><dd>$0.48</dd></dl>
+      <div class="ins-sec"><h3>Latest</h3><div class="events">
+        <div class="e"><span class="when">2m</span><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg><span class="txt">Sent you <b>GAME-14</b>: <span class="code">cargo run --example waves</span></span></div>
+        <div class="e"><span class="when">9m</span><svg class="i sm" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="txt">Allowed <span class="code">cargo test</span> in <b>GAME-12</b></span></div>
+        <div class="e"><span class="when">14m</span><svg class="i sm" style="color:var(--bad-fg)" aria-hidden="true"><use href="#i-x"/></svg><span class="txt">Denied <span class="code">curl</span> in <b>GAME-15</b>: not needed</span></div>
+      </div></div>
+      <div class="ins-actions"><a class="btn ghost" href="#rules">Rules</a><a class="btn ghost" href="#hires">Edit hire</a></div>
+    </div>
+  </template>
+  <template id="t-router">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av">RO</span><b style="font-weight:500">router</b><span class="model">haiku</span><span class="spacer"></span></div>
+    <div class="ins-b">
+      <p class="muted" style="font-size:13px">Picks the hire for each new ticket. Routed 12 today: 10 to engineer, 2 to artist.</p>
+      <div class="ins-actions"><button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New ticket</button><a class="btn ghost" href="#hires">Edit hire</a></div>
+    </div>
+  </template>
+  <template id="t-goal-menus">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Polish the menus</div><span class="mono">game · studio/goal/polish-the-menus</span></div>
+      <div class="mini"><span class="num">3 of 6 landed · $9.42</span><div class="meter"><i style="width:50%;background:var(--ok)"></i></div></div>
+      <div class="events">
+        <div class="e"><span class="when mono">9</span><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="txt"><b>Title screen with Start and Quit</b> · ready</span></div>
+        <div class="e"><span class="when mono">11</span><span class="prog" style="--p:85"></span><span class="txt"><b>Pause menu with resume and quit</b> · review</span></div>
+        <div class="e"><span class="when mono">15</span><span class="prog" style="--p:25"></span><span class="txt"><b>Draw the title screen logo</b> · working</span></div>
+        <div class="e"><span class="when mono">18</span><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="txt"><b>Gamepad support in menus</b> · up next</span></div>
+      </div>
+      <div class="ins-actions"><a class="btn" href="#goals">Open goal<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+    </div>
+  </template>
+  <template id="t-goal-waves">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Enemy waves</div><span class="mono">game · studio/goal/enemy-waves</span></div>
+      <p class="muted" style="font-size:13px">0 of 3 landed. GAME-14 is waiting for you to allow a command.</p>
+      <div class="ins-actions"><button class="btn primary" type="button" data-sel="GAME-14">See the ask</button><a class="btn" href="#goals">Open goal</a></div>
+    </div>
+  </template>
+  <template id="t-goal-editor">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Editor basics</div><span class="mono">editor · studio/goal/editor-basics</span></div>
+      <p class="muted" style="font-size:13px">1 of 3 landed. EDIT-4 is queued for the next free run slot.</p>
+      <div class="ins-actions"><a class="btn" href="#goals">Open goal</a></div>
+    </div>
+  </template>
+  <template id="t-GAME-18">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Gamepad support in menus</div><span class="mono">GAME-18 · Polish the menus</span></div>
+      <p class="muted" style="font-size:13px">Starts after GAME-9 lands: tickets in a goal run one at a time.</p>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button" data-act="Cancelled GAME-18">Cancel</button></div>
+    </div>
+  </template>
+  <template id="t-EDIT-4">
+    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
+    <div class="ins-b">
+      <div><div class="ins-title">Snap tiles to the grid in the level editor</div><span class="mono">EDIT-4 · Editor basics</span></div>
+      <p class="muted" style="font-size:13px">Queued. It starts when one of the 5 run slots frees up.</p>
+      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button" data-act="Cancelled EDIT-4">Cancel</button></div>
+    </div>
+  </template>
+</section>
+
+<!-- BOARD -->
+<section class="view" data-view="board" hidden>
+  <header class="top">
+    <h1>Board</h1>
+    <nav class="segctl" aria-label="View"><a href="#office"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
+    <span class="chip"><svg class="i" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>All projects</span>
+    <div class="actions">
+      <button class="btn" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
+      <button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
+    </div>
+  </header>
+  <div class="page">
+    <div class="kpis">
+      <a class="kpi" href="#asks"><span class="label"><span class="dot attn"></span>Needs you</span><span class="value">2</span><span class="sub">Oldest waiting 6 min</span></a>
+      <div class="kpi"><span class="label"><span class="dot run"></span>Running</span><span class="value">3</span><span class="sub">2 working · 1 in review</span></div>
+      <div class="kpi"><span class="label"><span class="dot ok"></span>Ready to land</span><span class="value">1</span><span class="sub">GAME-9 · <span class="add">+184</span> <span class="del">−12</span></span></div>
+      <a class="kpi" href="#budget"><span class="label">Spend today</span><span class="value">$34.12<small>of $100</small></span>
+        <svg class="spark" viewBox="0 0 120 20" preserveAspectRatio="none" role="img" aria-label="Spend over the last 14 days"><polyline points="0,15 9,12 18,16 27,9 36,13 45,6 54,11 63,14 72,8 81,10 90,5 99,9 108,7 120,12" fill="none" stroke="var(--fg-3)" stroke-width="1.5" vector-effect="non-scaling-stroke"/><circle cx="120" cy="12" r="2.2" fill="var(--fg)"/></svg>
+      </a>
+    </div>
+
+    <div class="box">
+      <div class="grp"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you <span class="n">2</span><a class="side-note" href="#asks">Open asks</a></div>
+      <div class="row" data-ask="GAME-14">
+        <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
+        <span class="id">GAME-14</span>
+        <div class="main-col"><a class="t" href="#ticket">Spawn enemies in waves</a><span class="d">Wants to run <span class="code">cargo run --example waves</span><span class="reason">No rule covers it</span></span></div>
+        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">6m</span><button class="btn sm" type="button" data-act="Denied">Deny</button><button class="btn sm primary" type="button" data-act="Allowed">Allow</button></div>
+      </div>
+      <div class="row" data-ask="GAME-17">
+        <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
+        <span class="id">GAME-17</span>
+        <div class="main-col"><a class="t" href="#ticket">Tune coyote time to 120 ms</a><span class="d">Wants to edit <span class="code">src/player/movement.rs</span><span class="reason">src/player is protected</span></span></div>
+        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">2m</span><button class="btn sm" type="button" data-act="Denied">Deny</button><button class="btn sm primary" type="button" data-act="Allowed">Allow</button></div>
+      </div>
+
+      <div class="grp"><span class="prog" style="--p:50" aria-hidden="true"></span>Running <span class="n">3</span></div>
+      <div class="row">
+        <span class="prog" style="--p:50" aria-hidden="true"></span>
+        <span class="id">GAME-12</span>
+        <div class="main-col"><a class="t" href="#ticket">Fix the jump buffer dropping early presses</a><span class="d">Running <span class="code">cargo test --workspace</span></span></div>
+        <div class="right"><div class="steps"><div class="bar"><i class="done"></i><i class="now"></i><i></i><i></i></div><span class="lbl"><b>Checks</b> · try 1 of 3</span></div><span class="who"><span class="av cyan">EN</span></span><span class="w">24m</span><span class="w">$0.38</span></div>
+      </div>
+      <div class="row">
+        <span class="prog" style="--p:25" aria-hidden="true"></span>
+        <span class="id">GAME-15</span>
+        <div class="main-col"><a class="t" href="#ticket">Draw the title screen logo</a><span class="d">Writing <span class="code">assets/ui/logo.png</span></span></div>
+        <div class="right"><div class="steps"><div class="bar"><i class="now"></i><i></i><i></i><i></i></div><span class="lbl"><b>Working</b> · try 2 of 3</span></div><span class="who"><span class="av pink">AR</span></span><span class="w">12m</span><span class="w">$0.91</span></div>
+      </div>
+      <div class="row">
+        <span class="prog" style="--p:85" aria-hidden="true"></span>
+        <span class="id">GAME-11</span>
+        <div class="main-col"><a class="t" href="#ticket">Pause menu with resume and quit</a><span class="d">Reviewer reading <span class="code">src/pause.rs</span></span></div>
+        <div class="right"><div class="steps"><div class="bar"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><span class="lbl"><b>Review</b> · try 1 of 3</span></div><span class="who"><span class="av violet">RV</span></span><span class="w">31m</span><span class="w">$1.24</span></div>
+      </div>
+
+      <div class="grp"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Ready to land <span class="n">1</span></div>
+      <div class="row">
+        <svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>
+        <span class="id">GAME-9</span>
+        <div class="main-col"><a class="t" href="#ticket">Title screen with Start and Quit</a><span class="d">Passed checks, design and review · <span class="add">+184</span> <span class="del">−12</span></span></div>
+        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the menus</span><span class="w">$2.06</span><button class="btn sm" type="button" data-act="Landed"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></div>
+      </div>
+
+      <div class="grp"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Up next <span class="n">2</span></div>
+      <div class="row compact">
+        <svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>
+        <span class="id">GAME-18</span>
+        <div class="main-col"><a class="t" href="#ticket">Gamepad support in menus</a></div>
+        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the menus</span><span class="faint">After GAME-9</span></div>
+      </div>
+      <div class="row compact">
+        <svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>
+        <span class="id">EDIT-4</span>
+        <div class="main-col"><a class="t" href="#ticket">Snap tiles to the grid in the level editor</a></div>
+        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Editor basics</span><span class="faint">Waiting for a slot</span></div>
+      </div>
+    </div>
+
+    <section>
+      <div class="sec"><h2>Done today</h2><span class="n">5</span><a class="link" href="#goals">All history<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+      <div class="table">
+        <table>
+          <thead><tr><th style="width:96px">Ticket</th><th>Title</th><th>Goal</th><th>Hire</th><th class="r">Cost</th><th class="r">Finished</th></tr></thead>
+          <tbody>
+            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">GAME-10</span></span></td><td class="title">Save settings between sessions</td><td class="muted">Settings</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$1.12</td><td class="r faint num">1h ago</td></tr>
+            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">GAME-8</span></span></td><td class="title">Volume sliders for music and effects</td><td class="muted">Settings</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.84</td><td class="r faint num">2h ago</td></tr>
+            <tr><td><span class="cellflex"><svg class="st failed" aria-hidden="true"><use href="#s-failed"/></svg><span class="mono faint">GAME-7</span></span></td><td class="title">Port the renderer to wgpu 30 <span class="pill bad" style="margin-left:6px;height:20px;font-size:11.5px">Checks failed 3 times</span></td><td class="faint">None</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$3.96</td><td class="r faint num">4h ago</td></tr>
+            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">EDIT-3</span></span></td><td class="title">Undo for tile placement</td><td class="muted">Editor basics</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.66</td><td class="r faint num">5h ago</td></tr>
+            <tr><td><span class="cellflex"><svg class="st cancelled" aria-hidden="true"><use href="#s-cancelled"/></svg><span class="mono faint">GAME-6</span></span></td><td class="title faint">Fix the crash when the window is minimised</td><td class="faint">None</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.12</td><td class="r faint num">6h ago</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- TICKET -->
+<section class="view" data-view="ticket" hidden>
+  <header class="top">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="#board">Board</a><svg class="i sm" aria-hidden="true"><use href="#i-chevron-right"/></svg><span class="mono">GAME-14</span></nav>
+    <div class="actions">
+      <button class="btn ghost sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-copy"/></svg><span class="label">Copy as Markdown</span></button>
+      <button class="btn ghost icon sm" type="button" aria-label="More actions" popovertarget="ticket-menu"><svg class="i" aria-hidden="true"><use href="#i-ellipsis"/></svg></button>
+    </div>
+  </header>
+  <div class="page">
+    <div class="ticket">
+      <div class="t-main">
+        <div class="t-head">
+          <h2 class="t-title">Spawn enemies in waves</h2>
+          <div class="byline"><span class="who"><span class="av gold">PR</span>producer</span><span>filed this from</span><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Enemy waves</span><span>· 21m ago</span></div>
+        </div>
+        <div class="prose">
+          <p>Enemies arrive in waves that grow in size. A wave starts once the previous one is cleared, after a three second pause. Wave sizes come from a table in <code>rules.rs</code>, so they can be tuned without touching systems.</p>
+          <p><b>Done when</b> waves 1 to 8 follow the table, later waves add two enemies each, and <code>rules::wave_size</code> has tests.</p>
+        </div>
+
+        <section class="ask" aria-label="Waiting for you">
+          <div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to run a command<span class="t-ago">2m ago</span></div>
+          <div class="ask-b">
+            <div class="cmd">cargo run --example waves</div>
+            <div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div>
+            <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.<a href="#rules">Add a rule</a></div>
+            <div class="ask-actions">
+              <button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button>
+              <button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button>
+              <button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span> in game</button>
+              <span class="spacer"></span>
+              <button class="note-toggle" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-message-square-text"/></svg>Add a note</button>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div class="sec"><h2>Activity</h2><span class="link" style="cursor:default"><span class="pulse" style="background:var(--attn);animation:none"></span>Waiting for you</span></div>
+          <div class="feed">
+            <div class="ev"><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg></span><div class="hd"><b>producer</b> filed this from <b>Enemy waves</b> <span>· 21m</span></div></div>
+            <div class="ev"><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-corner-down-right"/></svg></span><div class="hd"><b>router</b> gave it to <b>engineer</b>: game logic with tests <span>· 21m</span></div></div>
+            <div class="ev"><span class="ic av cyan">EN</span>
+              <div><div class="hd"><b>engineer</b><span class="model">sonnet</span> <span>· 18m</span></div>
+                <div class="msg"><p>Spawning runs on a fixed timer in <code>spawning.rs</code>. I'll move wave sizes into <code>rules.rs</code> as a table and drive spawning from it:</p>
+                  <ul><li><code>WAVES</code>: sizes for waves 1 to 8</li><li><code>wave_size(n)</code>: the table, then two more per wave</li><li><code>wave_cleared</code>: true when no enemy is alive</li></ul></div>
+                <details class="tools" open>
+                  <summary><svg class="i sm chev" aria-hidden="true"><use href="#i-chevron-right"/></svg><span>7 steps</span><span class="sum">Read 2 files, searched once, edited 2 files, ran tests</span></summary>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span class="k">Read</span><span class="v">src/spawning.rs</span><span class="res">142 lines</span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span class="k">Read</span><span class="v">src/rules.rs</span><span class="res">310 lines</span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="k">Search</span><span class="v">spawn_enemy</span><span class="res">3 matches</span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span class="k">Edit</span><span class="v">src/rules.rs</span><span class="res"><span class="add">+48</span> <span class="del">−3</span></span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span class="k">Edit</span><span class="v">src/spawning.rs</span><span class="res"><span class="add">+31</span> <span class="del">−22</span></span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg><span class="k">Run</span><span class="v">cargo test --locked rules::</span><span class="res ok">12 passed</span></div>
+                  <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="k">Allowed</span><span class="v">approver: tests run inside the worktree</span><span class="res"></span></div>
+                </details>
+              </div>
+            </div>
+            <div class="ev"><span class="ic av cyan">EN</span>
+              <div><div class="hd"><b>engineer</b> <span>· 3m</span></div><div class="msg"><p>The tests pass. Before I hand it over I'd like to watch it run.</p></div></div>
+            </div>
+            <div class="ev"><span class="ic attn"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg></span><div class="hd"><b>Asked you</b> to run <span class="code">cargo run --example waves</span> <span>· 2m</span></div></div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="props" aria-label="Ticket details">
+        <dl>
+          <div class="prop"><dt>Status</dt><dd><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></dd></div>
+          <div class="prop"><dt>Hire</dt><dd><span class="who"><span class="av cyan">EN</span>engineer</span><span class="model">sonnet</span></dd></div>
+          <div class="prop"><dt>Goal</dt><dd><a href="#goals" class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Enemy waves</a></dd></div>
+          <div class="prop"><dt>Project</dt><dd>game</dd></div>
+          <div class="prop"><dt>Branch</dt><dd><svg class="i sm faint" aria-hidden="true"><use href="#i-git-branch"/></svg><span class="mono">studio/game-14</span></dd></div>
+          <div class="prop"><dt>Try</dt><dd>1 of 3</dd></div>
+          <div class="prop"><dt>Spent</dt><dd><div class="mini"><span class="num">$0.42 <span class="faint">of $8.00</span></span><div class="meter"><i style="width:5.25%"></i></div></div></dd></div>
+          <div class="prop"><dt>Time</dt><dd class="num">18m</dd></div>
+        </dl>
+        <div class="sep"></div>
+        <div>
+          <h3>Progress</h3>
+          <div class="vsteps">
+            <div class="vstep now"><span class="ring"></span><span>Work</span><span class="faint" style="font-weight:400">waiting for you</span></div>
+            <div class="vstep"><span class="ring"></span><span>Checks</span><span></span></div>
+            <div class="vstep"><span class="ring"></span><span>Design critic</span><span></span></div>
+            <div class="vstep"><span class="ring"></span><span>Review</span><span></span></div>
+            <div class="vstep"><span class="ring"></span><span>Land on Enemy waves</span><span></span></div>
+          </div>
+        </div>
+        <div class="sep"></div>
+        <div>
+          <h3>Changes</h3>
+          <div class="files">
+            <div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/rules.rs</span><span class="num"><span class="add">+48</span> <span class="del">−3</span></span></div>
+            <div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/spawning.rs</span><span class="num"><span class="add">+31</span> <span class="del">−22</span></span></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <div popover id="ticket-menu" class="dialog" style="width:220px;padding:6px;border-radius:10px">
+    <button class="btn ghost" type="button" style="width:100%;justify-content:flex-start"><svg class="i" aria-hidden="true"><use href="#i-pause"/></svg>Pause</button>
+    <button class="btn ghost danger" type="button" style="width:100%;justify-content:flex-start"><svg class="i" aria-hidden="true"><use href="#i-circle-x"/></svg>Cancel ticket</button>
+  </div>
+</section>
+
+<!-- ASKS -->
+<section class="view" data-view="asks" hidden>
+  <header class="top"><h1>Asks</h1><span class="faint" style="font-size:13px">The approver decided 96 calls today and sent you 4.</span></header>
+  <div class="page" style="max-width:880px">
+    <section class="ask" aria-label="GAME-14 asks">
+      <div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg><span><span class="mono">GAME-14</span> · Spawn enemies in waves</span><span class="t-ago">6m ago</span></div>
+      <div class="ask-b">
+        <div class="cmd">cargo run --example waves</div>
+        <div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div>
+        <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.<a href="#rules">Add a rule</a></div>
+        <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span> in game</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+      </div>
+    </section>
+    <section class="ask" aria-label="GAME-17 asks">
+      <div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg><span><span class="mono">GAME-17</span> · Tune coyote time to 120 ms</span><span class="t-ago">2m ago</span></div>
+      <div class="ask-b">
+        <div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div>
+        <div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 120 ms. This is the only line that changes.”</span></div>
+        <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/player</span> is protected by your rule <a href="#rules">protect-player</a>.</div>
+        <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- GOALS -->
+<section class="view" data-view="goals" hidden>
+  <header class="top"><h1>Goals</h1><div class="actions"><button class="btn primary" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New goal</span></button></div></header>
+  <div class="page">
+    <div class="table">
+      <table class="goals">
+        <thead><tr><th>Goal</th><th>Progress</th><th class="r">Spent</th><th>State</th><th class="r">Updated</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-down"/></svg><span><b>Polish the menus</b><span class="faint">game · studio/goal/polish-the-menus</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:50%"></i></span><span class="faint num">3 of 6</span></span></td><td class="r num">$9.42</td><td><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></td><td class="r faint">4m ago</td><td></td></tr>
+          <tr class="sub"><td colspan="6"><span class="cellflex"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="mono faint">GAME-9</span><a href="#ticket">Title screen with Start and Quit</a><span class="faint">· Ready to land · $2.06</span></span></td></tr>
+          <tr class="sub"><td colspan="6"><span class="cellflex"><span class="prog" style="--p:85"></span><span class="mono faint">GAME-11</span><a href="#ticket">Pause menu with resume and quit</a><span class="faint">· In review · $1.24</span></span></td></tr>
+          <tr class="sub"><td colspan="6"><span class="cellflex"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="mono faint">GAME-18</span><a href="#ticket">Gamepad support in menus</a><span class="faint">· Up next</span></span></td></tr>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Enemy waves</b><span class="faint">game · studio/goal/enemy-waves</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:3%"></i></span><span class="faint num">0 of 3</span></span></td><td class="r num">$0.42</td><td><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></td><td class="r faint">2m ago</td><td></td></tr>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Editor basics</b><span class="faint">editor · studio/goal/editor-basics</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:33%"></i></span><span class="faint num">1 of 3</span></span></td><td class="r num">$1.88</td><td><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></td><td class="r faint">5h ago</td><td></td></tr>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Settings</b><span class="faint">game · studio/goal/settings</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:100%"></i></span><span class="faint num">2 of 2</span></span></td><td class="r num">$1.96</td><td><span class="pill ok"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Done</span></td><td class="r faint">1h ago</td><td class="r"><button class="btn sm" type="button" data-act="Merged into master"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge</button></td></tr>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b class="muted">Audio pass</b><span class="faint">game · merged into master</span></span></span></td><td><span class="cellflex"><span class="track neutral"><i style="width:100%"></i></span><span class="faint num">4 of 4</span></span></td><td class="r num">$6.10</td><td><span class="pill neutral"><svg class="st landed" style="color:var(--fg-3)" aria-hidden="true"><use href="#s-landed"/></svg>Merged</span></td><td class="r faint">Yesterday</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- BUDGET -->
+<section class="view" data-view="budget" hidden>
+  <header class="top"><h1>Budget</h1><span class="faint" style="font-size:13px">Spend over the last 24 hours. A run only starts if its allowance fits under every limit.</span></header>
+  <div class="page">
+    <div class="kpis">
+      <div class="kpi"><span class="label">Spent today</span><span class="value">$34.12<small>of $100</small></span><div class="meter" style="margin-top:6px"><i style="width:34%"></i></div></div>
+      <div class="kpi"><span class="label">Held for live runs</span><span class="value">$3.20</span><span class="sub">3 runs, released as they finish</span></div>
+      <div class="kpi"><span class="label">Last 7 days</span><span class="value">$218.40</span><span class="sub">$31.20 a day on average</span></div>
+      <div class="kpi"><span class="label">Daily limit</span><span class="value">$100</span><span class="sub">$8 a ticket · reviewer $1.50</span></div>
+    </div>
+    <section class="box chart">
+      <div class="chart-head"><h2>Daily spend</h2><span class="faint" style="font-size:12.5px">Last 14 days</span></div>
+      <div class="plot" role="img" aria-label="Daily spend for the last 14 days, between $9 and $64, under the $100 limit">
+        <div class="gridline limit" style="top:0"><span>$100</span><em>Daily limit</em></div>
+        <div class="gridline" style="top:25%"><span>$75</span></div>
+        <div class="gridline" style="top:50%"><span>$50</span></div>
+        <div class="gridline" style="top:75%"><span>$25</span></div>
+        <div class="gridline" style="top:100%"><span>$0</span></div>
+        <div class="bars"><i style="height:22%" title="$22"></i><i style="height:31%"></i><i style="height:9%"></i><i style="height:44%"></i><i style="height:28%"></i><i style="height:56%"></i><i style="height:35%"></i><i style="height:18%"></i><i style="height:47%"></i><i style="height:39%"></i><i style="height:64%"></i><i style="height:42%"></i><i style="height:51%"></i><i class="today" style="height:34%"></i></div>
+      </div>
+      <div class="xlabels"><span>18</span><span>19</span><span>20</span><span>21</span><span>22</span><span>23</span><span>24</span><span>25</span><span>26</span><span>27</span><span>28</span><span>29</span><span>30</span><span style="color:var(--fg)">Today</span></div>
+    </section>
+    <div class="cols-2">
+      <section>
+        <div class="sec"><h2>By hire</h2><span class="n">today</span></div>
+        <div class="table"><table><thead><tr><th>Hire</th><th class="r">Runs</th><th class="r">Spent</th></tr></thead><tbody>
+          <tr><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">18</td><td><div class="share"><span class="track"><i style="width:63%"></i></span><span class="num">$21.40</span></div></td></tr>
+          <tr><td><span class="who"><span class="av violet">RV</span>reviewer</span></td><td class="r num">11</td><td><div class="share"><span class="track"><i style="width:26%"></i></span><span class="num">$8.96</span></div></td></tr>
+          <tr><td><span class="who"><span class="av pink">AR</span>artist</span></td><td class="r num">3</td><td><div class="share"><span class="track"><i style="width:6%"></i></span><span class="num">$2.10</span></div></td></tr>
+          <tr><td><span class="who"><span class="av gold">PR</span>producer</span></td><td class="r num">2</td><td><div class="share"><span class="track"><i style="width:3%"></i></span><span class="num">$0.98</span></div></td></tr>
+          <tr><td><span class="who"><span class="av">AP</span>approver</span></td><td class="r num">96</td><td><div class="share"><span class="track"><i style="width:1.4%"></i></span><span class="num">$0.48</span></div></td></tr>
+          <tr><td><span class="who"><span class="av">RO</span>router</span></td><td class="r num">12</td><td><div class="share"><span class="track"><i style="width:.6%"></i></span><span class="num">$0.20</span></div></td></tr>
+        </tbody></table></div>
+      </section>
+      <section>
+        <div class="sec"><h2>Most expensive tickets</h2><span class="n">today</span></div>
+        <div class="table"><table><thead><tr><th>Ticket</th><th>Outcome</th><th class="r">Spent</th></tr></thead><tbody>
+          <tr><td><span class="cellflex"><span class="mono faint">GAME-7</span>Port the renderer to wgpu 30</span></td><td><span class="pill bad" style="height:20px;font-size:11.5px">Failed</span></td><td class="r num">$3.96</td></tr>
+          <tr><td><span class="cellflex"><span class="mono faint">GAME-9</span>Title screen with Start and Quit</span></td><td><span class="pill ok" style="height:20px;font-size:11.5px">Ready</span></td><td class="r num">$2.06</td></tr>
+          <tr><td><span class="cellflex"><span class="mono faint">GAME-11</span>Pause menu with resume and quit</span></td><td><span class="pill run" style="height:20px;font-size:11.5px">Running</span></td><td class="r num">$1.24</td></tr>
+          <tr><td><span class="cellflex"><span class="mono faint">GAME-10</span>Save settings between sessions</span></td><td><span class="pill ok" style="height:20px;font-size:11.5px">Landed</span></td><td class="r num">$1.12</td></tr>
+        </tbody></table></div>
+        <div class="sec" style="margin-top:24px"><h2>By model</h2><span class="n">today</span></div>
+        <div class="table"><table><tbody>
+          <tr><td><span class="model">sonnet</span></td><td><div class="share"><span class="track"><i style="width:68%"></i></span><span class="num">$23.40</span></div></td></tr>
+          <tr><td><span class="model">opus</span></td><td><div class="share"><span class="track"><i style="width:30%"></i></span><span class="num">$10.20</span></div></td></tr>
+          <tr><td><span class="model">haiku</span></td><td><div class="share"><span class="track"><i style="width:1.5%"></i></span><span class="num">$0.52</span></div></td></tr>
+        </tbody></table></div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- HIRES -->
+<section class="view" data-view="hires" hidden>
+  <header class="top"><h1>Hires</h1><div class="actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New hire</span></button></div></header>
+  <div class="page">
+    <section>
+      <div class="sec"><h2>Team</h2><span class="n">5</span></div>
+      <div class="table"><table>
+        <thead><tr><th>Hire</th><th>Model</th><th>Effort</th><th>Now</th><th>Today</th><th class="r">Spent today</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><span class="who"><span class="av cyan">EN</span><span><b style="font-weight:500">engineer</b><br><span class="faint" style="font-size:12px">Writes code</span></span></span></td><td><span class="cellflex"><span class="model">sonnet</span><svg class="i sm faint" aria-hidden="true"><use href="#i-arrow-right"/></svg><span class="model">opus</span></span></td><td class="muted">Medium</td><td><span class="cellflex"><span class="prog" style="--p:50"></span><a href="#ticket">GAME-12</a><span class="faint">and 2 more</span></span></td><td class="muted">6 done · 5 passed review</td><td class="r num">$21.40</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+          <tr><td><span class="who"><span class="av violet">RV</span><span><b style="font-weight:500">reviewer</b><br><span class="faint" style="font-size:12px">Reads every diff</span></span></span></td><td><span class="cellflex"><span class="model">opus</span><svg class="i sm faint" aria-hidden="true"><use href="#i-arrow-right"/></svg><span class="model">sonnet</span></span></td><td class="muted">Medium</td><td><span class="cellflex"><span class="prog" style="--p:85"></span><a href="#ticket">GAME-11</a></span></td><td class="muted">11 reviews</td><td class="r num">$8.96</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+          <tr><td><span class="who"><span class="av pink">AR</span><span><b style="font-weight:500">artist</b><br><span class="faint" style="font-size:12px">Pixel art and UI</span></span></span></td><td><span class="model">sonnet</span></td><td class="muted">Medium</td><td><span class="cellflex"><span class="prog" style="--p:25"></span><a href="#ticket">GAME-15</a></span></td><td class="muted">1 done · passed review</td><td class="r num">$2.10</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+          <tr><td><span class="who"><span class="av teal">DE</span><span><b style="font-weight:500">designer</b><br><span class="faint" style="font-size:12px">Design critic</span></span></span></td><td><span class="cellflex"><span class="model">opus</span><svg class="i sm faint" aria-hidden="true"><use href="#i-arrow-right"/></svg><span class="model">sonnet</span></span></td><td class="muted">Medium</td><td class="faint">Idle</td><td class="muted">4 critiques</td><td class="r num">$1.80</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+          <tr><td><span class="who"><span class="av gold">PR</span><span><b style="font-weight:500">producer</b><br><span class="faint" style="font-size:12px">Plans goals</span></span></span></td><td><span class="model">sonnet</span></td><td class="muted">Medium</td><td class="faint">Idle</td><td class="muted">2 goals planned</td><td class="r num">$0.98</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+    <section>
+      <div class="sec"><h2>Working for the studio</h2><span class="n">2</span></div>
+      <div class="table"><table>
+        <thead><tr><th>Hire</th><th>Model</th><th>Today</th><th class="r">Spent today</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><span class="who"><span class="av">AP</span><span><b style="font-weight:500">approver</b><br><span class="faint" style="font-size:12px">Decides tool calls no rule covers</span></span></span></td><td><span class="model">haiku</span></td><td class="muted">96 calls: 81 allowed, 11 denied, 4 sent to you</td><td class="r num">$0.48</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+          <tr><td><span class="who"><span class="av">RO</span><span><b style="font-weight:500">router</b><br><span class="faint" style="font-size:12px">Picks the hire for new tickets</span></span></span></td><td><span class="model">haiku</span></td><td class="muted">12 tickets routed</td><td class="r num">$0.20</td><td class="r"><button class="btn ghost sm" type="button">Edit</button></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+</section>
+
+<!-- RULES -->
+<section class="view" data-view="rules" hidden>
+  <header class="top"><h1>Rules</h1><div class="actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New rule</span></button></div></header>
+  <div class="page">
+    <div class="split">
+      <nav class="rl" aria-label="Rules">
+        <div class="scope">Studio</div>
+        <a href="#rules"><span class="nm">no-push<span class="kind">gate · block</span></span><span class="first">The studio lands work; agents never push.</span></a>
+        <a href="#rules"><span class="nm">read-dependencies<span class="kind">gate · allow</span></span><span class="first">Agents may read the source of Rust dependencies.</span></a>
+        <a href="#rules"><span class="nm">house-style<span class="kind">guide</span></span><span class="first">Read CONTRIBUTING.md before you start.</span></a>
+        <div class="scope">Project game</div>
+        <a href="#rules" aria-current="true"><span class="nm">protect-player<span class="kind">protect · ask</span></span><span class="first">Player movement is tuned by hand.</span></a>
+        <a href="#rules"><span class="nm">run-the-checks<span class="kind">check · block</span></span><span class="first">fmt, clippy and tests must pass.</span></a>
+      </nav>
+      <div class="ed">
+        <div class="ed-h"><h2>protect-player</h2><span class="pill neutral">protect</span><span class="pill attn">ask</span><span class="faint" style="font-size:12.5px">game/.studio/rules/protect-player.md</span></div>
+        <pre class="src" aria-label="Rule file"><span class="k">---</span><span><span class="k">kind:</span> protect</span><span><span class="k">level:</span> ask</span><span><span class="k">when:</span></span><span>  <span class="k">paths:</span> ["src/player/**"]</span><span class="k">---</span><span>Player movement is tuned by hand. Ask before</span><span>changing anything under src/player.</span></pre>
+        <div class="ed-f"><button class="btn ghost danger sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-circle-x"/></svg>Delete rule</button><span class="spacer"></span><span class="faint" style="font-size:12.5px">Applies from the next run</span><button class="btn primary sm" type="button" data-act="Saved">Save</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<dialog class="dialog" id="new-ticket" aria-labelledby="nt-title">
+  <form method="dialog">
+    <div class="dh"><h2 id="nt-title">New ticket</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" value="cancel" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="db">
+      <div class="two">
+        <div class="field"><label for="nt-project">Project</label><select class="input" id="nt-project"><option>game</option><option>editor</option></select></div>
+        <div class="field"><label for="nt-hire">Hire</label><select class="input" id="nt-hire"><option>Let the router pick</option><option>engineer</option><option>artist</option></select></div>
+      </div>
+      <div class="field"><label for="nt-title-in">Title</label><input class="input" id="nt-title-in" value="Add a high score table"></div>
+      <div class="field"><label for="nt-detail">Details</label><textarea class="input" id="nt-detail">Keep the top ten scores with initials, saved between sessions. Show them from the title screen.</textarea><span class="hint">What done looks like. Markdown works.</span></div>
+    </div>
+    <div class="df"><span class="faint" style="font-size:12.5px">Lands on its own branch. Nothing is pushed.</span><span class="spacer"></span><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="create" data-act="Created GAME-19">Create ticket</button></div>
+  </form>
+</dialog>
+<dialog class="dialog" id="new-goal" aria-labelledby="ng-title">
+  <form method="dialog">
+    <div class="dh"><h2 id="ng-title">New goal</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" value="cancel" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="db">
+      <div class="field"><label for="ng-project">Project</label><select class="input" id="ng-project"><option>game</option><option>editor</option></select></div>
+      <div class="field"><label for="ng-name">Goal</label><input class="input" id="ng-name" value="Boss fight at the end of wave 10"></div>
+      <div class="field"><label for="ng-brief">Brief for the producer</label><textarea class="input" id="ng-brief">One boss with two phases. It should feel fair: telegraph every attack. Reuse the enemy sprites where you can.</textarea><span class="hint">The producer splits it into tickets that land on one branch.</span></div>
+    </div>
+    <div class="df"><span class="spacer"></span><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="create" data-act="Planning the goal">Start planning</button></div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"><svg class="i" aria-hidden="true" style="color:var(--ok)"><use href="#i-circle-check"/></svg><span id="toast-text">Done</span></div>
+
+<script>
+(function () {
+  var views = document.querySelectorAll('[data-view]');
+  var links = document.querySelectorAll('[data-nav]');
+  function show() {
+    var name = (location.hash || '#office').slice(1);
+    if (!document.querySelector('[data-view="' + name + '"]')) name = 'office';
+    views.forEach(function (v) { v.hidden = v.getAttribute('data-view') !== name; });
+    document.querySelector('.app').classList.toggle('rail', name === 'office');
+    var navName = name === 'ticket' ? 'board' : name;
+    links.forEach(function (a) {
+      if (a.getAttribute('data-nav') === navName) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener('hashchange', show);
+  show();
+
+  var toast = document.getElementById('toast');
+  var toastText = document.getElementById('toast-text');
+  var timer;
+  function say(text) {
+    toastText.textContent = text;
+    toast.classList.add('show');
+    clearTimeout(timer);
+    timer = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+  document.addEventListener('click', function (e) {
+    var act = e.target.closest('[data-act]');
+    if (act) {
+      var row = act.closest('[data-ask]');
+      say(act.getAttribute('data-act') + (row ? ' · ' + row.getAttribute('data-ask') : ''));
+      if (row) { row.style.opacity = '.45'; }
+    }
+    var open = e.target.closest('[data-open]');
+    if (open) {
+      var d = document.getElementById(open.getAttribute('data-open'));
+      if (d && d.showModal) d.showModal();
+    }
+  });
+
+  var inspector = document.getElementById('inspector');
+  var overview = inspector ? inspector.innerHTML : '';
+  function clearPressed() {
+    document.querySelectorAll('[data-sel][aria-pressed="true"]').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+  }
+  function select(el) {
+    var key = el.getAttribute('data-sel');
+    var t = document.getElementById('t-' + key);
+    if (!t || !inspector) return;
+    clearPressed();
+    document.querySelectorAll('.floor [data-sel="' + key + '"]').forEach(function (x) { x.setAttribute('aria-pressed', 'true'); });
+    inspector.innerHTML = t.innerHTML;
+    inspector.scrollTop = 0;
+  }
+  document.addEventListener('click', function (e) {
+    var back = e.target.closest('[data-back]');
+    if (back && inspector) { clearPressed(); inspector.innerHTML = overview; return; }
+    var sel = e.target.closest('[data-sel]');
+    if (sel) select(sel);
+  });
+  document.addEventListener('keydown', function (e) {
+    var el = e.target;
+    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('.floor [role="button"][data-sel]')) { e.preventDefault(); select(el); }
+  });
+
+  var themeBtn = document.getElementById('theme');
+  themeBtn.addEventListener('click', function () {
+    var root = document.documentElement;
+    var dark = getComputedStyle(root).colorScheme.indexOf('dark') !== -1;
+    root.setAttribute('data-theme', dark ? 'light' : 'dark');
+    themeBtn.querySelector('use').setAttribute('href', dark ? '#i-sun' : '#i-moon');
+  });
+})();
+</script>

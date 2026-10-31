@@ -51,7 +51,8 @@ States:
 
 A ticket gets up to three attempts. When checks or review fail, the failure
 goes back to the agent and it tries again. A hire can list stronger models in
-`escalate` to use after each failure.
+`escalate` to use after each failure. "Attempts" on the ticket page counts every
+run the ticket has had, including ones sent back or retried.
 
 A ticket is a `work` ticket, or a `plan` ticket. A plan ticket files other
 tickets instead of changing code, so it skips checks and review.
@@ -91,7 +92,7 @@ denies what the ticket doesn't need, and sends to you what is dangerous,
 irreversible or reaches outside the project. A denial does not stop the ticket:
 the agent is told why and tries another way. Asks from your own rules (`protect`
 rules and ask-level gates) and questions from agents always reach you, never the
-approver. When the approver errors, has no budget or gives no clear answer, the
+approver. When the approver errors, has no budget or gives no clear answer even when asked again, the
 call goes to you, with the reason shown.
 
 The router picks the hire for a ticket created without one (`studio ticket`

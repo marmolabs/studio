@@ -2,6 +2,7 @@ use crate::cmd::{conflicted_files, failed, output, run};
 use crate::error::{GitError, Result};
 use crate::slug;
 use crate::worktree::Worktree;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -81,7 +82,7 @@ impl Repo {
     pub fn create_worktree(&self, ticket: &TicketId, base_rev: &str) -> Result<Worktree> {
         let _turn = worktree_lock();
         let name = slug(&ticket.to_string());
-        let branch = format!("studio/{name}");
+        let branch = Repo::ticket_branch_name(ticket);
         let path = self.worktrees_dir().join(&name);
         if self.branch_exists(&branch)? {
             return Err(GitError::AlreadyExists(branch));
@@ -152,6 +153,11 @@ impl Repo {
         Ok(found)
     }
 
+    /// The branch a ticket's worktree works on, whether or not it exists.
+    pub fn ticket_branch_name(ticket: &TicketId) -> String {
+        format!("studio/{}", slug(&ticket.to_string()))
+    }
+
     /// The name of a goal's branch, whether or not it exists yet. Long goals
     /// are cut to their first words, so the name stays a valid ref.
     pub fn goal_branch_name(goal: &str) -> String {
@@ -171,6 +177,28 @@ impl Repo {
         }
         run(&self.root, &["branch", "-D", branch])?;
         Ok(true)
+    }
+
+    /// Whether `branch` is already part of `rev`. A missing branch or a git
+    /// error counts as not merged.
+    pub fn is_merged(&self, branch: &str, rev: &str) -> bool {
+        output(&self.root, &["merge-base", "--is-ancestor", branch, rev])
+            .is_ok_and(|out| out.status.success())
+    }
+
+    /// The commit each local branch and `HEAD` point at, from one git call.
+    pub fn branch_tips(&self) -> Result<HashMap<String, String>> {
+        let refs = run(&self.root, &["show-ref", "--head"])?;
+        let tips = refs.lines().filter_map(|line| {
+            let (sha, name) = line.split_once(' ')?;
+            let name = if name == "HEAD" {
+                name
+            } else {
+                name.strip_prefix("refs/heads/")?
+            };
+            Some((name.to_string(), sha.to_string()))
+        });
+        Ok(tips.collect())
     }
 
     /// Creates `studio/goal/<slug>` from `base_rev` unless it already exists.

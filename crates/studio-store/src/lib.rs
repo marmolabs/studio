@@ -54,12 +54,16 @@ pub struct Spend {
     pub output_tokens: u64,
 }
 
-/// Spend since some moment, in total and per project and hire.
+/// Spend since some moment, in total and per project, hire, model and ticket.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct SpendTotals {
     pub total: f64,
     pub by_project: std::collections::BTreeMap<String, f64>,
     pub by_hire: std::collections::BTreeMap<String, f64>,
+    pub by_model: std::collections::BTreeMap<String, f64>,
+    pub by_ticket: std::collections::BTreeMap<String, f64>,
+    /// Runs per hire: each run books one ledger row.
+    pub runs_by_hire: std::collections::BTreeMap<String, u64>,
 }
 
 pub struct Store {
@@ -141,6 +145,53 @@ impl Store {
             "SELECT seq, ticket_id, at_ms, event FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2",
         )?;
         let rows = stmt.query_map((seq, limit), event_from_row)?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
+    }
+
+    /// Every ticket's events at or after `at_ms` that `keep` accepts, oldest
+    /// first: the newest `limit` of them when there are more. Reads back from
+    /// the newest and stops at the first older event, so it never scans the
+    /// whole history.
+    pub fn events_from(
+        &self,
+        at_ms: u64,
+        limit: usize,
+        keep: impl Fn(&Event) -> bool,
+    ) -> Result<Vec<StoredEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT seq, ticket_id, at_ms, event FROM events ORDER BY seq DESC")?;
+        let rows = stmt.query_map([], event_from_row)?;
+        let mut events = Vec::new();
+        for row in rows {
+            let event = row?;
+            if event.at_ms < at_ms || events.len() == limit {
+                break;
+            }
+            if keep(&event.event) {
+                events.push(event);
+            }
+        }
+        events.reverse();
+        Ok(events)
+    }
+
+    /// The whole history of every ticket with an event at or after
+    /// `since_ms` or a run under way (claimed, working, checking, reviewing
+    /// or asking), oldest first.
+    pub fn activity_since(&self, since_ms: u64) -> Result<Vec<StoredEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, ticket_id, at_ms, event FROM events WHERE ticket_id IN (
+                 SELECT ticket_id FROM events WHERE at_ms >= ?1
+                 UNION SELECT id FROM tickets
+                 WHERE state_kind IN ('claimed', 'working', 'checking', 'reviewing', 'asking')
+             ) ORDER BY seq",
+        )?;
+        let rows = stmt.query_map([since_ms as i64], event_from_row)?;
         let mut events = Vec::new();
         for row in rows {
             events.push(row?);
@@ -233,20 +284,27 @@ impl Store {
     pub fn spent_since(&self, since_ms: u64) -> Result<SpendTotals> {
         let mut totals = SpendTotals::default();
         let mut stmt = self.conn.prepare(
-            "SELECT project, hire, SUM(usd) FROM ledger WHERE at_ms >= ?1 GROUP BY project, hire",
+            "SELECT project, hire, model, ticket_id, SUM(usd), COUNT(*) FROM ledger WHERE at_ms >= ?1
+             GROUP BY project, hire, model, ticket_id",
         )?;
         let rows = stmt.query_map([since_ms as i64], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, f64>(2)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })?;
         for row in rows {
-            let (project, hire, usd) = row?;
+            let (project, hire, model, ticket, usd, runs) = row?;
             totals.total += usd;
+            *totals.runs_by_hire.entry(hire.clone()).or_default() += runs.max(0) as u64;
             *totals.by_project.entry(project).or_default() += usd;
             *totals.by_hire.entry(hire).or_default() += usd;
+            *totals.by_model.entry(model).or_default() += usd;
+            *totals.by_ticket.entry(ticket).or_default() += usd;
         }
         Ok(totals)
     }
@@ -299,6 +357,39 @@ impl Store {
             Ok((row.get::<_, f64>(1)?, row.get::<_, i64>(0)?.max(0) as u64))
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// When each ticket last changed: its latest event's time, by ticket id.
+    pub fn updated_at(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT t.id, e.at_ms FROM tickets t JOIN events e ON e.seq = t.last_seq")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// When each running ticket's latest run began (its last claim) and each
+    /// held ticket was held (its last hold), by ticket id.
+    pub fn state_since(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.ticket_id, MAX(e.at_ms) FROM tickets t JOIN events e ON e.ticket_id = t.id
+             WHERE t.state_kind IN ('claimed', 'working', 'checking', 'reviewing', 'held')
+               AND json_extract(e.event, '$.type') =
+                   CASE t.state_kind WHEN 'held' THEN 'held' ELSE 'claimed' END
+             GROUP BY e.ticket_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// When the ticket was first claimed, if it ever was.
@@ -580,8 +671,15 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             [],
         )?;
     }
+    if version < 4 {
+        // The board and Live read events by time every second.
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_at ON events(at_ms)",
+            [],
+        )?;
+    }
     tx.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')",
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')",
         [],
     )?;
     tx.commit()?;

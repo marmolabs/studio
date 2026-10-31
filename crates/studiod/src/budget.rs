@@ -9,7 +9,9 @@ use studio_config::config::ModelPrice;
 use studio_core::budget::{Allowance, Limits, Used, allowance};
 use studio_core::rule::Hire;
 use studio_core::ticket::Ticket;
-use studio_store::{SpendTotals, Store};
+use studio_store::{SpendTotals, Store, StoreError};
+
+use crate::api::DaySpend;
 
 pub(crate) const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
@@ -128,6 +130,30 @@ pub(crate) fn has_headroom(
     ))
 }
 
+/// Spend in each of the last `days` 24-hour windows, oldest first. The last
+/// window ends at `now_ms` and, like the daily limit, includes its start.
+pub(crate) fn by_day(store: &Store, now_ms: u64, days: u32) -> Result<Vec<DaySpend>, StoreError> {
+    let days = u64::from(days.min(90));
+    let mut out: Vec<DaySpend> = (0..days)
+        .rev()
+        .map(|back| DaySpend {
+            start_ms: now_ms.saturating_sub((back + 1) * DAY_MS),
+            usd: 0.0,
+        })
+        .collect();
+    let since = now_ms.saturating_sub(days * DAY_MS);
+    for spend in store.ledger_since(since)? {
+        // 0 for the window that ends now; a time at a window's start counts in it.
+        let back = now_ms.saturating_sub(spend.at_ms).saturating_sub(1) / DAY_MS;
+        if let Some(index) = days.checked_sub(back + 1)
+            && let Some(day) = out.get_mut(index as usize)
+        {
+            day.usd += spend.usd;
+        }
+    }
+    Ok(out)
+}
+
 /// Counts a run's spend from token usage as it happens.
 pub(crate) struct Meter {
     price: Option<ModelPrice>,
@@ -235,6 +261,43 @@ mod tests {
             },
         );
         assert!(!has_headroom(&store, &budget, ("a", None), &hire, &held, 1_000, 0.05).unwrap());
+    }
+
+    #[test]
+    fn spend_falls_in_its_24_hour_window() {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = 10 * DAY_MS;
+        let spend = |at_ms: u64, usd: f64| studio_store::Spend {
+            at_ms,
+            ticket_id: studio_core::ids::TicketId::new("A-1"),
+            project: "a".into(),
+            hire: "dev".into(),
+            runtime: "fake".into(),
+            model: "m".into(),
+            session: None,
+            usd,
+            reported: true,
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+        for (at, usd) in [
+            (now, 1.0),
+            (now - DAY_MS, 2.0),
+            (now - DAY_MS - 1, 4.0),
+            (now - 3 * DAY_MS, 8.0),
+            (now - 3 * DAY_MS - 1, 16.0),
+        ] {
+            store.record_spend(&spend(at, usd)).unwrap();
+        }
+        let days = by_day(&store, now, 3).unwrap();
+        let usd: Vec<f64> = days.iter().map(|d| d.usd).collect();
+        assert_eq!(usd, [8.0, 4.0, 3.0]);
+        assert_eq!(days[2].start_ms, now - DAY_MS);
+        assert_eq!(days[0].start_ms, now - 3 * DAY_MS);
+        // The last window is what the daily limit counts.
+        assert_eq!(usd[2], store.spent_since(now - DAY_MS).unwrap().total);
+        assert!(by_day(&store, now, 0).unwrap().is_empty());
+        assert_eq!(by_day(&store, now, 500).unwrap().len(), 90);
     }
 
     #[test]

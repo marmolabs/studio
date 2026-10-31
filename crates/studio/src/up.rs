@@ -21,6 +21,7 @@ pub fn up(
     host: &str,
     port: u16,
     open: bool,
+    new_token: bool,
 ) -> Result<(), String> {
     if !paths.config_dir.join("studio.toml").exists() {
         return Err("no studio.toml yet: run `studio init` first".into());
@@ -44,6 +45,9 @@ pub fn up(
         .arg(host);
     if let Some(home) = home {
         web.arg("--home").arg(home);
+    }
+    if new_token {
+        web.arg("--new-token");
     }
     let mut child = web
         .stdout(Stdio::piped())

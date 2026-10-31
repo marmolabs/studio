@@ -1,6 +1,18 @@
-//! `studio export`: a ticket as Markdown, for a PR description or the record.
+//! A ticket as Markdown, for a PR description or the record: what
+//! `studio export` prints and the web UI's export link serves.
 
 use serde_json::Value;
+
+/// The summary of the last finished run in a run log, if it gave one.
+pub fn summary(log: &str) -> Option<String> {
+    log.lines().rev().find_map(|line| {
+        let value: Value = serde_json::from_str(line).ok()?;
+        let event = &value["event"];
+        (event["type"] == "finished")
+            .then(|| event["summary"].as_str().map(str::to_string))
+            .flatten()
+    })
+}
 
 /// What export needs from the daemon and the run log.
 pub struct Export<'a> {
@@ -109,6 +121,18 @@ mod tests {
     fn dates_are_utc() {
         assert_eq!(utc(0), "1970-01-01 00:00 UTC");
         assert_eq!(utc(1_782_822_840_000), "2026-06-30 12:34 UTC");
+    }
+
+    #[test]
+    fn the_summary_is_the_last_runs() {
+        let log = [
+            r#"{"event":{"type":"finished","summary":"First"}}"#,
+            r#"{"event":{"type":"text","text":"More"}}"#,
+            r#"{"event":{"type":"finished","summary":"Second"}}"#,
+        ]
+        .join("\n");
+        assert_eq!(summary(&log).as_deref(), Some("Second"));
+        assert_eq!(summary("not json"), None);
     }
 
     #[test]

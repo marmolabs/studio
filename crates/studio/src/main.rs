@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use studio_config::StudioPaths;
 use studio_config::draft::{Draft, from_denial, from_feedback};
 use studiod::api::{FileKind, Request, call};
+use studiod::export;
 
-mod export;
 mod mcp;
 mod up;
 
@@ -48,6 +48,9 @@ enum Command {
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// Make a new web UI link; the old one stops working.
+        #[arg(long)]
+        new_token: bool,
     },
     /// Stop studiod. Running tickets are held until you resume them.
     Down,
@@ -216,7 +219,8 @@ fn main() {
             port,
             host,
             no_open,
-        } => up::up(&paths, home.as_deref(), &host, port, !no_open),
+            new_token,
+        } => up::up(&paths, home.as_deref(), &host, port, !no_open, new_token),
         Command::Down => up::down(&paths),
         command => run(&paths, command, cli.json),
     };
@@ -806,15 +810,9 @@ fn export(paths: &StudioPaths, ticket: &str) -> Result<(), String> {
     })
     .unwrap_or_default();
     let log = paths.data_dir.join("runs").join(format!("{ticket}.jsonl"));
-    let summary = std::fs::read_to_string(log).ok().and_then(|text| {
-        text.lines().rev().find_map(|line| {
-            let value: Value = serde_json::from_str(line).ok()?;
-            let event = &value["event"];
-            (event["type"] == "finished")
-                .then(|| event["summary"].as_str().map(str::to_string))
-                .flatten()
-        })
-    });
+    let summary = std::fs::read_to_string(log)
+        .ok()
+        .and_then(|text| export::summary(&text));
     print!(
         "{}",
         export::render(&export::Export {

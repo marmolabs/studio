@@ -1,9 +1,12 @@
-use crate::api::{AskView, Estimate, FileKind, FileView, Request, Response};
+use crate::api::{
+    AskView, Estimate, FileKind, FileView, HireDay, RECENT_EVENTS, Request, Response, RuleFile,
+};
 use crate::budget::{self, DAY_MS, Reservation};
 use crate::gc;
 use crate::now_ms;
 use crate::router::{self, Routed};
 use crate::ruletest;
+use crate::today;
 use crate::watch::CiWatcher;
 use crate::worker;
 use serde_json::json;
@@ -115,6 +118,8 @@ pub(crate) enum Decision {
 pub(crate) enum StopReason {
     Cancel,
     Budget,
+    /// The owner paused the ticket; it waits, held, until resumed.
+    Pause,
 }
 
 /// Tells a ticket's worker to stop its run. Stored reasons survive until read,
@@ -164,6 +169,11 @@ pub struct Studio {
     active: Mutex<HashMap<String, Arc<Stop>>>,
     /// Money held back for live runs, by ticket.
     reservations: Mutex<HashMap<String, Reservation>>,
+    /// What each live run has spent so far by its meter, by ticket id, until
+    /// the run's spend is written to the ledger.
+    metered: Mutex<HashMap<String, f64>>,
+    /// Whether a goal tip is in a base tip, as of the last `MergedTickets`.
+    merged_tips: Mutex<HashMap<(String, String), bool>>,
     wake: Notify,
     notifier: crate::notify::Notifier,
 }
@@ -220,6 +230,20 @@ fn check(kind: FileKind, name: &str, text: &str) -> Result<(), String> {
         FileKind::Hires => check_hire(name, text),
         FileKind::Rules => check_rule(name, text),
     }
+}
+
+/// The `*.md` files in a rules folder, sorted; none if it can't be read.
+fn rule_paths(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+        .collect();
+    paths.sort();
+    paths
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -297,6 +321,8 @@ impl Studio {
             last_resume: Mutex::new(None),
             active: Mutex::new(HashMap::new()),
             reservations: Mutex::new(HashMap::new()),
+            metered: Mutex::new(HashMap::new()),
+            merged_tips: Mutex::new(HashMap::new()),
             wake: Notify::new(),
             notifier,
         }))
@@ -581,8 +607,25 @@ impl Studio {
         lock(&self.hires).values().cloned().collect()
     }
 
+    /// What the ticket's live run has spent so far by its meter, which
+    /// `TicketSpend` and `TicketSpends` count until the run's spend is recorded.
+    pub(crate) fn meter(&self, ticket: &TicketId, usd: f64) {
+        lock(&self.metered).insert(ticket.to_string(), usd);
+    }
+
+    /// Each loaded hire's id, role and model, by id.
+    fn team(&self) -> Vec<serde_json::Value> {
+        let mut hires: Vec<Hire> = lock(&self.hires).values().cloned().collect();
+        hires.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        hires
+            .iter()
+            .map(|h| json!({ "id": h.id.0, "role": h.role, "model": h.model }))
+            .collect()
+    }
+
     pub(crate) fn release(&self, ticket: &TicketId) {
         lock(&self.reservations).remove(&ticket.to_string());
+        lock(&self.metered).remove(&ticket.to_string());
         self.wake.notify_one();
     }
 
@@ -686,6 +729,7 @@ impl Studio {
     /// that is now used up.
     pub(crate) fn record_spend(&self, spend: &Spend) -> Result<(), StudioError> {
         lock(&self.store).record_spend(spend)?;
+        lock(&self.metered).remove(&spend.ticket_id.to_string());
         let spent = lock(&self.store).spent_since(now_ms().saturating_sub(DAY_MS))?;
         let budget = &self.config().budget;
         let over = |limit: Option<f64>, used: f64| limit.is_some_and(|l| used >= l);
@@ -774,7 +818,7 @@ impl Studio {
     }
 
     /// The critic a gate names, unless it would grade its own side: the ticket's
-    /// own hire, or a hire on a model `author` used over `failed` attempts.
+    /// own hire, or a hire with no model other than the one that wrote the latest attempt.
     pub(crate) fn gate_hire(&self, id: &str, author: &Hire, failed: u32) -> Result<Hire, String> {
         let critic = lock(&self.hires)
             .get(id)
@@ -783,13 +827,24 @@ impl Studio {
         if critic.id == author.id {
             return Err(format!("{id} is the ticket's own hire"));
         }
-        if (0..=failed).any(|n| author.model_for(n) == critic.model) {
+        // Like the reviewer, fall back to the critic's escalate models when the
+        // author used its own.
+        // As for the reviewer, only the model that wrote the latest attempt counts.
+        let used = [author.model_for(failed)];
+        let Some(model) = std::iter::once(&critic.model)
+            .chain(&critic.escalate)
+            .find(|m| !used.contains(&m.as_str()))
+        else {
             return Err(format!(
                 "{id} runs on {}, which the author used",
                 critic.model
             ));
-        }
-        Ok(critic)
+        };
+        Ok(Hire {
+            model: model.clone(),
+            escalate: Vec::new(),
+            ..critic
+        })
     }
 
     /// How many times the gate has sent this ticket back since the owner last
@@ -844,6 +899,7 @@ impl Studio {
             tool: tool.to_string(),
             input,
             reasons,
+            at_ms: now_ms(),
         };
         lock(&self.asks).insert(id.clone(), PendingAsk { view, reply });
         let decision = answer.await.unwrap_or_else(|_| Decision::Deny {
@@ -968,14 +1024,23 @@ impl Studio {
                 for ticket in &tickets {
                     *by_state.entry(ticket.state.kind()).or_default() += 1;
                 }
+                let goals = tickets
+                    .iter()
+                    .filter(|t| t.kind == TicketKind::Plan)
+                    .count();
                 Ok(Response::ok(json!({
                     "tickets": by_state,
+                    "goals": goals,
+                    "rules": self.rule_files(),
                     "running": lock(&self.active).len(),
                     "spent_24h": lock(&self.store).spent_since(now_ms().saturating_sub(DAY_MS))?.total,
                     "daily_usd": self.config().budget.daily_usd,
+                    "out_of_budget": self.studio_budget_exhausted()?,
                     "asks": lock(&self.asks).len(),
                     "projects": self.config().projects.iter().map(|p| &p.name).collect::<Vec<_>>(),
                     "hires": lock(&self.hires).keys().collect::<Vec<_>>(),
+                    "max_runs": self.config().concurrency.max_runs,
+                    "team": self.team(),
                 })))
             }
             Request::CreateTicket {
@@ -1065,7 +1130,32 @@ impl Studio {
                 };
                 Ok(Response::ok(events))
             }
-            Request::Diffstat { ticket } => self.diffstat(&TicketId::new(&ticket)),
+            Request::RecentEvents {
+                since_ms,
+                limit,
+                kinds,
+            } => {
+                let limit = limit.map_or(RECENT_EVENTS, |l| l.min(RECENT_EVENTS));
+                let keep = |e: &Event| kinds.is_empty() || kinds.iter().any(|k| k == e.kind());
+                Ok(Response::ok(
+                    lock(&self.store).events_from(since_ms, limit, keep)?,
+                ))
+            }
+            Request::Activity { since_ms } => {
+                Ok(Response::ok(lock(&self.store).activity_since(since_ms)?))
+            }
+            Request::StateSince => Ok(Response::ok(lock(&self.store).state_since()?)),
+            Request::Diffstat { ticket } => Ok(Response::ok(self.stat(&TicketId::new(&ticket))?)),
+            Request::Diffstats { tickets } => {
+                let stats: BTreeMap<String, Option<String>> = tickets
+                    .into_iter()
+                    .map(|id| {
+                        let stat = self.stat(&TicketId::new(&id)).ok().flatten();
+                        (id, stat)
+                    })
+                    .collect();
+                Ok(Response::ok(stats))
+            }
             Request::Diff { ticket } => self.diff(&TicketId::new(&ticket)),
             Request::Evidence { ticket } => self.evidence(&TicketId::new(&ticket)),
             Request::Gc => self.gc(),
@@ -1100,6 +1190,7 @@ impl Studio {
             }
             Request::Land { ticket } => self.land(&TicketId::new(&ticket)),
             Request::Merge { ticket } => self.merge(&TicketId::new(&ticket)),
+            Request::MergedTickets => Ok(Response::ok(self.merged_tickets()?)),
             Request::Cancel { ticket } => {
                 let id = TicketId::new(&ticket);
                 let updated = self.append(&id, Event::Cancelled)?;
@@ -1114,12 +1205,23 @@ impl Studio {
                 self.simple(&ticket, Event::ChangesRequested { detail: feedback })
             }
             Request::Resume { ticket } => self.simple(&ticket, Event::Resumed),
+            Request::Pause { ticket } => self.pause(&ticket),
             Request::TicketSpend { ticket } => {
                 let spent = lock(&self.store).ticket_spent(&TicketId::new(&ticket))?;
+                let live = lock(&self.metered).get(&ticket).copied().unwrap_or(0.0);
+                Ok(Response::ok(spent + live))
+            }
+            Request::TicketSpends => {
+                let mut spent = lock(&self.store).spent_by_ticket()?;
+                for (ticket, usd) in lock(&self.metered).iter() {
+                    *spent.entry(ticket.clone()).or_default() += usd;
+                }
                 Ok(Response::ok(spent))
             }
-            Request::TicketSpends => Ok(Response::ok(lock(&self.store).spent_by_ticket()?)),
+            Request::UpdatedAt => Ok(Response::ok(lock(&self.store).updated_at()?)),
             Request::Files { kind } => self.files(kind),
+            Request::RuleFiles => Ok(Response::ok(self.rule_file_list())),
+            Request::HiresToday => self.hires_today(),
             Request::SaveFile { kind, name, text } => self.save_file(kind, &name, &text),
             Request::DeleteFile { kind, name } => self.delete_file(kind, &name),
             Request::TestRule { text, since } => {
@@ -1127,6 +1229,10 @@ impl Studio {
                 Ok(Response::ok(ruletest::run(self, &tickets, &text, since)?))
             }
             Request::Estimates => Ok(Response::ok(self.estimates()?)),
+            Request::SpendByDay { days } => {
+                let store = lock(&self.store);
+                Ok(Response::ok(budget::by_day(&store, now_ms(), days)?))
+            }
             Request::Budget => {
                 let since = now_ms().saturating_sub(DAY_MS);
                 let store = lock(&self.store);
@@ -1149,6 +1255,9 @@ impl Studio {
                         "hires": lock(&self.hires).values()
                             .filter_map(|h| h.daily_usd.map(|d| (h.id.0.clone(), d)))
                             .collect::<BTreeMap<_, _>>(),
+                        "hires_ticket": lock(&self.hires).values()
+                            .filter_map(|h| h.budget_per_ticket_usd.map(|d| (h.id.0.clone(), d)))
+                            .collect::<BTreeMap<_, _>>(),
                     },
                     "spent_24h": spent,
                     "runs_24h": runs,
@@ -1158,14 +1267,14 @@ impl Studio {
         }
     }
 
-    fn diffstat(&self, id: &TicketId) -> Result<Response, StudioError> {
+    /// `git diff --stat` of a ticket's worktree, or `None` when it is gone.
+    fn stat(&self, id: &TicketId) -> Result<Option<String>, StudioError> {
         let ticket = self.ticket(id)?;
         let repo = Repo::open(&self.project(&ticket.project)?.path)?;
-        let stat = match worker::find_worktree(&repo, id)? {
+        Ok(match worker::find_worktree(&repo, id)? {
             Some(worktree) => Some(worktree.diff_stat()?),
             None => None,
-        };
-        Ok(Response::ok(stat))
+        })
     }
 
     fn diff(&self, id: &TicketId) -> Result<Response, StudioError> {
@@ -1278,6 +1387,88 @@ impl Studio {
             .filter(|p| p.watch_ci)
             .cloned()
             .collect()
+    }
+
+    /// How many rule files the studio loads: the ones `RuleFiles` lists. It
+    /// only lists the folders, since `Status` asks for it every second.
+    fn rule_files(&self) -> usize {
+        self.rule_folders()
+            .iter()
+            .map(|(_, _, dir)| rule_paths(dir).len())
+            .sum()
+    }
+
+    /// Where rules live: the studio's folder, each pack's, each project's,
+    /// as (origin, owner, folder).
+    fn rule_folders(&self) -> Vec<(&'static str, String, std::path::PathBuf)> {
+        let config = self.config();
+        let mut folders = vec![(
+            "studio",
+            String::new(),
+            self.paths.config_dir.join(FileKind::Rules.dir()),
+        )];
+        folders.extend(
+            config
+                .packs
+                .iter()
+                .map(|p| ("pack", p.name.clone(), p.path.join("rules"))),
+        );
+        folders.extend(config.projects.iter().map(|p| {
+            let dir = p.path.join(".studio").join("rules");
+            ("project", p.name.clone(), dir)
+        }));
+        folders
+    }
+
+    /// Every rule file, in the order `load_rules` reads them.
+    fn rule_file_list(&self) -> Vec<RuleFile> {
+        let config = self.config();
+        let loaded = studio_config::load_rules(&config, &self.paths);
+        let mut files = Vec::new();
+        for (origin, owner, dir) in self.rule_folders() {
+            for path in rule_paths(&dir) {
+                let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let (text, problem) = match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        let problem = loaded.problems.iter().find(|p| p.path == path);
+                        (text, problem.map(|p| p.message.clone()))
+                    }
+                    Err(e) => (String::new(), Some(format!("read error: {e}"))),
+                };
+                let id = format!("pack/{owner}/{name}");
+                files.push(RuleFile {
+                    origin: origin.to_string(),
+                    disabled: origin == "pack" && config.rules.disable.contains(&id),
+                    owner: owner.clone(),
+                    name: name.to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                    text,
+                    problem,
+                });
+            }
+        }
+        files
+    }
+
+    /// What each hire did in the last 24 hours.
+    fn hires_today(&self) -> Result<Response, StudioError> {
+        let since = now_ms().saturating_sub(DAY_MS);
+        let (tickets, events) = {
+            let store = lock(&self.store);
+            (
+                store.tickets()?,
+                store.events_from(since, usize::MAX, |_| true)?,
+            )
+        };
+        let mut days: BTreeMap<String, HireDay> = BTreeMap::new();
+        today::from_events(&tickets, &events, &mut days);
+        let notes = today::notes_since(&self.paths.data_dir.join("runs"), since);
+        let approver = self.first_with_role("approver").map(|h| h.id.0);
+        let router = self.first_with_role("router").map(|h| h.id.0);
+        today::from_notes(&notes, approver.as_deref(), router.as_deref(), &mut days);
+        Ok(Response::ok(days))
     }
 
     fn files(&self, kind: FileKind) -> Result<Response, StudioError> {
@@ -1517,6 +1708,22 @@ impl Studio {
             .join("\n"))
     }
 
+    /// Stops the agent of a running ticket; its worker then holds it.
+    fn pause(&self, ticket: &str) -> Result<Response, StudioError> {
+        let state = self.ticket(&TicketId::new(ticket))?.state;
+        let running = matches!(
+            state,
+            TicketState::Claimed | TicketState::Working | TicketState::Reviewing
+        );
+        match lock(&self.active).get(ticket) {
+            Some(stop) if running => {
+                stop.request(StopReason::Pause);
+                Ok(Response::ok(json!({ "ticket": ticket })))
+            }
+            _ => Err(other(format!("{ticket} has no agent running to pause"))),
+        }
+    }
+
     fn simple(&self, ticket: &str, event: Event) -> Result<Response, StudioError> {
         let updated = self.append(&TicketId::new(ticket), event)?;
         self.wake.notify_one();
@@ -1566,6 +1773,50 @@ impl Studio {
                 files.join(", ")
             ))),
         }
+    }
+
+    /// Landed work tickets whose goal branch is already in their base branch.
+    /// Open pages ask every second, so git reads the tips once per project and
+    /// is only asked about a pair of tips it hasn't answered for yet.
+    fn merged_tickets(&self) -> Result<Vec<String>, StudioError> {
+        let tickets = lock(&self.store).tickets()?;
+        let known = std::mem::take(&mut *lock(&self.merged_tips));
+        let mut seen: HashMap<(String, String), bool> = HashMap::new();
+        let mut projects = HashMap::new();
+        let mut merged = Vec::new();
+        for ticket in tickets {
+            if ticket.state != TicketState::Landed || ticket.kind == TicketKind::Plan {
+                continue;
+            }
+            let project = projects.entry(ticket.project.clone()).or_insert_with(|| {
+                let repo = Repo::open(&self.project(&ticket.project).ok()?.path).ok()?;
+                let tips = repo.branch_tips().ok()?;
+                Some((repo, tips))
+            });
+            let Some((repo, tips)) = project else {
+                continue;
+            };
+            let branch = Repo::goal_branch_name(&goal_of(&ticket));
+            let Some(tip) = tips.get(&branch) else {
+                continue;
+            };
+            let is_merged = match tips.get(&ticket.base_branch) {
+                Some(base) => {
+                    let pair = (tip.clone(), base.clone());
+                    let held = known.get(&pair).copied();
+                    *seen
+                        .entry(pair)
+                        .or_insert_with(|| held.unwrap_or_else(|| repo.is_merged(tip, base)))
+                }
+                // A tag or a sha has no tip to remember it by.
+                None => repo.is_merged(tip, &ticket.base_branch),
+            };
+            if is_merged {
+                merged.push(ticket.id.to_string());
+            }
+        }
+        *lock(&self.merged_tips) = seen;
+        Ok(merged)
     }
 
     /// Merges the goal branch a landed ticket is on into the branch its work

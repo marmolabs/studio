@@ -36,6 +36,9 @@ fn totals_by_window_project_hire_ticket_and_session() {
     assert!((all.total - 1.75).abs() < 1e-9);
     assert!((all.by_project["a"] - 0.75).abs() < 1e-9);
     assert!((all.by_hire["art"] - 1.0).abs() < 1e-9);
+    assert!((all.by_model["haiku"] - 1.75).abs() < 1e-9);
+    assert!((all.by_ticket["A-1"] - 0.75).abs() < 1e-9);
+    assert_eq!((all.runs_by_hire["dev"], all.runs_by_hire["art"]), (2, 1));
 
     let recent = store.spent_since(200).unwrap();
     assert!((recent.total - 1.25).abs() < 1e-9);

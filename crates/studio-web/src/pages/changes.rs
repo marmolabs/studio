@@ -1,4 +1,4 @@
-//! A ticket's work so far: the diffstat, and the diff file by file.
+//! A ticket's work so far: the diff file by file, and the size of each.
 
 use topcoat::view::{View, component, view};
 
@@ -66,41 +66,48 @@ pub fn parse(diff: &str) -> Vec<FileDiff> {
     files
 }
 
+/// Each changed file with its lines added and removed.
+pub fn stats(diff: &str) -> Vec<(String, u64, u64)> {
+    parse(diff)
+        .into_iter()
+        .map(|f| (f.path, f.adds as u64, f.removes as u64))
+        .collect()
+}
+
+/// The diff, one folded row per file.
 #[component]
-pub async fn changes(stat: Option<String>, diff: Option<String>) -> topcoat::Result<impl View> {
+pub async fn changes(diff: Option<String>) -> topcoat::Result<impl View> {
     let files = diff.as_deref().map(parse).unwrap_or_default();
     Ok(view! {
-        <section id="changes" class="mt-6">
-            <h2 class=(format!("mb-2 text-[12px] font-medium {}", ui::MUTED))>"Changes"</h2>
-            if let Some(stat) = stat.filter(|s| !s.trim().is_empty()) {
-                <pre class="mb-2 max-w-full overflow-x-auto rounded-lg border border-zinc-200 bg-white p-3 font-mono text-[12px] dark:border-zinc-800 dark:bg-zinc-900">(stat)</pre>
-            }
+        <section id="changes">
+            ui::section_head(title: "Changes", count: Some(files.len() as u64), href: String::new(), label: String::new())
             if files.is_empty() {
                 <p class=(ui::MUTED)>"No changes yet."</p>
-            }
-            <div class="space-y-2">
-                for file in files {
-                    <details class="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-                        <summary class="flex cursor-pointer select-none items-center gap-2 px-3 py-1.5">
-                            <span class="min-w-0 flex-1 break-all font-mono text-[12px]">(file.path)</span>
-                            <span class="shrink-0 font-mono text-[12px] text-emerald-700 dark:text-emerald-400">"+" (file.adds)</span>
-                            <span class="shrink-0 font-mono text-[12px] text-rose-700 dark:text-rose-400">"-" (file.removes)</span>
-                        </summary>
-                        <div class="overflow-x-auto border-t border-zinc-200 py-1 font-mono text-[12px] dark:border-zinc-800">
-                            <div class="w-max min-w-full">
-                                for (tone, text) in file.lines {
-                                    <div class=(match tone {
-                                        Tone::Add => "whitespace-pre bg-emerald-50 px-3 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
-                                        Tone::Remove => "whitespace-pre bg-rose-50 px-3 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300",
-                                        Tone::Hunk => "whitespace-pre px-3 text-zinc-600 dark:text-zinc-400",
-                                        Tone::Plain => "whitespace-pre px-3",
-                                    })>(text)</div>
-                                }
+            } else {
+                <div class=(ui::LIST)>
+                    for file in files {
+                        <details class="group border-t border-line first:border-t-0">
+                            <summary class="flex cursor-pointer list-none items-center gap-2.5 px-4 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
+                                <span class="text-fg-3 transition-transform group-open:rotate-90">ui::icon(name: "chevron-right", small: true)</span>
+                                <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-2">(file.path)</span>
+                                ui::diff_size(added: file.adds as u64, removed: file.removes as u64)
+                            </summary>
+                            <div class="overflow-x-auto border-t border-line bg-bg-2 py-1 font-mono text-[12px] leading-5">
+                                <div class="w-max min-w-full">
+                                    for (tone, text) in file.lines {
+                                        <div class=(match tone {
+                                            Tone::Add => "whitespace-pre bg-ok-bg px-4 text-ok-fg",
+                                            Tone::Remove => "whitespace-pre bg-bad-bg px-4 text-bad-fg",
+                                            Tone::Hunk => "whitespace-pre px-4 text-fg-3",
+                                            Tone::Plain => "whitespace-pre px-4 text-fg-2",
+                                        })>(text)</div>
+                                    }
+                                </div>
                             </div>
-                        </div>
-                    </details>
-                }
-            </div>
+                        </details>
+                    }
+                </div>
+            }
         </section>
     })
 }
@@ -119,17 +126,18 @@ mod tests {
         assert_eq!((files[0].adds, files[0].removes), (1, 1));
         assert_eq!((files[1].path.as_str(), files[1].adds), ("b.txt", 1));
         assert_eq!(files[0].lines[0].0, Tone::Hunk);
+        assert_eq!(
+            stats(DIFF),
+            [("src/a.rs".into(), 1, 1), ("b.txt".into(), 1, 0)]
+        );
     }
 
     #[tokio::test]
     async fn the_diff_is_escaped() {
         let cx = topcoat::context::Cx::default();
-        let html = crate::ui::html(
-            &cx,
-            view! { cx => changes(stat: None, diff: Some(DIFF.to_string())) },
-        )
-        .await
-        .unwrap();
+        let html = crate::ui::html(&cx, view! { cx => changes(diff: Some(DIFF.to_string())) })
+            .await
+            .unwrap();
         assert!(html.contains("new &lt;b&gt;"), "{html}");
         assert!(!html.contains("<b>"), "{html}");
     }

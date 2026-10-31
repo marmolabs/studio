@@ -52,7 +52,7 @@ impl FakeRuntime {
     }
 
     /// Runs wait before finishing until `notify_one` is called on the returned
-    /// handle, once per run.
+    /// handle, once per run, or until they get a control such as an interrupt.
     pub fn held(mut self) -> (FakeRuntime, Arc<Notify>) {
         let hold = Arc::new(Notify::new());
         self.hold = Some(Arc::clone(&hold));
@@ -113,7 +113,15 @@ impl Runtime for FakeRuntime {
             let mut finished = false;
             for event in script {
                 if let (RunEvent::Finished { .. }, Some(hold)) = (&event, &hold) {
-                    hold.notified().await;
+                    // An interrupt ends a held run early, as it would a real one.
+                    tokio::select! {
+                        _ = hold.notified() => {}
+                        Some(control) = control_rx.recv() => {
+                            if let Ok(mut log) = received.lock() {
+                                log.push(control);
+                            }
+                        }
+                    }
                 }
                 let waits = matches!(
                     event,

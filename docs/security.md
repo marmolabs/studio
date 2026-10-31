@@ -13,9 +13,13 @@ starts that program and reads what it prints.
 
 `studio-web` can approve what agents do, so it is locked down:
 
-- It listens on `127.0.0.1` only. It does not bind to other interfaces.
-- Each start makes a new random token (32 bytes from the system's random
-  source). You open the link it prints, `http://127.0.0.1:<port>/?token=...`.
+- It listens on `127.0.0.1` unless you pass `--host` (see below).
+- The link it prints, `http://127.0.0.1:<port>/?token=...`, carries a random
+  token (32 bytes from the system's random source). The token is kept in
+  `web-token` in the data folder, readable only by you (mode `0600`), so the
+  link stays the same across restarts. `studio up --new-token` (or
+  `studio-web --new-token`) makes a new one, and the old link stops working.
+  Do that if the link leaks.
 - The token becomes a cookie that is `HttpOnly` and `SameSite=Strict`. The page
   then redirects, so the token leaves the address bar and history.
 - Every request without the cookie gets a 401. Tokens are compared in constant
@@ -23,6 +27,19 @@ starts that program and reads what it prints.
 - A POST with an `Origin` header that is not the UI's own address is refused.
 
 Do not forward the port or put it behind a proxy.
+
+### Reaching it from another device
+
+`studio up --host <address>` (or `studio-web --host <address>`) listens on
+another address, for example your LAN address `192.168.1.20`, so a phone or
+another computer on the network can open the UI. Give the address the other
+device will use: the printed link and the origin check are built from it.
+
+This exposes the UI to your network. Anyone who has the link can approve
+asks, land tickets and spend your budget, and the page is plain HTTP, so the
+token crosses the network unencrypted where others on it could read it. Use it
+only on a network you trust, never on public Wi-Fi, and run
+`studio up --new-token` when you are done sharing the link.
 
 ## Agents
 

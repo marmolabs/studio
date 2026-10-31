@@ -1,4 +1,4 @@
-//! Live pages: a stream re-renders a fragment every second and sends it
+//! Pages that keep up: a stream re-renders a fragment every second and sends it
 //! only when it changed. Datastar morphs it into the page by its `id`.
 
 use futures_util::Stream;
