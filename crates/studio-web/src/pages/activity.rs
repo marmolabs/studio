@@ -240,6 +240,12 @@ pub fn filed_parts(ticket: &Ticket, filer: &Filer) -> Vec<Part> {
         Filer::Studio(source) if source.starts_with("ci:") => {
             vec![bold("studio"), text(" filed this after a CI run failed")]
         }
+        Filer::Studio(source) if source.starts_with("merge:") => {
+            vec![
+                bold("studio"),
+                text(" filed this when merging the goal conflicted"),
+            ]
+        }
         Filer::Studio(_) => vec![bold("studio"), text(" filed this")],
         Filer::Owner if ticket.kind == TicketKind::Plan => {
             vec![bold("You"), text(" set this goal")]
@@ -758,6 +764,17 @@ fn event_line(
             vec![bold("You"), text(" sent it back")],
             detail,
             true,
+        ),
+        Event::Conflicted { branch, files } => detailed(
+            "git-merge",
+            "",
+            vec![
+                text("Conflicted with "),
+                code(branch),
+                text("; back to its agent to resolve"),
+            ],
+            &files.join("\n"),
+            false,
         ),
         _ => None,
     }
@@ -1372,10 +1389,45 @@ mod tests {
         );
         let ci = ticket(json!({"source": "ci:12"}));
         assert_eq!(filer(&ci, &tickets), Filer::Studio("ci:12".into()));
+        let merge = ticket(json!({"source": "merge:master"}));
+        assert_eq!(
+            filed_parts(&merge, &filer(&merge, &tickets))[..2],
+            [
+                bold("studio"),
+                text(" filed this when merging the goal conflicted")
+            ]
+        );
         assert_eq!(filer(&plan, &tickets), Filer::Owner);
         assert_eq!(
             filed_parts(&plan, &Filer::Owner),
             [bold("You"), text(" set this goal")]
+        );
+    }
+
+    #[test]
+    fn a_conflict_says_what_it_conflicted_with_and_where() {
+        let events = [Stamped {
+            at_ms: 500,
+            event: Event::Conflicted {
+                branch: "studio/goal/first-level".into(),
+                files: vec!["README.md".into(), "src/a.rs".into()],
+            },
+        }];
+        let feed = feed(&ticket(json!({})), &Filer::Owner, &events, "");
+        let Some(Item::Line(line)) = feed.items.first() else {
+            panic!("expected a line: {:?}", feed.items);
+        };
+        assert_eq!(
+            line.parts,
+            [
+                text("Conflicted with "),
+                code("studio/goal/first-level"),
+                text("; back to its agent to resolve")
+            ]
+        );
+        assert_eq!(
+            line.detail,
+            Some(("README.md\nsrc/a.rs".to_string(), false))
         );
     }
 

@@ -14,6 +14,6 @@ cargo test --locked --workspace
 
 ## Owner-only files
 
-Only the owner may edit `crates/engine/src/rules.rs` and `delivery.toml`.
+Only the owner may edit `crates/engine/src/rules.rs` and `release.toml`.
 These paths are out of bounds for autonomous changes.
-Out of bounds without the owner: save formats, bundle `com.example.Game` (never renamed), and the tuning in `rules.rs`.
+Out of bounds without the owner: data formats, the app id `com.example.Shop` (never renamed), and the tuning in `rules.rs`.

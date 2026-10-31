@@ -79,7 +79,7 @@ Leave out the prototype's "Prototype" and "Sample data" labels.
   - *Shipped*: what landed, failed or was cancelled in the last 24 hours.
 
   Picking anything (a desk, a goal, a hire, an up-next chip) opens its panel in
-  the inspector; `/?sel=tickets/GAME-3` opens the page with one picked. With
+  the inspector; `/?sel=tickets/SHOP-3` opens the page with one picked. With
   nothing picked the inspector shows what needs you (each ask as a small card
   with Allow, Deny and Details; held tickets), what is ready to land, the last
   24 hours (spend, what shipped, the approver's calls) and the latest events.
@@ -111,7 +111,7 @@ Leave out the prototype's "Prototype" and "Sample data" labels.
   and per-call results, and asks. Right rail: status, hire and model, goal,
   project, branch, try n of 3, spend of the ticket cap, time; progress steps
   for this ticket's real stages (checks, each gate that applies, review, land);
-  changed files with +/-. Evidence and art pairs fit in the main column.
+  changed files with +/-. Evidence and image pairs fit in the main column.
   Finished tickets state the outcome and offer only actions that still apply.
   Pause and Cancel live in the "more" menu.
 - **Asks**: the full ask cards, newest first, each with its ticket.

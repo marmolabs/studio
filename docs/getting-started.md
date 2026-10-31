@@ -52,18 +52,20 @@ ticket. See [configuration](configuration.md).
 A project is a git repository.
 
 ```sh
-studio project add ~/games/my-game
+studio project add ~/code/my-app
 ```
 
 This adds the project to `studio.toml` and, if the repo has none, writes a
-`.studio.toml` with the commands that check its work. Read that file and fix
-the `verify` commands if they are wrong.
+`.studio.toml` with the commands that check its work. For a Cargo project it
+also gives every ticket's worktree one build folder, so tickets after the
+first don't build from scratch. Read that file and fix the `verify` commands
+if they are wrong.
 
 To start from a pack instead, add the pack first, then name it:
 
 ```sh
-studio pack add packs/bevy-ios
-studio project add ~/games/my-game --pack bevy-ios
+studio pack add ~/packs/my-pack
+studio project add ~/code/my-app --pack my-pack
 ```
 
 Start the studio:
@@ -94,8 +96,8 @@ CARGO_TARGET_DIR=~/.cache/studio-target studio up
 From the board's New ticket form, or in a terminal:
 
 ```sh
-studio ticket -p my-game --hire engineer "Add a pause menu" \
-  --detail "Escape opens it; it has Resume and Quit."
+studio ticket -p my-app --hire engineer "Add a dark mode" \
+  --detail "A switch in settings turns it on; it follows the system until then."
 studio board
 ```
 
@@ -136,8 +138,9 @@ studio merge <ticket>
 ```
 
 That merges in your own checkout when the branch is checked out there, and
-only if the checkout has no uncommitted changes. A conflict is backed out and
-left to you. Nothing is pushed. Once a goal branch is in the branch it started
+only if the checkout has no uncommitted changes. A conflict is backed out, and
+the studio files a ticket on the goal that merges your branch into it and
+resolves the conflicts; merge again once that ticket lands. Nothing is pushed. Once a goal branch is in the branch it started
 from, the web UI shows "merged" in place of the merge button. Clients can ask
 the daemon with the `MergedTickets` request, which lists the landed tickets
 whose goal is merged.
@@ -148,7 +151,7 @@ A goal goes to a producer hire, which reads the code and files the tickets
 that reach it.
 
 ```sh
-studio goal -p my-game "Add a pause menu and a settings screen"
+studio goal -p my-app "Add a dark mode and a settings page"
 ```
 
 The text names the goal and its branch, so keep it short. Give the producer

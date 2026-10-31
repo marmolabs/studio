@@ -46,7 +46,7 @@ States:
 | `landed` | Merged into the goal branch. |
 | `cancelled` | Stopped by you. |
 | `asking` | The agent is waiting on an ask. |
-| `held` | Paused: `budget`, `quota`, `auth`, `conflict` or `paused`. |
+| `held` | Paused. `budget` and `quota` holds resume by themselves, a quota hold when the provider's limit resets; `auth` and `paused` wait for you. |
 | `failed` | Ended with a class: `crash`, `timeout`, `checks`, `review`, `tooling` or `denied`. |
 
 A ticket gets up to three attempts. When checks or review fail, the failure
@@ -70,8 +70,15 @@ the ones before. A ticket with no goal is its own goal. Different goals run
 side by side.
 
 With `auto_land = true` in a project's `.studio.toml`, a ticket that passes
-review and gates lands on its goal branch by itself. A conflict leaves it
-`ready` for you. Merging a goal into your branch is always `studio merge`.
+review and gates lands on its goal branch by itself. Merging a goal into your
+branch is always `studio merge`.
+
+If the goal branch has moved on and conflicts with a ticket, landing merges
+that work into the ticket's worktree instead and sends the ticket back to its
+agent, which resolves the conflicts before its checks and review run again.
+Nothing is committed while conflict markers remain. If merging a goal into
+your branch conflicts, the studio files a ticket on the goal that merges your
+branch into it and resolves the conflicts; merge again once it lands.
 
 ## Asks
 
@@ -136,13 +143,15 @@ For each changed `png`, `jpg` or `gif` that matches the gate's globs (up to
 `before-*` and `after-*` files in the attempt's evidence folder. A new file has
 only the `after-` image. A deleted image is skipped, and so is a file reached
 through a symlink, with a note in the run log. On the ticket, these files
-appear in the "Art · shipped vs new" section, not among the screenshots.
+appear in the "Images · shipped vs new" section, not among the screenshots.
 
 ## Evidence
 
 If a project sets `capture`, the studio runs that command after checks pass.
 It writes screenshots or clips into a per-attempt folder in the worktree.
-Critics see the images, and you see them on the ticket. Evidence files are
+Critics see the images, and you see them on the ticket. When the ticket
+lands and its worktree goes, its evidence is kept in the data folder
+(`evidence/<ticket>/`), so the ticket still shows it. Evidence files are
 `png`, `jpg`, `gif` or `mp4`. Names starting `before-` or `after-` are reserved
 for gates, so a capture must not use them.
 

@@ -28,7 +28,7 @@ const WIDTHS: [(&str, u32); 3] = [("", 1024), ("-1440", 1440), ("-phone", 390)];
 /// Pages also shown in the light theme (Quick Look only).
 const LIGHT: [&str; 3] = ["board", "ticket-asking", "office"];
 const PAGE_LIMIT: Duration = Duration::from_secs(30);
-const DIFFSTAT: &str = " src/title.rs | 6 +++++-\n src/main.rs  | 1 +\n 2 files changed, 6 insertions(+), 1 deletion(-)\n";
+const DIFFSTAT: &str = " src/landing.rs | 6 +++++-\n src/main.rs    | 1 +\n 2 files changed, 6 insertions(+), 1 deletion(-)\n";
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -43,7 +43,7 @@ fn ticket(id: &str, title: &str, hire: &str, state: Value, extra: Value) -> Valu
     let project = if id.starts_with("EDIT") {
         "editor"
     } else {
-        "game"
+        "shop"
     };
     let mut ticket = json!({
         "id": id, "project": project, "title": title, "goal": "", "hire": hire,
@@ -59,90 +59,90 @@ fn ticket(id: &str, title: &str, hire: &str, state: Value, extra: Value) -> Valu
 fn tickets() -> Value {
     // Filed tickets share their plan's goal.
     let child = json!({"parent": "EDIT-1",
-                       "goal": "Ship a level editor: place tiles, undo mistakes, save levels"});
+                       "goal": "Ship a product editor: add items, undo mistakes, save drafts"});
     json!([
         ticket(
-            "GAME-1",
-            "Add a pause menu",
+            "SHOP-1",
+            "Add a contact page",
             "dev",
             json!("queued"),
             json!({"attempts": 0})
         ),
         ticket(
-            "GAME-2",
-            "Fix the jump buffer",
+            "SHOP-2",
+            "Fix the search cache",
             "dev",
             json!("working"),
-            json!({"goal": "Polish the player movement feel"})
+            json!({"goal": "Speed up search results"})
         ),
         ticket(
-            "GAME-3",
-            "Spawn enemies in waves",
+            "SHOP-3",
+            "Add a cart drawer",
             "dev",
             json!({"asking": {"ask": "ASK-1"}}),
-            json!({"goal": "Enemy waves", "parent": "GAME-21", "attempts": 0, "created_at": now_ms() - 21 * 60_000,
-                   "detail": "Enemies arrive in waves that grow in size. A wave starts once the previous one is cleared, after a three second pause. Wave sizes come from a table in `rules.rs`, so they can be tuned without touching systems.\n\n**Done when** waves 1 to 8 follow the table, later waves add two enemies each, and `rules::wave_size` has tests."})
+            json!({"goal": "Checkout flow", "parent": "SHOP-21", "attempts": 0, "created_at": now_ms() - 21 * 60_000,
+                   "detail": "Adding an item opens a drawer with the cart's lines and total, so the shopper stays on the page. The drawer closes when they click outside it or go to checkout. The total comes from `cart::total`, so the drawer and the checkout page always agree.\n\n**Done when** the drawer lists every line with its quantity and price, its total matches the checkout page, and `cart::total` has tests."})
         ),
         ticket(
-            "GAME-4",
-            "Tune the coyote time",
+            "SHOP-4",
+            "Retry payments that time out",
             "dev",
             json!({"asking": {"ask": "ASK-2"}}),
             json!({})
         ),
         ticket(
-            "GAME-5",
-            "Shake the screen on a hit",
+            "SHOP-5",
+            "Resize product images",
             "dev",
             json!("checking"),
             json!({})
         ),
         ticket(
-            "GAME-6",
-            "Save the high score to disk",
+            "SHOP-6",
+            "Add an order history page",
             "dev",
             json!("reviewing"),
             json!({})
         ),
         ticket(
-            "GAME-7",
-            "Add a title screen",
+            "SHOP-7",
+            "Add a landing page",
             "dev",
             json!("ready"),
-            json!({"goal": "Polish the menus", "feedback": "The **Quit** button needs a confirm step:\n\n- ask before closing\n- keep `Esc` as cancel"})
+            json!({"goal": "Polish the navigation", "feedback": "The **Sign out** button needs a confirm step:\n\n- ask before signing out\n- keep `Esc` as cancel"})
         ),
         ticket(
-            "GAME-8",
-            "Fix the player sprite flicker",
+            "SHOP-8",
+            "Fix the broken footer links",
             "dev",
             json!("landed"),
             json!({})
         ),
         ticket(
-            "GAME-9",
-            "Load the tilemap faster",
+            "SHOP-9",
+            "Load the product list faster",
             "dev",
             json!({"failed": {"class": "checks", "detail": "cargo clippy: 2 warnings"}}),
             json!({"attempts": 3, "created_at": now_ms() - 110 * 60_000})
         ),
         ticket(
-            "GAME-10",
-            "Add gamepad support",
+            "SHOP-10",
+            "Add gift card support",
             "dev",
             json!({"held": {"reason": "budget"}}),
             json!({})
         ),
         ticket(
             "EDIT-1",
-            "Plan: ship the level editor",
+            "Plan: ship the product editor",
             "producer",
             json!("working"),
-            json!({"goal": "Ship a level editor: place tiles, undo mistakes, save levels",
+            json!({"goal": "Ship a product editor: add items, undo mistakes, save drafts",
                    "kind": "plan"})
         ),
         ticket(
             "EDIT-2",
-            "Add a tile palette",
+            "Add a form for new items",
             "dev",
             json!("landed"),
             child.clone()
@@ -156,112 +156,112 @@ fn tickets() -> Value {
         ),
         ticket(
             "EDIT-4",
-            "Save levels as RON files",
-            "artist",
+            "Save drafts as JSON files",
+            "dev",
             json!("queued"),
             child
         ),
         ticket(
-            "GAME-11",
-            "Draw the title logo",
-            "artist",
+            "SHOP-11",
+            "Draw the store logo",
+            "designer",
             json!("landed"),
-            json!({"parent": "GAME-14", "attempts": 0})
+            json!({"parent": "SHOP-14", "attempts": 0})
         ),
         ticket(
-            "GAME-12",
-            "Paint the forest tileset",
-            "artist",
+            "SHOP-12",
+            "Design the product cards",
+            "designer",
             json!({"failed": {"class": "review", "detail": "palette too wide"}}),
-            json!({"parent": "GAME-14"})
+            json!({"parent": "SHOP-14"})
         ),
         ticket(
-            "GAME-13",
-            "Mix the boss theme",
-            "composer",
+            "SHOP-13",
+            "Write the launch email",
+            "writer",
             json!({"asking": {"ask": "ASK-3"}}),
-            json!({"parent": "GAME-14"})
+            json!({"parent": "SHOP-14"})
         ),
         ticket(
-            "GAME-14",
-            "Plan: give the game its look and sound",
+            "SHOP-14",
+            "Plan: give the store its look",
             "producer",
             json!("landed"),
-            json!({"goal": "Give the game its look and sound: title logo, forest tiles, boss music",
+            json!({"goal": "Give the store its look: logo, product cards, launch email",
                    "kind": "plan"})
         ),
         // A goal whose tickets all landed and whose branch is merged.
         ticket(
-            "GAME-16",
-            "Plan: polish the menus",
+            "SHOP-16",
+            "Plan: polish the navigation",
             "producer",
             json!("landed"),
-            json!({"goal": "Polish the menus", "kind": "plan"})
+            json!({"goal": "Polish the navigation", "kind": "plan"})
         ),
         ticket(
-            "GAME-17",
-            "Title screen with Start and Quit",
+            "SHOP-17",
+            "Landing page with Shop now and Sign out",
             "dev",
             json!("landed"),
-            json!({"parent": "GAME-16"})
+            json!({"parent": "SHOP-16"})
         ),
         ticket(
-            "GAME-18",
-            "Volume sliders for music and effects",
+            "SHOP-18",
+            "Breadcrumbs on product pages",
             "dev",
             json!("landed"),
-            json!({"parent": "GAME-16"})
+            json!({"parent": "SHOP-16"})
         ),
         // A goal that is done but not merged yet.
         ticket(
-            "GAME-19",
-            "Plan: save games",
+            "SHOP-19",
+            "Plan: save carts",
             "producer",
             json!("landed"),
-            json!({"goal": "Save games between sessions", "kind": "plan"})
+            json!({"goal": "Save carts between sessions", "kind": "plan"})
         ),
         ticket(
-            "GAME-20",
-            "Save settings between sessions",
+            "SHOP-20",
+            "Store carts in the database",
             "dev",
             json!("landed"),
-            json!({"parent": "GAME-19"})
+            json!({"parent": "SHOP-19"})
         ),
         // A goal whose next tickets wait for a slot.
         ticket(
-            "GAME-21",
-            "Plan: enemy waves",
+            "SHOP-21",
+            "Plan: checkout flow",
             "producer",
             json!("landed"),
-            json!({"goal": "Enemy waves", "kind": "plan"})
+            json!({"goal": "Checkout flow", "kind": "plan"})
         ),
         ticket(
-            "GAME-22",
-            "Count the enemies left in a wave",
+            "SHOP-22",
+            "Count the items in the cart",
             "dev",
             json!("landed"),
-            json!({"parent": "GAME-21"})
+            json!({"parent": "SHOP-21"})
         ),
         ticket(
-            "GAME-23",
-            "Pause three seconds between waves",
+            "SHOP-23",
+            "Validate the payment form",
             "dev",
             json!("queued"),
-            json!({"parent": "GAME-21", "attempts": 0})
+            json!({"parent": "SHOP-21", "attempts": 0})
         ),
         ticket(
-            "GAME-24",
-            "Show the wave number on screen",
-            "artist",
+            "SHOP-24",
+            "Design the order confirmation page",
+            "designer",
             json!("queued"),
-            json!({"parent": "GAME-21", "attempts": 0})
+            json!({"parent": "SHOP-21", "attempts": 0})
         ),
         ticket(
-            "GAME-15",
-            "Plan: add a settings screen",
+            "SHOP-15",
+            "Plan: add a settings page",
             "producer",
             json!("working"),
-            json!({"goal": "Add a settings screen for volume and key bindings", "kind": "plan"})
+            json!({"goal": "Add a settings page for email and notification preferences", "kind": "plan"})
         ),
     ])
 }
@@ -279,7 +279,7 @@ fn hire_file(name: &str, role: &str, model: &str, escalate: &str, about: &str) -
 fn rule_file(origin: &str, owner: &str, name: &str, head: &str, why: &str) -> Value {
     let home = std::env::var("HOME").unwrap_or_default();
     let path = match origin {
-        "project" => format!("{home}/games/{owner}/.studio/rules/{name}.md"),
+        "project" => format!("{home}/code/{owner}/.studio/rules/{name}.md"),
         _ => format!("{home}/Library/Application Support/studio/rules/{name}.md"),
     };
     json!({
@@ -317,7 +317,7 @@ fn spend_by_day(days: u32, today: f64) -> Value {
 fn activity() -> Vec<Value> {
     let histories: [(&str, &[(u64, Value)]); 12] = [
         (
-            "GAME-8",
+            "SHOP-8",
             &[
                 (100, json!({"type": "claimed"})),
                 (99, json!({"type": "run_started", "run": "r1"})),
@@ -328,7 +328,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-7",
+            "SHOP-7",
             &[
                 (70, json!({"type": "claimed"})),
                 (70, json!({"type": "run_started", "run": "r2"})),
@@ -338,7 +338,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-12",
+            "SHOP-12",
             &[
                 (58, json!({"type": "claimed"})),
                 (58, json!({"type": "run_started", "run": "r3"})),
@@ -346,13 +346,13 @@ fn activity() -> Vec<Value> {
                 (43, json!({"type": "checks_passed"})),
                 (
                     40,
-                    json!({"type": "review_failed", "detail": "art gate: the palette is too wide for the forest set"}),
+                    json!({"type": "review_failed", "detail": "design gate: the palette is too wide for the product cards"}),
                 ),
                 (25, json!({"type": "checks_started"})),
                 (24, json!({"type": "checks_passed"})),
                 (
                     20,
-                    json!({"type": "review_failed", "detail": "art gate: the palette is still too wide"}),
+                    json!({"type": "review_failed", "detail": "design gate: the palette is still too wide"}),
                 ),
                 (
                     18,
@@ -361,7 +361,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-2",
+            "SHOP-2",
             &[
                 (50, json!({"type": "claimed"})),
                 (50, json!({"type": "run_started", "run": "r4"})),
@@ -380,7 +380,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-6",
+            "SHOP-6",
             &[
                 (31, json!({"type": "claimed"})),
                 (31, json!({"type": "run_started", "run": "r6"})),
@@ -389,7 +389,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-5",
+            "SHOP-5",
             &[
                 (24, json!({"type": "claimed"})),
                 (24, json!({"type": "run_started", "run": "r7"})),
@@ -397,7 +397,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-3",
+            "SHOP-3",
             &[
                 (18, json!({"type": "claimed"})),
                 (18, json!({"type": "run_started", "run": "r8"})),
@@ -405,7 +405,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-13",
+            "SHOP-13",
             &[
                 (14, json!({"type": "claimed"})),
                 (14, json!({"type": "run_started", "run": "r9"})),
@@ -413,7 +413,7 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-4",
+            "SHOP-4",
             &[
                 (9, json!({"type": "claimed"})),
                 (9, json!({"type": "run_started", "run": "r10"})),
@@ -421,14 +421,14 @@ fn activity() -> Vec<Value> {
             ],
         ),
         (
-            "GAME-15",
+            "SHOP-15",
             &[
                 (6, json!({"type": "claimed"})),
                 (6, json!({"type": "run_started", "run": "r11"})),
             ],
         ),
         (
-            "GAME-10",
+            "SHOP-10",
             &[
                 (40, json!({"type": "claimed"})),
                 (40, json!({"type": "run_started", "run": "r12"})),
@@ -467,13 +467,13 @@ fn team() -> Value {
         |id: &str, role: &str, model: &str| json!({"id": id, "role": role, "model": model});
     json!([
         member("approver", "approver", "haiku"),
-        member("artist", "pixel artist", "haiku"),
-        member("composer", "composer", "sonnet"),
+        member("design-critic", "critic", "haiku"),
+        member("designer", "designer", "haiku"),
         member("dev", "engineer", "sonnet"),
         member("producer", "producer", "opus"),
         member("reviewer", "reviewer", "sonnet"),
         member("router", "router", "haiku"),
-        member("tester", "qa", "haiku"),
+        member("writer", "writer", "sonnet"),
     ])
 }
 
@@ -481,14 +481,14 @@ fn team() -> Value {
 /// and the work that ended before it, only of `kinds` when there are any.
 fn recent_events(kinds: &[String]) -> Value {
     let ended = [
-        ("GAME-17", 20 * 3600, json!({"type": "landed"})),
-        ("GAME-18", 19 * 3600, json!({"type": "landed"})),
-        ("GAME-11", 6 * 3600, json!({"type": "landed"})),
+        ("SHOP-17", 20 * 3600, json!({"type": "landed"})),
+        ("SHOP-18", 19 * 3600, json!({"type": "landed"})),
+        ("SHOP-11", 6 * 3600, json!({"type": "landed"})),
         ("EDIT-2", 5 * 3600, json!({"type": "landed"})),
-        ("GAME-20", 2 * 3600, json!({"type": "landed"})),
+        ("SHOP-20", 2 * 3600, json!({"type": "landed"})),
         // The last try's failed checks fail the ticket; no `failed` event follows.
         (
-            "GAME-9",
+            "SHOP-9",
             79 * 60,
             json!({"type": "checks_failed", "detail": "cargo clippy: 2 warnings"}),
         ),
@@ -508,8 +508,8 @@ fn idle_reply(request: &Request) -> Value {
     match request {
         Request::Status => json!({
             "asks": 0, "running": 0, "tickets": {}, "goals": 0, "rules": 3, "daily_usd": 10.0,
-            "spent_24h": 0.0, "projects": ["game", "editor"],
-            "hires": ["dev", "artist", "producer", "composer", "tester", "reviewer", "approver", "router"],
+            "spent_24h": 0.0, "projects": ["shop", "editor"],
+            "hires": ["dev", "designer", "producer", "writer", "design-critic", "reviewer", "approver", "router"],
             "max_runs": 6, "team": team(),
         }),
         Request::Tickets
@@ -528,17 +528,17 @@ fn idle_reply(request: &Request) -> Value {
 /// tickets also asked, were held, or began their run at another time.
 fn events(id: &str) -> Value {
     let at = |minutes_ago: u64| now_ms() - minutes_ago * 60_000;
-    if id == "GAME-3" {
+    if id == "SHOP-3" {
         return json!([
             {"seq": 1, "ticket_id": id, "at_ms": at(21), "event": {"type": "created", "id": id,
-             "project": "game", "title": "Spawn enemies in waves", "goal": "Enemy waves", "hire": "dev",
+             "project": "shop", "title": "Add a cart drawer", "goal": "Checkout flow", "hire": "dev",
              "base_branch": "main", "created_at": at(21)}},
             {"seq": 2, "ticket_id": id, "at_ms": at(18), "event": {"type": "claimed"}},
             {"seq": 3, "ticket_id": id, "at_ms": at(18), "event": {"type": "run_started", "run": "r1"}},
             {"seq": 4, "ticket_id": id, "at_ms": at(2), "event": {"type": "ask_opened", "ask": "ASK-1"}},
         ]);
     }
-    if id == "GAME-9" {
+    if id == "SHOP-9" {
         // Three tries, each stopped by the checks; the third fails the ticket.
         return json!([
             {"seq": 1, "ticket_id": id, "at_ms": at(106), "event": {"type": "claimed"}},
@@ -554,8 +554,8 @@ fn events(id: &str) -> Value {
         ]);
     }
     let run = match id {
-        "GAME-5" => 12,
-        "GAME-6" => 18,
+        "SHOP-5" => 12,
+        "SHOP-6" => 18,
         "EDIT-1" => 8,
         _ => 20,
     };
@@ -566,21 +566,21 @@ fn events(id: &str) -> Value {
          "event": {"type": "checks_failed", "detail": "cargo test: 1 failed"}},
         {"seq": 4, "ticket_id": id, "at_ms": at(22),
          "event": {"type": "review_failed",
-                   "detail": "**Must fix:** the `Quit` button closes at once.\nAsk first, then quit."}},
+                   "detail": "**Must fix:** the `Sign out` button signs out at once.\nAsk first, then sign out."}},
         {"seq": 5, "ticket_id": id, "at_ms": at(21),
          "event": {"type": "changes_requested",
-                   "detail": "Keep **Esc** as cancel:\n\n- close the dialog\n- stay on `Title`"}},
+                   "detail": "Keep **Esc** as cancel:\n\n- close the dialog\n- keep the `session` cookie"}},
         {"seq": 6, "ticket_id": id, "at_ms": at(run), "event": {"type": "claimed"}},
         {"seq": 7, "ticket_id": id, "at_ms": at(9), "event": {"type": "checks_passed"}},
     ]);
     let extra = match id {
-        "GAME-4" => json!({"type": "ask_opened", "ask": "ASK-2"}),
-        "GAME-13" => json!({"type": "ask_opened", "ask": "ASK-3"}),
-        "GAME-10" => json!({"type": "held", "reason": "budget"}),
+        "SHOP-4" => json!({"type": "ask_opened", "ask": "ASK-2"}),
+        "SHOP-13" => json!({"type": "ask_opened", "ask": "ASK-3"}),
+        "SHOP-10" => json!({"type": "held", "reason": "budget"}),
         _ => return events,
     };
     let minutes = match id {
-        "GAME-13" => 9,
+        "SHOP-13" => 9,
         _ => 6,
     };
     if let Some(list) = events.as_array_mut() {
@@ -629,8 +629,8 @@ fn reply(request: &Request) -> Value {
             "asks": 3, "running": 8, "goals": 6, "rules": 5,
             "tickets": {"queued": 5, "working": 3, "checking": 1, "reviewing": 1, "asking": 3,
                         "held": 1, "ready": 1, "landed": 11, "failed": 2},
-            "daily_usd": 10.0, "spent_24h": 6.4, "projects": ["game", "editor"],
-            "hires": ["dev", "artist", "producer", "composer", "tester", "reviewer", "approver", "router"],
+            "daily_usd": 10.0, "spent_24h": 6.4, "projects": ["shop", "editor"],
+            "hires": ["dev", "designer", "producer", "writer", "design-critic", "reviewer", "approver", "router"],
             "max_runs": 9, "team": team(),
         }),
         Request::RecentEvents { kinds, .. } => recent_events(kinds),
@@ -641,11 +641,11 @@ fn reply(request: &Request) -> Value {
         } => events(id),
         Request::Activity { .. } => numbered(activity()),
         Request::StateSince => state_since(),
-        Request::Diff { ticket } if ticket == "GAME-3" => json!(
-            "diff --git a/src/rules.rs b/src/rules.rs\n--- a/src/rules.rs\n+++ b/src/rules.rs\n@@ -1,3 +1,6 @@\n-pub const WAVE: u32 = 4;\n+pub const WAVES: [u32; 8] = [4, 5, 6, 8, 10, 12, 14, 16];\n+\n+pub fn wave_size(n: usize) -> u32 {\n+    WAVES.get(n).copied().unwrap_or(16 + 2 * (n as u32 - 7))\n+}\ndiff --git a/src/spawning.rs b/src/spawning.rs\n--- a/src/spawning.rs\n+++ b/src/spawning.rs\n@@ -10,4 +10,4 @@\n-    timer.tick(time.delta());\n-    if timer.finished() {\n+    if wave_cleared(&enemies) {\n+        pause.tick(time.delta());\n"
+        Request::Diff { ticket } if ticket == "SHOP-3" => json!(
+            "diff --git a/src/cart.rs b/src/cart.rs\n--- a/src/cart.rs\n+++ b/src/cart.rs\n@@ -1 +1,5 @@\n-pub type Cart = Vec<(ProductId, u32)>;\n+pub type Cart = Vec<Line>;\n+\n+pub fn total(cart: &Cart) -> u32 {\n+    cart.iter().map(|line| line.price * line.quantity).sum()\n+}\ndiff --git a/templates/cart.html b/templates/cart.html\n--- a/templates/cart.html\n+++ b/templates/cart.html\n@@ -10,2 +10,2 @@\n-<main class=\"cart-page\">\n-  <h1>Your cart</h1>\n+<aside class=\"cart-drawer\" aria-label=\"Cart\">\n+  <h2>Your cart: {{ total }}</h2>\n"
         ),
         Request::Diff { .. } => json!(
-            "diff --git a/src/title.rs b/src/title.rs\n--- a/src/title.rs\n+++ b/src/title.rs\n@@ -4,7 +4,11 @@ pub fn draw_title(ui: &mut Ui) {\n     ui.heading(\"Starlight Run\");\n-    ui.label(\"Press any key\");\n+    if ui.button(\"Start\").clicked() {\n+        next.set(GameState::Playing);\n+    }\n+    if ui.button(\"Quit\").clicked() {\n+        exit.send(AppExit);\n+    }\n }\n"
+            "diff --git a/src/landing.rs b/src/landing.rs\n--- a/src/landing.rs\n+++ b/src/landing.rs\n@@ -4,3 +4,7 @@ pub fn page(html: &mut Html, user: Option<&User>) {\n     html.heading(\"Corner Shop\");\n-    html.text(\"Opening soon\");\n+    html.link(\"Shop now\", \"/products\");\n+    if let Some(user) = user {\n+        html.text(&format!(\"Signed in as {}\", user.name));\n+        html.button(\"Sign out\", \"/sign-out\");\n+    }\n }\n"
         ),
         Request::Diffstat { .. } => json!(DIFFSTAT),
         Request::Diffstats { tickets } => json!(
@@ -655,71 +655,71 @@ fn reply(request: &Request) -> Value {
                 .collect::<std::collections::BTreeMap<_, _>>()
         ),
         // Nothing is booked for a run that has only just started.
-        Request::TicketSpend { ticket } if matches!(ticket.as_str(), "GAME-2" | "GAME-3") => {
+        Request::TicketSpend { ticket } if matches!(ticket.as_str(), "SHOP-2" | "SHOP-3") => {
             json!(0.0)
         }
         Request::TicketSpend { .. } => json!(0.31),
         Request::TicketSpends => json!({
-            "EDIT-2": 0.18, "GAME-8": 0.84, "GAME-4": 0.11, "GAME-11": 0.31, "GAME-12": 0.84, "GAME-13": 0.22, "GAME-14": 0.12, "GAME-15": 0.09,
-            "GAME-16": 0.11, "GAME-17": 2.06, "GAME-18": 0.84, "GAME-19": 0.08, "GAME-20": 1.12,
-            "GAME-2": 0.38, "GAME-5": 0.91, "GAME-6": 1.24, "GAME-7": 2.06, "GAME-9": 1.96,
-            "GAME-10": 0.52, "GAME-21": 0.07, "GAME-22": 0.35, "EDIT-1": 0.3,
+            "EDIT-2": 0.18, "SHOP-8": 0.84, "SHOP-4": 0.11, "SHOP-11": 0.31, "SHOP-12": 0.84, "SHOP-13": 0.22, "SHOP-14": 0.12, "SHOP-15": 0.09,
+            "SHOP-16": 0.11, "SHOP-17": 2.06, "SHOP-18": 0.84, "SHOP-19": 0.08, "SHOP-20": 1.12,
+            "SHOP-2": 0.38, "SHOP-5": 0.91, "SHOP-6": 1.24, "SHOP-7": 2.06, "SHOP-9": 1.96,
+            "SHOP-10": 0.52, "SHOP-21": 0.07, "SHOP-22": 0.35, "EDIT-1": 0.3,
         }),
         // When tickets last changed; the rest are left out.
         Request::UpdatedAt => json!({
-            "EDIT-1": at(4), "EDIT-2": at(26), "GAME-13": at(2), "GAME-15": at(1),
-            "GAME-16": at(1500), "GAME-18": at(1450), "GAME-19": at(70), "GAME-20": at(65),
-            "GAME-21": at(300), "GAME-22": at(290),
+            "EDIT-1": at(4), "EDIT-2": at(26), "SHOP-13": at(2), "SHOP-15": at(1),
+            "SHOP-16": at(1500), "SHOP-18": at(1450), "SHOP-19": at(70), "SHOP-20": at(65),
+            "SHOP-21": at(300), "SHOP-22": at(290),
         }),
-        // The menus goal is merged; the save-games goal is done but not merged.
-        Request::MergedTickets => json!(["GAME-17", "GAME-18"]),
+        // The navigation goal is merged; the save-carts goal is done but not merged.
+        Request::MergedTickets => json!(["SHOP-17", "SHOP-18"]),
         Request::Asks => json!([{
-            "id": "ASK-1", "ticket": "GAME-3", "hire": "dev", "kind": "permission", "at_ms": at(2),
+            "id": "ASK-1", "ticket": "SHOP-3", "hire": "dev", "kind": "permission", "at_ms": at(2),
             "tool": "Bash",
-            "input": {"command": "cargo run --example waves", "description": "Try the wave spawner"},
-            "reasons": ["Approver: running an example opens a game window, so it is yours to decide"],
+            "input": {"command": "cargo run -- --port 8080", "description": "Try the cart drawer"},
+            "reasons": ["Approver: starting the store opens port 8080 on this machine, so it is yours to decide"],
         }, {
-            "id": "ASK-2", "ticket": "GAME-4", "hire": "dev", "kind": "permission", "at_ms": at(6),
+            "id": "ASK-2", "ticket": "SHOP-4", "hire": "dev", "kind": "permission", "at_ms": at(6),
             "tool": "Edit",
-            "input": {"file_path": "src/player/movement.rs",
-                      "old_string": "const COYOTE_TIME: f32 = 0.08;",
-                      "new_string": "const COYOTE_TIME: f32 = 0.12;"},
-            "reasons": ["Movement feel is tuned by hand: ask before changing it (protect-player)"],
+            "input": {"file_path": "src/payments/retry.rs",
+                      "old_string": "const MAX_RETRIES: u32 = 1;",
+                      "new_string": "const MAX_RETRIES: u32 = 3;"},
+            "reasons": ["Payment code moves real money: ask before changing it (protect-payments)"],
         }, {
-            "id": "ASK-3", "ticket": "GAME-13", "hire": "composer", "kind": "permission", "at_ms": at(9),
+            "id": "ASK-3", "ticket": "SHOP-13", "hire": "writer", "kind": "permission", "at_ms": at(9),
             "tool": "Bash",
-            "input": {"command": "ffmpeg -i assets/music/boss_theme_raw.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a libvorbis -q:a 5 assets/music/boss_theme.ogg"},
+            "input": {"command": "cargo run --bin mailer -- send --template templates/email/launch.html --to owner@example.com --subject \"Corner Shop is open\""},
             "reasons": [],
         }]),
         Request::Budget => json!({
             "limits": {"daily_usd": 10.0, "ticket_usd": 2.0, "run_usd": null, "min_run_usd": 0.05,
-                       "projects": {"game": 6.0, "editor": 4.0}, "hires": {"dev": 8.0, "artist": 2.0}},
-            "spent_24h": {"total": 6.4, "by_project": {"game": 4.2, "editor": 1.5, "assets": 0.7},
-                          "by_hire": {"dev": 4.4, "artist": 0.6, "producer": 0.6, "reviewer": 0.5,
+                       "projects": {"shop": 6.0, "editor": 4.0}, "hires": {"dev": 8.0, "designer": 2.0}},
+            "spent_24h": {"total": 6.4, "by_project": {"shop": 4.2, "editor": 1.5, "assets": 0.7},
+                          "by_hire": {"dev": 4.4, "designer": 0.6, "producer": 0.6, "reviewer": 0.5,
                                       "approver": 0.2, "router": 0.1},
                           "by_model": {"sonnet": 4.9, "haiku": 0.9, "opus": 0.6},
-                          "by_ticket": {"GAME-7": 2.06, "GAME-9": 1.96, "GAME-6": 1.24, "GAME-20": 1.12,
-                                        "GAME-5": 0.91},
-                          "runs_by_hire": {"dev": 9, "artist": 2, "producer": 1, "reviewer": 3,
+                          "by_ticket": {"SHOP-7": 2.06, "SHOP-9": 1.96, "SHOP-6": 1.24, "SHOP-20": 1.12,
+                                        "SHOP-5": 0.91},
+                          "runs_by_hire": {"dev": 9, "designer": 2, "producer": 1, "reviewer": 3,
                                            "approver": 41, "router": 6}},
             "runs_24h": 62,
-            "reserved": {"GAME-2": 0.5, "GAME-5": 0.4, "EDIT-1": 0.25},
+            "reserved": {"SHOP-2": 0.5, "SHOP-5": 0.4, "EDIT-1": 0.25},
         }),
         Request::Files {
             kind: FileKind::Hires,
         } => json!([
             hire_file("dev", "engineer", "sonnet", "opus", "Writes code, with tests, in small steps."),
-            hire_file("artist", "pixel artist", "sonnet", "", "Pixel art and UI."),
+            hire_file("designer", "designer", "sonnet", "", "Page layouts, images and icons."),
             hire_file("producer", "producer", "sonnet", "", "Plans goals as small tickets."),
-            hire_file("tester", "critic", "opus", "sonnet", "Design critic for menus and feel."),
+            hire_file("design-critic", "critic", "opus", "sonnet", "Design critic for pages and images."),
             hire_file("reviewer", "reviewer", "opus", "sonnet", "Reads every diff before it lands."),
-            {"name": "composer", "problem": "line 3: did not find expected key", "text": ""},
+            {"name": "writer", "problem": "line 3: did not find expected key", "text": ""},
             hire_file("approver", "approver", "haiku", "", "Decides tool calls no rule covers."),
             hire_file("router", "router", "haiku", "", "Picks the hire for new tickets."),
         ]),
         Request::HiresToday => json!({
-            "dev": {"done": 6}, "artist": {"done": 1}, "producer": {"planned": 2},
-            "tester": {"critiques": 4}, "reviewer": {"reviews": 11},
+            "dev": {"done": 6}, "designer": {"done": 1}, "producer": {"planned": 2},
+            "design-critic": {"critiques": 4}, "reviewer": {"reviews": 11},
             "approver": {"allowed": 81, "denied": 11, "to_owner": 4}, "router": {"routed": 12},
         }),
         Request::ApproverCalls { limit } => {
@@ -734,23 +734,23 @@ fn reply(request: &Request) -> Value {
             };
             let calls = [
                 call(
-                    "GAME-3",
+                    "SHOP-3",
                     2,
                     "Bash",
-                    "cargo run --example waves",
+                    "cargo run -- --port 8080",
                     "to_owner",
-                    "Running an example opens a game window, so it is yours to decide.",
+                    "Starting the store opens port 8080 on this machine, so it is yours to decide.",
                 ),
                 call(
-                    "GAME-2",
+                    "SHOP-2",
                     4,
                     "Bash",
-                    "cargo test -p game player::jump",
+                    "cargo test -p shop search::cache",
                     "allowed",
-                    "Runs the movement tests inside the worktree.",
+                    "Runs the search tests inside the worktree.",
                 ),
                 call(
-                    "GAME-5",
+                    "SHOP-5",
                     7,
                     "Bash",
                     "cargo clippy --all-targets -- -D warnings",
@@ -758,7 +758,7 @@ fn reply(request: &Request) -> Value {
                     "Lints the worktree; nothing leaves it.",
                 ),
                 call(
-                    "GAME-2",
+                    "SHOP-2",
                     12,
                     "Bash",
                     "rm -rf ~/.cargo/registry/cache",
@@ -766,15 +766,15 @@ fn reply(request: &Request) -> Value {
                     "Clearing the shared Cargo cache is outside the ticket and slows every other build.",
                 ),
                 call(
-                    "GAME-5",
+                    "SHOP-5",
                     15,
                     "WebFetch",
-                    "https://docs.rs/bevy/latest/bevy/time/struct.Timer.html",
+                    "https://doc.rust-lang.org/std/fs/fn.read_dir.html",
                     "allowed",
                     "Reads public documentation.",
                 ),
                 call(
-                    "GAME-6",
+                    "SHOP-6",
                     18,
                     "Bash",
                     "git diff --stat main...HEAD",
@@ -782,7 +782,7 @@ fn reply(request: &Request) -> Value {
                     "Reads the branch's own changes.",
                 ),
                 call(
-                    "GAME-6",
+                    "SHOP-6",
                     21,
                     "Bash",
                     "cargo test --workspace",
@@ -790,12 +790,12 @@ fn reply(request: &Request) -> Value {
                     "Runs the tests inside the worktree.",
                 ),
                 call(
-                    "GAME-5",
+                    "SHOP-5",
                     26,
                     "Bash",
-                    "cargo run --release -- --capture shake.png",
+                    "cargo run --release -- resize-images static/img/products",
                     "allowed",
-                    "The ticket's capture step, writing inside the worktree.",
+                    "The ticket's resize step, writing inside the worktree.",
                 ),
             ];
             json!(calls[..calls.len().min(*limit)])
@@ -824,14 +824,14 @@ fn reply(request: &Request) -> Value {
             ),
             rule_file(
                 "project",
-                "game",
-                "protect-player",
-                "kind: protect\nlevel: ask\nwhen:\n  paths: [\"src/player/**\"]",
-                "Player movement is tuned by hand. Ask before\nchanging anything under src/player."
+                "shop",
+                "protect-payments",
+                "kind: protect\nlevel: ask\nwhen:\n  paths: [\"src/payments/**\"]",
+                "Payment code moves real money. Ask before\nchanging anything under src/payments."
             ),
             rule_file(
                 "project",
-                "game",
+                "shop",
                 "run-the-checks",
                 "kind: check\nlevel: block\ncommand: [cargo, test, --workspace]",
                 "fmt, clippy and tests must pass."
@@ -890,63 +890,63 @@ fn write_logs(runs: &Path) -> Result<()> {
     let read = |file: &str| {
         call(
             "Read",
-            json!({"file_path": format!("src/player/{file}.rs")}),
+            json!({"file_path": format!("src/search/{file}.rs")}),
         )
     };
     let edit = |file: &str| {
         call(
             "Edit",
-            json!({"file_path": format!("src/player/{file}.rs")}),
+            json!({"file_path": format!("src/search/{file}.rs")}),
         )
     };
     let bash = |command: &str| call("Bash", json!({"command": command}));
     let mut long = vec![
         text(
-            "The jump buffer drops inputs pressed just before landing. Let me look at the player controller.",
+            "Repeat searches miss the cache and run the full query again. Let me look at the search code.",
         ),
-        read("jump"),
-        read("input"),
-        read("state"),
-        read("movement"),
-        call("Grep", json!({"pattern": "jump_buffer"})),
-        call("Grep", json!({"pattern": "COYOTE_TIME"})),
+        read("cache"),
+        read("query"),
+        read("index"),
+        read("rank"),
+        call("Grep", json!({"pattern": "cache_key"})),
+        call("Grep", json!({"pattern": "CACHE_SIZE"})),
         text(
-            "The timer resets every frame while the key is held. I'll store the press time instead.",
+            "The cache is keyed by the raw query, so `Mugs` and `mugs` miss each other. I'll key it by the trimmed, lowercased words instead.",
         ),
-        edit("jump"),
+        edit("cache"),
         rule.clone(),
-        edit("input"),
+        edit("query"),
         rule.clone(),
-        edit("state"),
+        edit("index"),
         rule.clone(),
-        bash("cargo test jump"),
+        bash("cargo test cache"),
         bash(
-            "cargo test --workspace --locked -- --test-threads=1 --nocapture player::jump::buffered_press_fires_after_landing",
+            "cargo test --workspace --locked -- --test-threads=1 --nocapture search::cache::same_words_hit_the_cache",
         ),
-        text("Two tests fail: the buffer is cleared before the landing check runs."),
-        read("jump"),
-        read("movement"),
-        edit("jump"),
+        text("Two tests fail: the cache is not cleared when a product's price changes."),
+        read("cache"),
+        read("rank"),
+        edit("cache"),
         rule.clone(),
-        bash("cargo test jump"),
-        text("Buffered jumps now fire up to 120ms after the press."),
+        bash("cargo test cache"),
+        text("Repeat searches now come back from the cache in under 5ms."),
         call("Glob", json!({"pattern": "tests/**/*.rs"})),
-        read("jump"),
-        edit("jump"),
+        read("cache"),
+        edit("cache"),
         rule.clone(),
-        edit("state"),
+        edit("index"),
         rule.clone(),
         bash("cargo fmt --all"),
         bash("cargo clippy --workspace --all-targets -- -D warnings"),
         text("Formatting and lints are clean. Running the full test suite."),
-        read("input"),
-        read("jump"),
+        read("query"),
+        read("cache"),
         bash("cargo test --workspace"),
     ];
     long.push(bash("cargo test --workspace --release"));
     long.push(json!({"event": {"type": "permission", "tool": "Bash"}}));
     long.push(json!({"note": "allowed Bash: cargo test (rule allow-cargo-test)"}));
-    std::fs::write(runs.join("GAME-2.jsonl"), lines(&long))?;
+    std::fs::write(runs.join("SHOP-2.jsonl"), lines(&long))?;
     // A run that stopped to ask: its message, the steps after it with their
     // results, and the words just before the ask.
     let ago = |minutes: u64, mut entry: Value| {
@@ -961,8 +961,8 @@ fn write_logs(runs: &Path) -> Result<()> {
     };
     let id_call = |id: &str, name: &str, input: Value| json!({"event": {"type": "tool_call", "id": id, "name": name, "input": input}});
     let output = |id: &str, output: String| json!({"event": {"type": "tool_result", "id": id, "output": output, "is_error": false}});
-    let waves = [
-        ago(20, json!({"note": "routed to dev: game logic with tests"})),
+    let drawer = [
+        ago(20, json!({"note": "routed to dev: cart logic with tests"})),
         ago(
             18,
             json!({"event": {"type": "started", "session": "s1", "model": "sonnet"}}),
@@ -970,25 +970,25 @@ fn write_logs(runs: &Path) -> Result<()> {
         ago(
             18,
             text(
-                "Spawning runs on a fixed timer in `spawning.rs`. I'll move wave sizes into `rules.rs` as a table and drive spawning from it:\n\n- `WAVES`: sizes for waves 1 to 8\n- `wave_size(n)`: the table, then two more per wave\n- `wave_cleared`: true when no enemy is alive",
+                "Adding an item sends the shopper to `/cart`, away from the product. I'll put prices on the cart's lines in `cart.rs` and turn `cart.html` into a drawer:\n\n- `Line`: a product with its price and quantity\n- `total(cart)`: the sum of every line\n- `cart-drawer`: the lines and total, opened in place",
             ),
         ),
         ago(
             17,
-            id_call("r1", "Read", json!({"file_path": "src/spawning.rs"})),
+            id_call("r1", "Read", json!({"file_path": "templates/cart.html"})),
         ),
         ago(17, output("r1", numbered(142))),
         ago(
             17,
-            id_call("r2", "Read", json!({"file_path": "src/rules.rs"})),
+            id_call("r2", "Read", json!({"file_path": "src/cart.rs"})),
         ),
         ago(17, output("r2", numbered(310))),
-        ago(16, id_call("g1", "Grep", json!({"pattern": "spawn_enemy"}))),
+        ago(16, id_call("g1", "Grep", json!({"pattern": "add_to_cart"}))),
         ago(
             16,
             output(
                 "g1",
-                "Found 3 files\nsrc/spawning.rs\nsrc/rules.rs\nsrc/main.rs".into(),
+                "Found 3 files\nsrc/cart.rs\nsrc/routes.rs\ntemplates/product.html".into(),
             ),
         ),
         ago(
@@ -996,7 +996,7 @@ fn write_logs(runs: &Path) -> Result<()> {
             id_call(
                 "e1",
                 "Edit",
-                json!({"file_path": "src/rules.rs",
+                json!({"file_path": "src/cart.rs",
             "old_string": numbered(3), "new_string": numbered(48).replace("line", "row")}),
             ),
         ),
@@ -1005,8 +1005,8 @@ fn write_logs(runs: &Path) -> Result<()> {
             id_call(
                 "e2",
                 "Edit",
-                json!({"file_path": "src/spawning.rs",
-            "old_string": numbered(22), "new_string": numbered(31).replace("line", "wave")}),
+                json!({"file_path": "templates/cart.html",
+            "old_string": numbered(22), "new_string": numbered(31).replace("line", "item")}),
             ),
         ),
         ago(
@@ -1014,12 +1014,12 @@ fn write_logs(runs: &Path) -> Result<()> {
             id_call(
                 "b1",
                 "Bash",
-                json!({"command": "cargo test --locked rules::"}),
+                json!({"command": "cargo test --locked cart::"}),
             ),
         ),
         ago(
             8,
-            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo test --locked rules::"}}}),
+            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo test --locked cart::"}}}),
         ),
         ago(
             8,
@@ -1034,27 +1034,23 @@ fn write_logs(runs: &Path) -> Result<()> {
         ),
         ago(
             3,
-            text("The tests pass. Before I hand it over I'd like to watch it run."),
+            text("The tests pass. Before I hand it over I'd like to try the drawer in a browser."),
         ),
         ago(
             2,
-            id_call(
-                "b2",
-                "Bash",
-                json!({"command": "cargo run --example waves"}),
-            ),
+            id_call("b2", "Bash", json!({"command": "cargo run -- --port 8080"})),
         ),
         ago(
             2,
-            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo run --example waves"}}}),
+            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo run -- --port 8080"}}}),
         ),
     ];
     let mut log = String::new();
-    for entry in waves {
+    for entry in drawer {
         log.push_str(&entry.to_string());
         log.push('\n');
     }
-    std::fs::write(runs.join("GAME-3.jsonl"), log)?;
+    std::fs::write(runs.join("SHOP-3.jsonl"), log)?;
     // Checks under way, and a review: notes at fixed times before now.
     let at = |seconds_ago: u64, entry: Value| {
         let mut entry = entry;
@@ -1063,11 +1059,11 @@ fn write_logs(runs: &Path) -> Result<()> {
     };
     let note = |text: &str| json!({"note": text});
     std::fs::write(
-        runs.join("GAME-5.jsonl"),
+        runs.join("SHOP-5.jsonl"),
         [
             at(
                 400,
-                text("The screen shakes on every hit now. Handing over to the checks."),
+                text("Product images are resized to three widths now. Handing over to the checks."),
             ),
             at(116, note("check: cargo fmt --all --check")),
             at(112, note("check: cargo clippy --workspace -- -D warnings")),
@@ -1076,50 +1072,52 @@ fn write_logs(runs: &Path) -> Result<()> {
         .concat(),
     )?;
     std::fs::write(
-        runs.join("GAME-6.jsonl"),
+        runs.join("SHOP-6.jsonl"),
         [
             at(560, note("checks passed")),
             at(540, note("review by reviewer (sonnet)")),
             at(
                 30,
-                call("Read", json!({"file_path": "src/save/high_score.rs"})),
+                call("Read", json!({"file_path": "src/orders/history.rs"})),
             ),
         ]
         .concat(),
     )?;
     std::fs::write(
-        runs.join("GAME-7.jsonl"),
+        runs.join("SHOP-7.jsonl"),
         lines(&[
             text(
-                "Added a **title screen** with Start and Quit buttons:\n\n- `src/title.rs` spawns the menu\n- `main.rs` starts in the `Title` state\n\n```rust\napp.add_systems(OnEnter(State::Title), spawn_title);\n```",
+                "Added a **landing page** with a Shop now link and a Sign out button:\n\n- `src/landing.rs` renders the page\n- `main.rs` serves it at `/`\n\n```rust\nrouter.get(\"/\", landing::page);\n```",
             ),
-            call("Write", json!({"file_path": "src/title.rs"})),
+            call("Write", json!({"file_path": "src/landing.rs"})),
             call("Edit", json!({"file_path": "src/main.rs"})),
             call("Bash", json!({"command": "cargo test --workspace"})),
             json!({"note": "checks passed"}),
             json!({"note": "review by reviewer (opus)"}),
             json!({"note": "review passed"}),
-            json!({"note": "gate design by tester (opus)"}),
+            json!({"note": "gate design by design-critic (opus)"}),
             json!({"note": "gate design passed"}),
             fin,
         ]),
     )?;
     std::fs::write(
-        runs.join("GAME-6.jsonl"),
+        runs.join("SHOP-6.jsonl"),
         lines(&[
-            call("Write", json!({"file_path": "src/save.rs"})),
+            call("Write", json!({"file_path": "src/orders.rs"})),
             json!({"note": "checks passed"}),
             json!({"note": "review by reviewer (opus)"}),
-            call("Read", json!({"file_path": "src/save.rs"})),
+            call("Read", json!({"file_path": "src/orders.rs"})),
         ]),
     )?;
     std::fs::write(
         runs.join("EDIT-1.jsonl"),
         lines(&[
-            text("The editor needs a palette, undo and saving. I'll file one ticket for each."),
+            text(
+                "The editor needs a form for new items, undo and saving. I'll file one ticket for each.",
+            ),
             call(
                 "mcp__studio__file_ticket",
-                json!({"title": "Save levels as RON files"}),
+                json!({"title": "Save drafts as JSON files"}),
             ),
         ]),
     )?;
@@ -1422,11 +1420,11 @@ async fn run(out_dir: &Path) -> Result<()> {
     let pages = [
         ("board", &busy, "/board"),
         ("board-idle", &idle, "/board"),
-        ("ticket-working", &busy, "/tickets/GAME-2"),
-        ("ticket-asking", &busy, "/tickets/GAME-3"),
-        ("ticket-ready", &busy, "/tickets/GAME-7"),
-        ("ticket-failed", &busy, "/tickets/GAME-9"),
-        ("ticket-landed-merged", &busy, "/tickets/GAME-17"),
+        ("ticket-working", &busy, "/tickets/SHOP-2"),
+        ("ticket-asking", &busy, "/tickets/SHOP-3"),
+        ("ticket-ready", &busy, "/tickets/SHOP-7"),
+        ("ticket-failed", &busy, "/tickets/SHOP-9"),
+        ("ticket-landed-merged", &busy, "/tickets/SHOP-17"),
         ("ticket-landed", &busy, "/tickets/EDIT-2"),
         ("asks", &busy, "/asks"),
         ("goals", &busy, "/goals"),
@@ -1436,21 +1434,21 @@ async fn run(out_dir: &Path) -> Result<()> {
         (
             "rules-project",
             &busy,
-            "/rules?file=protect-player&from=project/game",
+            "/rules?file=protect-payments&from=project/shop",
         ),
         ("hire-edit", &busy, "/hires?file=dev"),
         ("office", &busy, "/"),
         // The Last hour drawer, opened (Quick Look only).
         ("office-lanes", &busy, "/"),
-        ("office-working", &busy, "/?sel=tickets/GAME-2"),
-        ("office-asking", &busy, "/?sel=tickets/GAME-3"),
-        ("office-checks", &busy, "/?sel=tickets/GAME-5"),
-        ("office-review", &busy, "/?sel=tickets/GAME-6"),
-        ("office-ready", &busy, "/?sel=tickets/GAME-7"),
-        ("office-held", &busy, "/?sel=tickets/GAME-10"),
+        ("office-working", &busy, "/?sel=tickets/SHOP-2"),
+        ("office-asking", &busy, "/?sel=tickets/SHOP-3"),
+        ("office-checks", &busy, "/?sel=tickets/SHOP-5"),
+        ("office-review", &busy, "/?sel=tickets/SHOP-6"),
+        ("office-ready", &busy, "/?sel=tickets/SHOP-7"),
+        ("office-held", &busy, "/?sel=tickets/SHOP-10"),
         ("office-planner", &busy, "/?sel=tickets/EDIT-1"),
         ("office-hire", &busy, "/?sel=hires/approver"),
-        ("office-goal", &busy, "/?sel=goals/GAME-14"),
+        ("office-goal", &busy, "/?sel=goals/SHOP-14"),
         ("office-idle", &idle, "/"),
     ];
     for (name, base, path) in pages {

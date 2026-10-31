@@ -44,7 +44,7 @@ const SEGMENT: &str = "inline-flex h-[26px] items-center gap-1.5 rounded-md px-2
 const THEME_COOKIE: &str = "theme";
 
 /// The top bar's title: the page name, plus what is open inside it, shown
-/// as a breadcrumb: the ticket on a ticket page ("Board › GAME-3"), the hire
+/// as a breadcrumb: the ticket on a ticket page ("Board › SHOP-3"), the hire
 /// being edited ("Hires › dev").
 fn title(path: &str, query: &str) -> (String, Option<String>) {
     let mut parts = path.trim_matches('/').split('/');

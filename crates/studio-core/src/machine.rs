@@ -100,6 +100,15 @@ pub fn apply(ticket: &Ticket, event: &Event) -> Result<Ticket, TransitionError> 
             next.held_from = None;
             return Ok(next);
         }
+        // Not the agent's failure, so it costs no attempt; the worktree tells
+        // the agent what to settle, and older feedback was already acted on.
+        (TicketState::Ready, Event::Conflicted { .. }) => {
+            let mut next = ticket.clone();
+            next.state = TicketState::Queued;
+            next.feedback = None;
+            next.held_from = None;
+            return Ok(next);
+        }
 
         (state, Event::Cancelled)
             if !matches!(state, TicketState::Landed | TicketState::Cancelled) =>
@@ -542,6 +551,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(overwritten.feedback, Some("new".into()));
+    }
+
+    #[test]
+    fn a_conflict_returns_to_queued_without_costing_an_attempt() {
+        let before = Ticket {
+            feedback: Some("old".into()),
+            ..ticket(TicketState::Ready, 2, None)
+        };
+        let conflicted = Event::Conflicted {
+            branch: "studio/goal/x".into(),
+            files: vec!["a.rs".into()],
+        };
+        let next = apply(&before, &conflicted).unwrap();
+        assert_eq!(next.state, TicketState::Queued);
+        assert_eq!(next.attempts, 2);
+        assert_eq!(next.feedback, None);
+        for state in [TicketState::Working, TicketState::Landed] {
+            assert_forbidden(ticket(state, 0, None), conflicted.clone());
+        }
     }
 
     #[test]

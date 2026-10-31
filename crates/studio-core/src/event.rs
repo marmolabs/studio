@@ -56,6 +56,13 @@ pub enum Event {
     ChangesRequested {
         detail: String,
     },
+    /// Landing found the goal branch had moved on and conflicts with the
+    /// ticket in `files`; the branch is merged into the ticket's worktree and
+    /// the ticket goes back to its agent to settle them.
+    Conflicted {
+        branch: String,
+        files: Vec<String>,
+    },
 }
 
 impl Event {
@@ -79,6 +86,7 @@ impl Event {
             Event::Failed { .. } => "failed",
             Event::Retried => "retried",
             Event::ChangesRequested { .. } => "changes_requested",
+            Event::Conflicted { .. } => "conflicted",
         }
     }
 }
@@ -102,6 +110,10 @@ mod tests {
                 reason: HeldReason::Budget,
             },
             Event::ChangesRequested { detail: "x".into() },
+            Event::Conflicted {
+                branch: "studio/goal/x".into(),
+                files: vec!["a.rs".into()],
+            },
         ];
         for event in events {
             let stored = serde_json::to_value(&event).unwrap();

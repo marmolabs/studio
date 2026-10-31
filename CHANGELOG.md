@@ -16,12 +16,23 @@ budget limits low.
   (changed images beside their shipped versions, plus a `measure` command's
   output), and a reviewer on a different model reads the diff. Work that fails
   goes back to the agent, up to three tries, and can move to a stronger model.
-  A project's `capture` command adds screenshots to the ticket.
+  A project's `capture` command adds screenshots to the ticket, kept after it
+  lands. Checks and captures get 30 minutes each, and agents wait for long
+  builds rather than leave them running in the background.
+- A project's `.studio.toml` can give its agents, checks and captures an
+  `[env]`, where `{repo}` is the project's checkout. `studio project add`
+  uses it to give a Cargo project's worktrees one build folder, so a ticket
+  doesn't build from scratch.
 - Ready work lands on its goal branch, by itself with `auto_land`, and
   `studio merge` brings a finished goal into your branch. The studio commits
   as you and never pushes.
-- A ticket that was running when the daemon stopped is held, not lost, and
-  tickets held for budget start again by themselves.
+- A ticket that was running when the daemon stopped is held, not lost.
+  Tickets held for budget start again by themselves, and so do tickets held
+  for Claude's usage limit, once the limit resets.
+- When newer work on the goal branch conflicts with a ticket, landing merges
+  it into the ticket's worktree and sends the ticket back to its agent to
+  resolve. When merging a goal into your branch conflicts, the studio files a
+  ticket that resolves it.
 
 ### Rules and asks
 
@@ -53,8 +64,8 @@ budget limits low.
 - `studio up` and `down`, `init`, `project add`, `ticket`, `goal`, `asks`,
   `approve`, `deny`, `land`, `merge`, `budget`, `doctor`, `export`, `gc` and
   more. `--json` prints the raw reply.
-- Packs bundle hires, rules, skills and a project template; `packs/bevy-ios` is
-  the first. `examples/starter-2d` is a small Bevy game to try the studio on.
+- Packs bundle hires, rules, skills and a project template to reuse across
+  projects.
 - A project with `watch_ci` gets a fix ticket when CI fails on its integration
   branch. Desktop notifications when a ticket asks, is ready, is held or fails.
 - Claude Code is the only runtime. It runs with your own `claude` login; the

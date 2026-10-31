@@ -6,23 +6,33 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// A capture often builds the project first, so it gets as long as a check.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MEASURE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const OUTPUT_LIMIT: usize = 4000;
 const MEASURE_LIMIT: usize = 2000;
 
-/// Runs one check; a failure gives its command line and the tail of its
-/// output.
-pub(crate) async fn run(dir: &Path, command: &[String]) -> Result<(), String> {
-    exec(dir, command, TIMEOUT).await
+/// Runs one check with the project's environment; a failure gives its
+/// command line and the tail of its output.
+pub(crate) async fn run(
+    dir: &Path,
+    command: &[String],
+    env: &[(String, String)],
+) -> Result<(), String> {
+    exec(dir, command, TIMEOUT, env).await
 }
 
-/// Runs the game's capture command, with `{out}` in its arguments replaced by
-/// the folder to write into.
-pub(crate) async fn capture(dir: &Path, command: &[String], out: &Path) -> Result<(), String> {
+/// Runs the project's capture command with its environment, with `{out}` in
+/// its arguments replaced by the folder to write into.
+pub(crate) async fn capture(
+    dir: &Path,
+    command: &[String],
+    out: &Path,
+    env: &[(String, String)],
+) -> Result<(), String> {
     let out = out.to_string_lossy();
     let command: Vec<String> = command.iter().map(|a| a.replace("{out}", &out)).collect();
-    exec(dir, &command, CAPTURE_TIMEOUT).await
+    exec(dir, &command, CAPTURE_TIMEOUT, env).await
 }
 
 /// Runs a gate's measure command, with `{file}` in its arguments replaced by
@@ -34,7 +44,7 @@ pub(crate) async fn measure(dir: &Path, command: &[String], file: Option<&str>) 
         None => command.to_vec(),
     };
     let line = command.join(" ");
-    let out = match output(dir, &command, MEASURE_TIMEOUT).await {
+    let out = match output(dir, &command, MEASURE_TIMEOUT, &[]).await {
         Ok(Some(out)) => out,
         Ok(None) => return format!("{line} could not start: no command"),
         Err(why) => return format!("{line} {why}"),
@@ -51,9 +61,14 @@ pub(crate) async fn measure(dir: &Path, command: &[String], file: Option<&str>) 
     result
 }
 
-async fn exec(dir: &Path, command: &[String], timeout: Duration) -> Result<(), String> {
+async fn exec(
+    dir: &Path,
+    command: &[String],
+    timeout: Duration,
+    env: &[(String, String)],
+) -> Result<(), String> {
     let line = command.join(" ");
-    let Some(out) = output(dir, command, timeout)
+    let Some(out) = output(dir, command, timeout, env)
         .await
         .map_err(|why| format!("`{line}` {why}"))?
     else {
@@ -68,11 +83,12 @@ async fn exec(dir: &Path, command: &[String], timeout: Duration) -> Result<(), S
 }
 
 /// Runs the command to the end. `None` for an empty command; the error says
-/// "timed out" or "could not start: ...".
+/// "timed out after N minutes" or "could not start: ...".
 async fn output(
     dir: &Path,
     command: &[String],
     timeout: Duration,
+    env: &[(String, String)],
 ) -> Result<Option<std::process::Output>, String> {
     let Some((program, args)) = command.split_first() else {
         return Ok(None);
@@ -80,11 +96,15 @@ async fn output(
     let child = Command::new(program)
         .args(args)
         .current_dir(dir)
+        .envs(env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .kill_on_drop(true)
         .output();
     match tokio::time::timeout(timeout, child).await {
-        Err(_) => Err("timed out".to_string()),
+        Err(_) => Err(format!(
+            "timed out after {} minutes",
+            timeout.as_secs() / 60
+        )),
         Ok(Err(err)) => Err(format!("could not start: {err}")),
         Ok(Ok(out)) => Ok(Some(out)),
     }
@@ -107,6 +127,25 @@ mod tests {
         ["sh", "-c", script, "sh", "{file}"]
             .map(String::from)
             .to_vec()
+    }
+
+    #[tokio::test]
+    async fn checks_and_captures_get_the_project_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = [("SHARED".to_string(), "cache".to_string())];
+        let check = sh("test \"$SHARED\" = cache");
+        assert!(run(dir.path(), &check, &env).await.is_ok());
+        assert!(run(dir.path(), &check, &[]).await.is_err());
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let shot: Vec<String> = ["sh", "-c", "printf \"$SHARED\" > \"$0/env.txt\"", "{out}"]
+            .map(String::from)
+            .to_vec();
+        capture(dir.path(), &shot, &out, &env).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(out.join("env.txt")).unwrap(),
+            "cache"
+        );
     }
 
     #[tokio::test]

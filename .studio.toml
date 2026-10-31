@@ -6,8 +6,8 @@ verify = [
   ["cargo", "test", "--workspace"],
 ]
 
-# Reviewed work lands on its goal branch by itself; merging into
-# foundation stays with the owner.
+# Reviewed work lands on its goal branch by itself; merging into the
+# integration branch stays with the owner.
 auto_land = true
 
 # Paths agents may not change without asking you.
@@ -30,3 +30,8 @@ paths = ["crates/studio-web/**"]
 hire = "designer"
 prompt = "Judge the screenshots against the ticket and the bar in your instructions."
 rounds = 2
+
+# Environment for agents, checks and captures; {repo} is this checkout.
+# One build folder for every ticket's worktree, so none starts from scratch.
+[env]
+CARGO_TARGET_DIR = "{repo}/.studio/target"
