@@ -92,3 +92,38 @@ fn started_at_and_session_model() {
     assert_eq!(store.session_model("s-100").unwrap().as_deref(), Some("m"));
     assert_eq!(store.session_model("none").unwrap(), None);
 }
+
+#[test]
+fn recent_events_span_tickets_and_stop_at_the_window() {
+    let mut store = Store::open_in_memory().unwrap();
+    land(&mut store, "A-1", "dev", 100, 1_100, 0.5);
+    land(&mut store, "A-2", "dev", 2_000, 3_000, 1.5);
+    let recent = store.events_from(2_000, 100, |_| true).unwrap();
+    let seen: Vec<(String, u64)> = recent
+        .iter()
+        .map(|e| (e.ticket_id.to_string(), e.at_ms))
+        .collect();
+    assert_eq!(
+        seen,
+        [2_000, 2_001, 2_002, 2_003, 2_004, 3_000].map(|at| ("A-2".to_string(), at))
+    );
+    // Too many: the newest are kept, still oldest first.
+    let newest = store.events_from(0, 2, |_| true).unwrap();
+    assert_eq!(
+        newest.iter().map(|e| e.at_ms).collect::<Vec<_>>(),
+        [2_004, 3_000]
+    );
+    assert!(store.events_from(5_000, 10, |_| true).unwrap().is_empty());
+    // Only the kinds asked for, and the limit counts only those.
+    let landed = store
+        .events_from(0, 1, |e| matches!(e, Event::Landed))
+        .unwrap();
+    assert_eq!(landed.iter().map(|e| e.at_ms).collect::<Vec<_>>(), [3_000]);
+    let both = store
+        .events_from(0, 10, |e| matches!(e, Event::Landed))
+        .unwrap();
+    assert_eq!(
+        both.iter().map(|e| e.at_ms).collect::<Vec<_>>(),
+        [1_100, 3_000]
+    );
+}

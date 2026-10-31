@@ -116,24 +116,42 @@ pub(crate) async fn judge(
     reasons: &[String],
 ) -> Call {
     let text = prompt(ticket, worktree, tool, input, reasons);
-    match quick::ask_model(
-        studio,
-        &ticket.id,
-        &ticket.project.0,
-        approver,
-        worktree,
-        &text,
-    )
-    .await
-    {
-        Ok(reply) => match parse(&reply) {
-            // Show what it said, so an unclear answer can be understood.
-            Call::Owner(reason) if reason == UNCLEAR => {
-                Call::Owner(format!("{reason}: \"{}\"", cut(reply.trim(), 200)))
+    let ask = |text: String| async move {
+        quick::ask_model(
+            studio,
+            &ticket.id,
+            &ticket.project.0,
+            approver,
+            worktree,
+            &text,
+        )
+        .await
+    };
+    let reply = match ask(text.clone()).await {
+        Ok(reply) => reply,
+        Err(err) => return Call::Owner(err),
+    };
+    match parse(&reply) {
+        // A reply that reasons but forgets the decision line gets one more
+        // chance to give just the line.
+        Call::Owner(reason) if reason == UNCLEAR => {
+            let again = format!(
+                "{text}\n\nYou already thought about it:\n{}\n\nNow reply with only the \
+                 decision line: `DECISION: ALLOW|DENY|OWNER: <one short reason>`.",
+                cut(reply.trim(), 2000)
+            );
+            match ask(again).await {
+                Ok(second) => match parse(&second) {
+                    // Show what it said, so an unclear answer can be understood.
+                    Call::Owner(reason) if reason == UNCLEAR => {
+                        Call::Owner(format!("{reason}: \"{}\"", cut(reply.trim(), 200)))
+                    }
+                    call => call,
+                },
+                Err(err) => Call::Owner(err),
             }
-            call => call,
-        },
-        Err(err) => Call::Owner(err),
+        }
+        call => call,
     }
 }
 

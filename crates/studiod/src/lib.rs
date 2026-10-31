@@ -7,6 +7,7 @@ mod budget;
 mod checks;
 pub mod doctor;
 mod evidence;
+pub mod export;
 mod gc;
 mod notify;
 mod quick;
@@ -16,6 +17,7 @@ mod runlog;
 pub mod runtimes;
 mod server;
 mod studio;
+mod today;
 mod watch;
 mod worker;
 

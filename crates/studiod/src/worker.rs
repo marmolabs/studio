@@ -144,7 +144,15 @@ async fn work_on(
                     .unwrap_or_default();
                 let mut commands = config.verify.clone();
                 commands.extend(policy::checks(&studio.rules(), &context(&ticket, &hire)));
-                let mut result = checks::run(&worktree.path, &commands).await;
+                // One note per command, so the web can say which check runs now.
+                let mut result = Ok(());
+                for command in &commands {
+                    log.note(&format!("check: {}", command.join(" ")));
+                    result = checks::run(&worktree.path, command).await;
+                    if result.is_err() {
+                        break;
+                    }
+                }
                 if result.is_ok() {
                     result = capture(&repo, &worktree, &config, ticket.attempts, log).await;
                 }
@@ -381,6 +389,7 @@ impl AgentRun<'_> {
                         self.log.note(match reason {
                             StopReason::Cancel => "cancelled by the owner",
                             StopReason::Budget => "budget: a 24-hour limit was reached; stopping",
+                            StopReason::Pause => "paused by the owner",
                         });
                         stopping = Some(reason);
                         let _ = run.interrupt().await;
@@ -421,6 +430,7 @@ impl AgentRun<'_> {
                             cache_write_tokens,
                         ),
                     );
+                    self.studio.meter(self.id(), tally.meter.usd());
                     if stopping.is_none()
                         && tally.meter.has_price()
                         && tally.meter.usd() >= allowance
@@ -521,6 +531,9 @@ impl AgentRun<'_> {
                                         continue;
                                     }
                                     approver::Call::Owner(reason) => {
+                                        self.log.note(&format!(
+                                            "approver left {tool} to the owner: {reason}"
+                                        ));
                                         why.push(format!("Approver: {reason}"));
                                     }
                                 }
@@ -713,11 +726,12 @@ impl AgentRun<'_> {
     }
 
     /// The run was stopped on purpose. A cancel or a denial already moved the
-    /// ticket; a budget stop holds it.
+    /// ticket; a budget stop or a pause holds it.
     fn stopped(&self, reason: StopReason) -> Result<AgentEnd, StudioError> {
         match reason {
             StopReason::Cancel => Ok(AgentEnd::Stopped),
             StopReason::Budget => self.hold(HeldReason::Budget),
+            StopReason::Pause => self.hold(HeldReason::Paused),
         }
     }
 

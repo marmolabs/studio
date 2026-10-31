@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod ask_card;
 pub mod asks;
 pub mod board;

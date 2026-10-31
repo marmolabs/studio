@@ -135,7 +135,7 @@ Each `[[gates]]` entry:
 | --- | --- | --- |
 | `name` | required | A label. |
 | `paths` | required | Changed-file globs that send the work to this gate. |
-| `hire` | required | The hire that judges the work. It can't be the ticket's own hire or run on a model the author used. |
+| `hire` | required | The hire that judges the work. It can't be the ticket's own hire or run on the model that wrote the latest attempt: it falls back to the first of its `escalate` models the author didn't use, and the gate is skipped when there is none. A gate's critic is never routed tickets. |
 | `prompt` | none | Extra instructions for the critic. |
 | `rounds` | `3` | Most times the gate may send work back before it asks you. |
 | `measure` | `[]` | Command run in the worktree on up to 12 changed files that match `paths`, with `{file}` in its arguments replaced by each repo-relative path: `["tools/pixel-lint", "{file}"]`. With no `{file}` it runs once. Deleted files and files reached through a symlink are skipped. The critic sees each command's output (cut to 2000 characters, 2 minute limit). A failing measurement never fails the ticket. The program can't be empty. |

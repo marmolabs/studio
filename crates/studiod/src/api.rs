@@ -45,6 +45,25 @@ pub enum Request {
         #[serde(default)]
         ticket: Option<String>,
     },
+    /// Every ticket's events at or after `since_ms` (epoch milliseconds),
+    /// oldest first: the newest `limit` of them, at most `RECENT_EVENTS`.
+    RecentEvents {
+        since_ms: u64,
+        #[serde(default)]
+        limit: Option<usize>,
+        /// Only events of these types, such as `"landed"`; empty means all.
+        #[serde(default)]
+        kinds: Vec<String>,
+    },
+    /// The whole history, as events oldest first, of every ticket that did
+    /// anything at or after `since_ms` or has a run under way. The office
+    /// draws its "Last hour" lanes from it.
+    Activity {
+        since_ms: u64,
+    },
+    /// When each running ticket's latest run began and each held ticket was
+    /// held, by ticket id.
+    StateSince,
     Asks,
     Decide {
         ask: String,
@@ -63,6 +82,9 @@ pub enum Request {
     Merge {
         ticket: String,
     },
+    /// Ids of the landed work tickets whose goal branch is already merged
+    /// into their base branch. A missing branch or a git error is not merged.
+    MergedTickets,
     Cancel {
         ticket: String,
     },
@@ -76,16 +98,32 @@ pub enum Request {
     Resume {
         ticket: String,
     },
-    /// Limits, spend over the last 24 hours, and live reservations.
+    /// Stops a running ticket's agent and holds the ticket until `Resume`.
+    Pause {
+        ticket: String,
+    },
+    /// Limits (with each hire's own daily and per-ticket caps), spend over the
+    /// last 24 hours, and live reservations.
     Budget,
+    /// Spend on each of the last `days` calendar days in the time zone of
+    /// the machine studiod runs on, as `DaySpend`s, oldest first. The last
+    /// is today so far. At most 90 days.
+    SpendByDay {
+        #[serde(default = "default_days")]
+        days: u32,
+    },
     /// A quote and an expected finish time for each ticket still open.
     Estimates,
-    /// Total spend recorded for one ticket across all its runs.
+    /// Total spend for one ticket across all its runs, with what a live run
+    /// has spent so far by its meter.
     TicketSpend {
         ticket: String,
     },
-    /// Total spend recorded for every ticket, by ticket id.
+    /// Total spend for every ticket, by ticket id, counted as `TicketSpend`.
     TicketSpends,
+    /// When each ticket last changed (its latest event), in epoch
+    /// milliseconds, by ticket id.
+    UpdatedAt,
     /// The guidance that applies to a ticket's hire (the `read_rules` tool).
     ReadRules {
         ticket: String,
@@ -117,6 +155,10 @@ pub enum Request {
     Diffstat {
         ticket: String,
     },
+    /// `Diffstat` for several tickets at once, by ticket id.
+    Diffstats {
+        tickets: Vec<String>,
+    },
     /// The ticket's full change against its base as a unified diff, cut at
     /// 1 MB, or null when the worktree is gone.
     Diff {
@@ -142,6 +184,17 @@ pub enum Request {
     DeleteFile {
         kind: FileKind,
         name: String,
+    },
+    /// Every rule file the studio loads, as `RuleFile`s: its own, then each
+    /// pack's, then each project's.
+    RuleFiles,
+    /// What each hire did in the last 24 hours, as `HireDay`s by hire id.
+    HiresToday,
+    /// The approver's calls over the last 24 hours, as `ApproverCall`s,
+    /// newest first: at most `limit`, and at most `APPROVER_CALLS`.
+    ApproverCalls {
+        #[serde(default = "default_calls")]
+        limit: usize,
     },
     /// Replays a rule file's text against the tool calls agents made since
     /// `since` (ms since the epoch), without saving it.
@@ -177,6 +230,61 @@ pub struct FileView {
     /// Why the file does not load, if it doesn't.
     #[serde(default)]
     pub problem: Option<String>,
+}
+
+/// A rule file and where it comes from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RuleFile {
+    /// `studio`, `pack` or `project`.
+    pub origin: String,
+    /// The pack's or project's name; empty for the studio's own rules.
+    #[serde(default)]
+    pub owner: String,
+    pub name: String,
+    pub path: String,
+    pub text: String,
+    /// Why the file does not load, if it doesn't.
+    #[serde(default)]
+    pub problem: Option<String>,
+    /// A pack rule turned off in `studio.toml`.
+    #[serde(default)]
+    pub disabled: bool,
+}
+
+/// What a hire did in the last 24 hours, from ticket events and run logs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HireDay {
+    /// Its work tickets that passed review.
+    pub done: u32,
+    /// Its plan tickets that landed, each a goal broken into tickets.
+    pub planned: u32,
+    /// Changes it reviewed.
+    pub reviews: u32,
+    /// Changes it judged as a gate's critic.
+    pub critiques: u32,
+    /// As the approver: tool calls it allowed, denied, or left to the owner.
+    pub allowed: u32,
+    pub denied: u32,
+    pub to_owner: u32,
+    /// As the router: new tickets it gave a hire.
+    pub routed: u32,
+}
+
+/// One tool call the approver decided, from the run logs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ApproverCall {
+    pub ticket: String,
+    /// When it decided, in epoch milliseconds.
+    pub at: u64,
+    pub tool: String,
+    /// The Bash command, the path or the URL, else the input JSON cut
+    /// short; empty when the log has no request for the call.
+    #[serde(default)]
+    pub what: String,
+    /// `allowed`, `denied`, or `to_owner` when it left the call to the owner.
+    pub verdict: String,
+    pub reason: String,
 }
 
 /// What a rule would have done to past tool calls.
@@ -221,8 +329,34 @@ pub struct Estimate {
     pub eta_ms: Option<u64>,
 }
 
+/// What was spent on one calendar day.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DaySpend {
+    /// The day, as `YYYY-MM-DD`; empty from an older studiod, whose days
+    /// were 24-hour windows ending now.
+    #[serde(default)]
+    pub date: String,
+    /// When the day began, in epoch milliseconds.
+    pub start_ms: u64,
+    pub usd: f64,
+}
+
+/// The most events `Request::RecentEvents` returns.
+pub const RECENT_EVENTS: usize = 2000;
+
+/// The most calls `Request::ApproverCalls` returns.
+pub const APPROVER_CALLS: usize = 500;
+
 fn default_limit() -> usize {
     200
+}
+
+fn default_calls() -> usize {
+    50
+}
+
+fn default_days() -> u32 {
+    14
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -265,6 +399,9 @@ pub struct AskView {
     /// The rules that sent this to the owner, if any.
     #[serde(default)]
     pub reasons: Vec<String>,
+    /// When it was asked, in epoch milliseconds; 0 from an older studiod.
+    #[serde(default)]
+    pub at_ms: u64,
 }
 
 /// Where the daemon listens: `<data>/studiod.sock`, or a short path in `/tmp`

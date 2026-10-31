@@ -9,7 +9,9 @@ use studio_config::config::ModelPrice;
 use studio_core::budget::{Allowance, Limits, Used, allowance};
 use studio_core::rule::Hire;
 use studio_core::ticket::Ticket;
-use studio_store::{SpendTotals, Store};
+use studio_store::{SpendTotals, Store, StoreError};
+
+use crate::api::DaySpend;
 
 pub(crate) const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
@@ -128,6 +130,20 @@ pub(crate) fn has_headroom(
     ))
 }
 
+/// Spend on each of the last `days` calendar days in this machine's time
+/// zone, oldest first; the last is the day holding `now_ms`. At most 90.
+pub(crate) fn by_day(store: &Store, now_ms: u64, days: u32) -> Result<Vec<DaySpend>, StoreError> {
+    let days = store.spend_by_local_day(now_ms, days.min(90))?;
+    Ok(days
+        .into_iter()
+        .map(|(date, start_ms, usd)| DaySpend {
+            date,
+            start_ms,
+            usd,
+        })
+        .collect())
+}
+
 /// Counts a run's spend from token usage as it happens.
 pub(crate) struct Meter {
     price: Option<ModelPrice>,
@@ -235,6 +251,37 @@ mod tests {
             },
         );
         assert!(!has_headroom(&store, &budget, ("a", None), &hire, &held, 1_000, 0.05).unwrap());
+    }
+
+    #[test]
+    fn spend_falls_on_its_calendar_day() {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = 10 * DAY_MS + 12 * 3_600_000;
+        let days = by_day(&store, now, 3).unwrap();
+        let today = days[2].start_ms;
+        let spend = |at_ms: u64, usd: f64| studio_store::Spend {
+            at_ms,
+            ticket_id: studio_core::ids::TicketId::new("A-1"),
+            project: "a".into(),
+            hire: "dev".into(),
+            runtime: "fake".into(),
+            model: "m".into(),
+            session: None,
+            usd,
+            reported: true,
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+        for (at, usd) in [(now, 1.0), (today, 2.0), (today - 1, 4.0)] {
+            store.record_spend(&spend(at, usd)).unwrap();
+        }
+        let days = by_day(&store, now, 3).unwrap();
+        let usd: Vec<f64> = days.iter().map(|d| d.usd).collect();
+        assert_eq!(usd, [0.0, 4.0, 3.0]);
+        assert!(days[0].date < days[1].date && days[1].date < days[2].date);
+        assert_eq!(days[2].date.len(), "1970-01-11".len());
+        assert!(by_day(&store, now, 0).unwrap().is_empty());
+        assert_eq!(by_day(&store, now, 500).unwrap().len(), 90);
     }
 
     #[test]

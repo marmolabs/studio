@@ -11,13 +11,10 @@ const MEASURE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const OUTPUT_LIMIT: usize = 4000;
 const MEASURE_LIMIT: usize = 2000;
 
-/// Runs each command in order and stops at the first failure, returning its
-/// command line and the tail of its output.
-pub(crate) async fn run(dir: &Path, commands: &[Vec<String>]) -> Result<(), String> {
-    for command in commands {
-        exec(dir, command, TIMEOUT).await?;
-    }
-    Ok(())
+/// Runs one check; a failure gives its command line and the tail of its
+/// output.
+pub(crate) async fn run(dir: &Path, command: &[String]) -> Result<(), String> {
+    exec(dir, command, TIMEOUT).await
 }
 
 /// Runs the game's capture command, with `{out}` in its arguments replaced by

@@ -1,3 +1,5 @@
+//! Everything waiting for the owner, newest first, each on its ticket.
+
 use futures_util::Stream;
 use std::collections::BTreeMap;
 use studio_config::draft::{Draft, from_denial};
@@ -13,10 +15,12 @@ use topcoat::{
         },
         page, path_param, route,
     },
-    view::{View, component, view},
+    view::{Unescaped, View, component, view},
 };
 
+use super::activity::last_words;
 use super::ask_card::{ALWAYS, DECISION, MESSAGE, always_prefix, always_rule, ask_card, ticket_of};
+use super::ticket::log_tail;
 use crate::{AppConfig, client, live, ui};
 
 path_param!(id);
@@ -24,12 +28,10 @@ path_param!(id);
 #[page("/asks")]
 async fn asks(cx: &Cx) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
-    let pending: Vec<AskView> = client::call(&config.socket, Request::Asks).await?;
-    let tickets: Vec<Ticket> = client::call(&config.socket, Request::Tickets).await?;
+    let html = list_html(cx, config).await?;
     Ok(view! {
-        <h1 class=(format!("mb-3 {}", ui::PAGE_TITLE))>"Asks"</h1>
-        <div data-init="@get('/asks/stream')">
-            list(pending: pending, tickets: tickets)
+        <div data-init="@get('/asks/stream')" class="mx-auto flex w-full max-w-[880px] flex-col">
+            (Unescaped::new_unchecked(html))
         </div>
     })
 }
@@ -41,18 +43,31 @@ async fn asks_stream(
     let config = app_context::<AppConfig>(cx).clone();
     let cx = cx.clone();
     Ok(live::watch(move || {
-        let socket = config.socket.clone();
+        let config = config.clone();
         let cx = cx.clone();
-        async move {
-            let pending: Vec<AskView> = client::call(&socket, Request::Asks).await?;
-            let tickets: Vec<Ticket> = client::call(&socket, Request::Tickets).await?;
-            ui::html(
-                &cx,
-                view! { cx => list(pending: pending, tickets: tickets) },
-            )
-            .await
-        }
+        async move { list_html(&cx, &config).await }
     }))
+}
+
+/// The asks, newest first, each with what its agent said just before.
+async fn list_html(cx: &Cx, config: &AppConfig) -> topcoat::Result<String> {
+    let mut pending: Vec<AskView> = client::call(&config.socket, Request::Asks).await?;
+    let tickets: Vec<Ticket> = client::call(&config.socket, Request::Tickets).await?;
+    pending.sort_by(|a, b| b.at_ms.cmp(&a.at_ms).then_with(|| b.id.cmp(&a.id)));
+    let mut quotes = Vec::with_capacity(pending.len());
+    for ask in &pending {
+        let quote = if matches!(ask.kind.as_str(), "permission" | "question") {
+            last_words(&log_tail(&config.data_dir, &ask.ticket).await)
+        } else {
+            None
+        };
+        quotes.push(quote);
+    }
+    ui::html(
+        cx,
+        view! { cx => list(pending: pending, tickets: tickets, quotes: quotes) },
+    )
+    .await
 }
 
 /// Allow or deny an ask. The clicked button is the `decision` field;
@@ -68,7 +83,10 @@ async fn decide(
     let decision = form.remove(DECISION);
     let always = decision.as_deref() == Some(ALWAYS);
     let allow = always || decision.as_deref() == Some("approve");
-    let message = form.remove(MESSAGE).filter(|m| !m.trim().is_empty());
+    // A note goes only with a denial: an allow can't carry one to the agent.
+    let note = form.remove(MESSAGE).filter(|m| !m.trim().is_empty());
+    let unsent = allow && note.is_some();
+    let message = note.filter(|_| !allow);
     let answers = (allow && !form.is_empty()).then_some(form);
     // The rule comes from the ask as the daemon has it, not from the form.
     let rule = if always {
@@ -96,6 +114,9 @@ async fn decide(
             }
             let done = if allow { "Allowed" } else { "Denied" };
             let mut text = format!("{done} {ask}.");
+            if unsent {
+                text.push_str(" Your note was not sent: a note goes only with Deny.");
+            }
             if let Some((project, prefix)) = rule {
                 match save_rule(&config.socket, &project, &prefix).await {
                     Ok(name) => text.push_str(&format!(" Saved rule {name}.")),
@@ -164,16 +185,24 @@ async fn save_rule(
 }
 
 #[component]
-async fn list(pending: Vec<AskView>, tickets: Vec<Ticket>) -> topcoat::Result<impl View> {
+async fn list(
+    pending: Vec<AskView>,
+    tickets: Vec<Ticket>,
+    quotes: Vec<Option<String>>,
+) -> topcoat::Result<impl View> {
     Ok(view! {
-        <div id="asks-list" class="space-y-3">
+        <div id="asks-list" class="flex flex-col gap-7">
             if pending.is_empty() {
-                <p class=(format!("px-1 py-2 {}", ui::MUTED))>"Nothing is waiting for you."</p>
+                <div class=(format!("flex flex-col items-center gap-1.5 px-6 py-12 text-center {}", ui::CARD))>
+                    <span class="mb-1 text-fg-3">ui::icon(name: "inbox")</span>
+                    <p class="font-medium">"Nothing is waiting for you"</p>
+                    <p class=(format!("text-[13px] {}", ui::MUTED))>"When an agent needs your say, its ask shows up here."</p>
+                </div>
             }
             #[key(ask.id.clone())]
-            for ask in pending {
+            for (ask, quote) in pending.into_iter().zip(quotes) {
                 let (title, project) = ticket_of(&tickets, &ask.ticket);
-                ask_card(ask: ask, title: title, project: project, compact: false)
+                ask_card(ask: ask, title: title, project: project, quote: quote)
             }
         </div>
     })

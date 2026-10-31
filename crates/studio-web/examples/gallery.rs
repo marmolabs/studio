@@ -3,10 +3,14 @@
 //!
 //! `cargo run -q -p studio-web --example gallery -- <out-dir>`
 //!
+//! Writes `<name>.png` at 1024px wide, `<name>-1440.png` and `<name>-phone.png`
+//! (390px) for every page, plus a few in the light theme at 1024px and 1440px.
+//!
 //! Uses a Chromium browser (`$STUDIO_BROWSER`, Chrome, Brave, Chromium). When
 //! there is none, or it can't run (as in an agent's sandbox), macOS Quick Look
-//! renders the desktop pages instead, without the phone sizes. With neither it
-//! prints a line and exits 0.
+//! renders the pages instead, the way the design references were made: the
+//! page goes in an iframe of the target width, scaled to fit 1024px. With
+//! neither it prints a line and exits 0.
 
 use serde_json::{Value, json};
 use std::error::Error;
@@ -19,9 +23,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 const TOKEN: &str = "0123abcd";
-const DESKTOP: (u32, u32) = (1400, 1000);
-const PHONE: (u32, u32) = (390, 844);
+/// Page widths, by the suffix of their file name.
+const WIDTHS: [(&str, u32); 3] = [("", 1024), ("-1440", 1440), ("-phone", 390)];
+/// Pages also shown in the light theme (Quick Look only).
+const LIGHT: [&str; 3] = ["board", "ticket-asking", "office"];
 const PAGE_LIMIT: Duration = Duration::from_secs(30);
+const DIFFSTAT: &str = " src/title.rs | 6 +++++-\n src/main.rs  | 1 +\n 2 files changed, 6 insertions(+), 1 deletion(-)\n";
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -50,7 +57,9 @@ fn ticket(id: &str, title: &str, hire: &str, state: Value, extra: Value) -> Valu
 }
 
 fn tickets() -> Value {
-    let child = json!({"parent": "EDIT-1"});
+    // Filed tickets share their plan's goal.
+    let child = json!({"parent": "EDIT-1",
+                       "goal": "Ship a level editor: place tiles, undo mistakes, save levels"});
     json!([
         ticket(
             "GAME-1",
@@ -71,7 +80,8 @@ fn tickets() -> Value {
             "Spawn enemies in waves",
             "dev",
             json!({"asking": {"ask": "ASK-1"}}),
-            json!({})
+            json!({"goal": "Enemy waves", "parent": "GAME-21", "attempts": 0, "created_at": now_ms() - 21 * 60_000,
+                   "detail": "Enemies arrive in waves that grow in size. A wave starts once the previous one is cleared, after a three second pause. Wave sizes come from a table in `rules.rs`, so they can be tuned without touching systems.\n\n**Done when** waves 1 to 8 follow the table, later waves add two enemies each, and `rules::wave_size` has tests."})
         ),
         ticket(
             "GAME-4",
@@ -99,7 +109,7 @@ fn tickets() -> Value {
             "Add a title screen",
             "dev",
             json!("ready"),
-            json!({})
+            json!({"goal": "Polish the menus", "feedback": "The **Quit** button needs a confirm step:\n\n- ask before closing\n- keep `Esc` as cancel"})
         ),
         ticket(
             "GAME-8",
@@ -113,7 +123,7 @@ fn tickets() -> Value {
             "Load the tilemap faster",
             "dev",
             json!({"failed": {"class": "checks", "detail": "cargo clippy: 2 warnings"}}),
-            json!({"attempts": 3})
+            json!({"attempts": 3, "created_at": now_ms() - 110 * 60_000})
         ),
         ticket(
             "GAME-10",
@@ -156,7 +166,7 @@ fn tickets() -> Value {
             "Draw the title logo",
             "artist",
             json!("landed"),
-            json!({"parent": "GAME-14"})
+            json!({"parent": "GAME-14", "attempts": 0})
         ),
         ticket(
             "GAME-12",
@@ -180,6 +190,72 @@ fn tickets() -> Value {
             json!({"goal": "Give the game its look and sound: title logo, forest tiles, boss music",
                    "kind": "plan"})
         ),
+        // A goal whose tickets all landed and whose branch is merged.
+        ticket(
+            "GAME-16",
+            "Plan: polish the menus",
+            "producer",
+            json!("landed"),
+            json!({"goal": "Polish the menus", "kind": "plan"})
+        ),
+        ticket(
+            "GAME-17",
+            "Title screen with Start and Quit",
+            "dev",
+            json!("landed"),
+            json!({"parent": "GAME-16"})
+        ),
+        ticket(
+            "GAME-18",
+            "Volume sliders for music and effects",
+            "dev",
+            json!("landed"),
+            json!({"parent": "GAME-16"})
+        ),
+        // A goal that is done but not merged yet.
+        ticket(
+            "GAME-19",
+            "Plan: save games",
+            "producer",
+            json!("landed"),
+            json!({"goal": "Save games between sessions", "kind": "plan"})
+        ),
+        ticket(
+            "GAME-20",
+            "Save settings between sessions",
+            "dev",
+            json!("landed"),
+            json!({"parent": "GAME-19"})
+        ),
+        // A goal whose next tickets wait for a slot.
+        ticket(
+            "GAME-21",
+            "Plan: enemy waves",
+            "producer",
+            json!("landed"),
+            json!({"goal": "Enemy waves", "kind": "plan"})
+        ),
+        ticket(
+            "GAME-22",
+            "Count the enemies left in a wave",
+            "dev",
+            json!("landed"),
+            json!({"parent": "GAME-21"})
+        ),
+        ticket(
+            "GAME-23",
+            "Pause three seconds between waves",
+            "dev",
+            json!("queued"),
+            json!({"parent": "GAME-21", "attempts": 0})
+        ),
+        ticket(
+            "GAME-24",
+            "Show the wave number on screen",
+            "artist",
+            json!("queued"),
+            json!({"parent": "GAME-21", "attempts": 0})
+        ),
         ticket(
             "GAME-15",
             "Plan: add a settings screen",
@@ -190,44 +266,393 @@ fn tickets() -> Value {
     ])
 }
 
-fn hire_file(name: &str, role: &str, model: &str, budget: f64, tools: &str) -> Value {
+fn hire_file(name: &str, role: &str, model: &str, escalate: &str, about: &str) -> Value {
     json!({
         "name": name, "problem": null,
         "text": format!(
-            "---\nname: {name}\nrole: {role}\nruntime: claude-code\nmodel: {model}\nescalate: [opus]\neffort: high\nbudget_per_ticket_usd: {budget}\ntools: [{tools}]\n---\nWork in small steps and keep the build green.\n"
+            "---\nname: {name}\nrole: {role}\nruntime: claude-code\nmodel: {model}\nescalate: [{escalate}]\neffort: medium\n---\n{about}\n"
         ),
     })
+}
+
+/// A rule file as `RuleFiles` lists it.
+fn rule_file(origin: &str, owner: &str, name: &str, head: &str, why: &str) -> Value {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let path = match origin {
+        "project" => format!("{home}/games/{owner}/.studio/rules/{name}.md"),
+        _ => format!("{home}/Library/Application Support/studio/rules/{name}.md"),
+    };
+    json!({
+        "origin": origin, "owner": owner, "name": name, "path": path, "problem": null,
+        "text": format!("---\n{head}\n---\n{why}\n"),
+    })
+}
+
+/// What spend history looks like: 14 days to today, across a new month.
+fn spend_by_day(days: u32, today: f64) -> Value {
+    const PAST: [f64; 13] = [
+        3.1, 4.8, 2.2, 6.9, 5.3, 8.4, 4.1, 0.0, 1.2, 7.6, 6.2, 9.1, 5.8,
+    ];
+    let days = days.min(14) as usize;
+    let start = now_ms() - 14 * 86_400_000;
+    let usd = PAST.iter().copied().chain([today]).collect::<Vec<_>>();
+    let all: Vec<Value> = usd
+        .iter()
+        .enumerate()
+        .map(|(i, usd)| {
+            let day = 22 + i;
+            let date = if day > 31 {
+                format!("2026-11-{:02}", day - 31)
+            } else {
+                format!("2026-10-{day}")
+            };
+            json!({"date": date, "start_ms": start + i as u64 * 86_400_000, "usd": usd})
+        })
+        .collect();
+    json!(all[all.len() - days..])
+}
+
+/// The last hour or so of the busy studio, for the office's lanes: each busy
+/// or recently busy ticket's history, in an order the state machine accepts.
+fn activity() -> Vec<Value> {
+    let histories: [(&str, &[(u64, Value)]); 12] = [
+        (
+            "GAME-8",
+            &[
+                (100, json!({"type": "claimed"})),
+                (99, json!({"type": "run_started", "run": "r1"})),
+                (62, json!({"type": "checks_started"})),
+                (60, json!({"type": "checks_passed"})),
+                (50, json!({"type": "review_passed"})),
+                (33, json!({"type": "landed"})),
+            ],
+        ),
+        (
+            "GAME-7",
+            &[
+                (70, json!({"type": "claimed"})),
+                (70, json!({"type": "run_started", "run": "r2"})),
+                (38, json!({"type": "checks_started"})),
+                (35, json!({"type": "checks_passed"})),
+                (24, json!({"type": "review_passed"})),
+            ],
+        ),
+        (
+            "GAME-12",
+            &[
+                (58, json!({"type": "claimed"})),
+                (58, json!({"type": "run_started", "run": "r3"})),
+                (45, json!({"type": "checks_started"})),
+                (43, json!({"type": "checks_passed"})),
+                (
+                    40,
+                    json!({"type": "review_failed", "detail": "art gate: the palette is too wide for the forest set"}),
+                ),
+                (25, json!({"type": "checks_started"})),
+                (24, json!({"type": "checks_passed"})),
+                (
+                    20,
+                    json!({"type": "review_failed", "detail": "art gate: the palette is still too wide"}),
+                ),
+                (
+                    18,
+                    json!({"type": "failed", "class": "review", "detail": "palette too wide"}),
+                ),
+            ],
+        ),
+        (
+            "GAME-2",
+            &[
+                (50, json!({"type": "claimed"})),
+                (50, json!({"type": "run_started", "run": "r4"})),
+                (30, json!({"type": "checks_started"})),
+                (
+                    27,
+                    json!({"type": "checks_failed", "detail": "cargo test: 2 failed"}),
+                ),
+            ],
+        ),
+        (
+            "EDIT-1",
+            &[
+                (40, json!({"type": "claimed"})),
+                (40, json!({"type": "run_started", "run": "r5"})),
+            ],
+        ),
+        (
+            "GAME-6",
+            &[
+                (31, json!({"type": "claimed"})),
+                (31, json!({"type": "run_started", "run": "r6"})),
+                (15, json!({"type": "checks_started"})),
+                (9, json!({"type": "checks_passed"})),
+            ],
+        ),
+        (
+            "GAME-5",
+            &[
+                (24, json!({"type": "claimed"})),
+                (24, json!({"type": "run_started", "run": "r7"})),
+                (2, json!({"type": "checks_started"})),
+            ],
+        ),
+        (
+            "GAME-3",
+            &[
+                (18, json!({"type": "claimed"})),
+                (18, json!({"type": "run_started", "run": "r8"})),
+                (2, json!({"type": "ask_opened", "ask": "ASK-1"})),
+            ],
+        ),
+        (
+            "GAME-13",
+            &[
+                (14, json!({"type": "claimed"})),
+                (14, json!({"type": "run_started", "run": "r9"})),
+                (9, json!({"type": "ask_opened", "ask": "ASK-3"})),
+            ],
+        ),
+        (
+            "GAME-4",
+            &[
+                (9, json!({"type": "claimed"})),
+                (9, json!({"type": "run_started", "run": "r10"})),
+                (6, json!({"type": "ask_opened", "ask": "ASK-2"})),
+            ],
+        ),
+        (
+            "GAME-15",
+            &[
+                (6, json!({"type": "claimed"})),
+                (6, json!({"type": "run_started", "run": "r11"})),
+            ],
+        ),
+        (
+            "GAME-10",
+            &[
+                (40, json!({"type": "claimed"})),
+                (40, json!({"type": "run_started", "run": "r12"})),
+                (14, json!({"type": "held", "reason": "budget"})),
+            ],
+        ),
+    ];
+    histories
+        .iter()
+        .flat_map(|(id, events)| {
+            events
+                .iter()
+                .map(move |(ago, event)| logged(id, ago * 60, event.clone()))
+        })
+        .collect()
+}
+
+/// An event as studiod sends it, `seconds_ago` before now; `numbered` sets
+/// its `seq`.
+fn logged(id: &str, seconds_ago: u64, event: Value) -> Value {
+    json!({"seq": 0, "ticket_id": id, "at_ms": now_ms() - seconds_ago * 1000, "event": event})
+}
+
+/// Events sorted oldest first and numbered.
+fn numbered(mut events: Vec<Value>) -> Value {
+    events.sort_by_key(|e| e["at_ms"].as_u64());
+    for (seq, event) in events.iter_mut().enumerate() {
+        event["seq"] = json!(seq + 1);
+    }
+    json!(events)
+}
+
+/// The loaded hires, with the studio's own approver and router.
+fn team() -> Value {
+    let member =
+        |id: &str, role: &str, model: &str| json!({"id": id, "role": role, "model": model});
+    json!([
+        member("approver", "approver", "haiku"),
+        member("artist", "pixel artist", "haiku"),
+        member("composer", "composer", "sonnet"),
+        member("dev", "engineer", "sonnet"),
+        member("producer", "producer", "opus"),
+        member("reviewer", "reviewer", "sonnet"),
+        member("router", "router", "haiku"),
+        member("tester", "qa", "haiku"),
+    ])
+}
+
+/// What happened over the last day, oldest first: the last hour's activity
+/// and the work that ended before it, only of `kinds` when there are any.
+fn recent_events(kinds: &[String]) -> Value {
+    let ended = [
+        ("GAME-17", 20 * 3600, json!({"type": "landed"})),
+        ("GAME-18", 19 * 3600, json!({"type": "landed"})),
+        ("GAME-11", 6 * 3600, json!({"type": "landed"})),
+        ("EDIT-2", 5 * 3600, json!({"type": "landed"})),
+        ("GAME-20", 2 * 3600, json!({"type": "landed"})),
+        // The last try's failed checks fail the ticket; no `failed` event follows.
+        (
+            "GAME-9",
+            79 * 60,
+            json!({"type": "checks_failed", "detail": "cargo clippy: 2 warnings"}),
+        ),
+    ];
+    let events = ended
+        .into_iter()
+        .map(|(id, ago, event)| logged(id, ago, event))
+        .chain(activity())
+        .filter(|e| kinds.is_empty() || kinds.iter().any(|k| e["event"]["type"] == *k))
+        .collect();
+    numbered(events)
+}
+
+/// A studio with nothing going on: no tickets, so the board is empty, the
+/// desks are free and the team rests.
+fn idle_reply(request: &Request) -> Value {
+    match request {
+        Request::Status => json!({
+            "asks": 0, "running": 0, "tickets": {}, "goals": 0, "rules": 3, "daily_usd": 10.0,
+            "spent_24h": 0.0, "projects": ["game", "editor"],
+            "hires": ["dev", "artist", "producer", "composer", "tester", "reviewer", "approver", "router"],
+            "max_runs": 6, "team": team(),
+        }),
+        Request::Tickets
+        | Request::Asks
+        | Request::Estimates
+        | Request::MergedTickets
+        | Request::RecentEvents { .. }
+        | Request::Activity { .. } => json!([]),
+        Request::TicketSpends | Request::StateSince | Request::HiresToday => json!({}),
+        Request::SpendByDay { days } => spend_by_day(*days, 0.0),
+        _ => reply(request),
+    }
+}
+
+/// A ticket's history: a run sent back once, then a second run. Some
+/// tickets also asked, were held, or began their run at another time.
+fn events(id: &str) -> Value {
+    let at = |minutes_ago: u64| now_ms() - minutes_ago * 60_000;
+    if id == "GAME-3" {
+        return json!([
+            {"seq": 1, "ticket_id": id, "at_ms": at(21), "event": {"type": "created", "id": id,
+             "project": "game", "title": "Spawn enemies in waves", "goal": "Enemy waves", "hire": "dev",
+             "base_branch": "main", "created_at": at(21)}},
+            {"seq": 2, "ticket_id": id, "at_ms": at(18), "event": {"type": "claimed"}},
+            {"seq": 3, "ticket_id": id, "at_ms": at(18), "event": {"type": "run_started", "run": "r1"}},
+            {"seq": 4, "ticket_id": id, "at_ms": at(2), "event": {"type": "ask_opened", "ask": "ASK-1"}},
+        ]);
+    }
+    if id == "GAME-9" {
+        // Three tries, each stopped by the checks; the third fails the ticket.
+        return json!([
+            {"seq": 1, "ticket_id": id, "at_ms": at(106), "event": {"type": "claimed"}},
+            {"seq": 2, "ticket_id": id, "at_ms": at(96), "event": {"type": "checks_started"}},
+            {"seq": 3, "ticket_id": id, "at_ms": at(95),
+             "event": {"type": "checks_failed", "detail": "cargo test: 1 failed"}},
+            {"seq": 4, "ticket_id": id, "at_ms": at(88), "event": {"type": "checks_started"}},
+            {"seq": 5, "ticket_id": id, "at_ms": at(87),
+             "event": {"type": "checks_failed", "detail": "cargo clippy: 4 warnings"}},
+            {"seq": 6, "ticket_id": id, "at_ms": at(80), "event": {"type": "checks_started"}},
+            {"seq": 7, "ticket_id": id, "at_ms": at(79),
+             "event": {"type": "checks_failed", "detail": "cargo clippy: 2 warnings"}},
+        ]);
+    }
+    let run = match id {
+        "GAME-5" => 12,
+        "GAME-6" => 18,
+        "EDIT-1" => 8,
+        _ => 20,
+    };
+    let mut events = json!([
+        {"seq": 1, "ticket_id": id, "at_ms": at(42), "event": {"type": "claimed"}},
+        {"seq": 2, "ticket_id": id, "at_ms": at(30), "event": {"type": "checks_started"}},
+        {"seq": 3, "ticket_id": id, "at_ms": at(24),
+         "event": {"type": "checks_failed", "detail": "cargo test: 1 failed"}},
+        {"seq": 4, "ticket_id": id, "at_ms": at(22),
+         "event": {"type": "review_failed",
+                   "detail": "**Must fix:** the `Quit` button closes at once.\nAsk first, then quit."}},
+        {"seq": 5, "ticket_id": id, "at_ms": at(21),
+         "event": {"type": "changes_requested",
+                   "detail": "Keep **Esc** as cancel:\n\n- close the dialog\n- stay on `Title`"}},
+        {"seq": 6, "ticket_id": id, "at_ms": at(run), "event": {"type": "claimed"}},
+        {"seq": 7, "ticket_id": id, "at_ms": at(9), "event": {"type": "checks_passed"}},
+    ]);
+    let extra = match id {
+        "GAME-4" => json!({"type": "ask_opened", "ask": "ASK-2"}),
+        "GAME-13" => json!({"type": "ask_opened", "ask": "ASK-3"}),
+        "GAME-10" => json!({"type": "held", "reason": "budget"}),
+        _ => return events,
+    };
+    let minutes = match id {
+        "GAME-13" => 9,
+        _ => 6,
+    };
+    if let Some(list) = events.as_array_mut() {
+        list.push(json!({"seq": 8, "ticket_id": id, "at_ms": at(minutes), "event": extra}));
+    }
+    events
+}
+
+/// When each running ticket's run began and each held ticket was held, from
+/// their histories.
+fn state_since() -> Value {
+    let mut since = serde_json::Map::new();
+    for ticket in tickets().as_array().into_iter().flatten() {
+        let state = &ticket["state"];
+        let kind = state
+            .as_str()
+            .or_else(|| state.as_object()?.keys().next().map(String::as_str))
+            .unwrap_or_default();
+        let wanted = match kind {
+            "claimed" | "working" | "checking" | "reviewing" => "claimed",
+            "held" => "held",
+            _ => continue,
+        };
+        let Some(id) = ticket["id"].as_str() else {
+            continue;
+        };
+        let history = events(id);
+        let at = history
+            .as_array()
+            .into_iter()
+            .flatten()
+            .rfind(|e| e["event"]["type"] == wanted)
+            .map(|e| e["at_ms"].clone());
+        if let Some(at) = at {
+            since.insert(id.to_string(), at);
+        }
+    }
+    Value::Object(since)
 }
 
 fn reply(request: &Request) -> Value {
     let at = |minutes_ago: u64| now_ms() - minutes_ago * 60_000;
     match request {
         Request::Status => json!({
-            "asks": 3, "running": 3, "daily_usd": 10.0, "spent_24h": 6.4,
-            "projects": ["game", "editor"], "hires": ["dev", "artist", "producer"],
+            // Runs paused on an ask hold their slots too.
+            "asks": 3, "running": 8, "goals": 6, "rules": 5,
+            "tickets": {"queued": 5, "working": 3, "checking": 1, "reviewing": 1, "asking": 3,
+                        "held": 1, "ready": 1, "landed": 11, "failed": 2},
+            "daily_usd": 10.0, "spent_24h": 6.4, "projects": ["game", "editor"],
+            "hires": ["dev", "artist", "producer", "composer", "tester", "reviewer", "approver", "router"],
+            "max_runs": 9, "team": team(),
         }),
+        Request::RecentEvents { kinds, .. } => recent_events(kinds),
+        Request::SpendByDay { days } => spend_by_day(*days, 6.4),
         Request::Tickets => tickets(),
         Request::Events {
             ticket: Some(id), ..
-        } => json!([
-            {"seq": 1, "ticket_id": id, "at_ms": at(42), "event": {"type": "claimed"}},
-            {"seq": 2, "ticket_id": id, "at_ms": at(30), "event": {"type": "checks_started"}},
-            {"seq": 3, "ticket_id": id, "at_ms": at(24),
-             "event": {"type": "checks_failed", "detail": "cargo test: 1 failed"}},
-            {"seq": 4, "ticket_id": id, "at_ms": at(9), "event": {"type": "checks_passed"}},
-        ]),
-        Request::Estimates => json!([
-            {"ticket": "GAME-2", "quote_usd": 0.38, "eta_ms": now_ms() + 9 * 60_000},
-            {"ticket": "GAME-3", "quote_usd": 0.27, "eta_ms": now_ms() + 11 * 60_000},
-            {"ticket": "GAME-1", "quote_usd": 0.42, "eta_ms": now_ms() + 14 * 60_000},
-            {"ticket": "EDIT-3", "quote_usd": 0.65, "eta_ms": now_ms() + 22 * 60_000},
-            {"ticket": "EDIT-4", "quote_usd": 0.30, "eta_ms": now_ms() + 31 * 60_000},
-        ]),
+        } => events(id),
+        Request::Activity { .. } => numbered(activity()),
+        Request::StateSince => state_since(),
+        Request::Diff { ticket } if ticket == "GAME-3" => json!(
+            "diff --git a/src/rules.rs b/src/rules.rs\n--- a/src/rules.rs\n+++ b/src/rules.rs\n@@ -1,3 +1,6 @@\n-pub const WAVE: u32 = 4;\n+pub const WAVES: [u32; 8] = [4, 5, 6, 8, 10, 12, 14, 16];\n+\n+pub fn wave_size(n: usize) -> u32 {\n+    WAVES.get(n).copied().unwrap_or(16 + 2 * (n as u32 - 7))\n+}\ndiff --git a/src/spawning.rs b/src/spawning.rs\n--- a/src/spawning.rs\n+++ b/src/spawning.rs\n@@ -10,4 +10,4 @@\n-    timer.tick(time.delta());\n-    if timer.finished() {\n+    if wave_cleared(&enemies) {\n+        pause.tick(time.delta());\n"
+        ),
         Request::Diff { .. } => json!(
             "diff --git a/src/title.rs b/src/title.rs\n--- a/src/title.rs\n+++ b/src/title.rs\n@@ -4,7 +4,11 @@ pub fn draw_title(ui: &mut Ui) {\n     ui.heading(\"Starlight Run\");\n-    ui.label(\"Press any key\");\n+    if ui.button(\"Start\").clicked() {\n+        next.set(GameState::Playing);\n+    }\n+    if ui.button(\"Quit\").clicked() {\n+        exit.send(AppExit);\n+    }\n }\n"
         ),
-        Request::Diffstat { .. } => json!(
-            " src/title.rs | 6 +++++-\n src/main.rs  | 1 +\n 2 files changed, 6 insertions(+), 1 deletion(-)\n"
+        Request::Diffstat { .. } => json!(DIFFSTAT),
+        Request::Diffstats { tickets } => json!(
+            tickets
+                .iter()
+                .map(|t| (t.clone(), DIFFSTAT))
+                .collect::<std::collections::BTreeMap<_, _>>()
         ),
         // Nothing is booked for a run that has only just started.
         Request::TicketSpend { ticket } if matches!(ticket.as_str(), "GAME-2" | "GAME-3") => {
@@ -235,64 +660,189 @@ fn reply(request: &Request) -> Value {
         }
         Request::TicketSpend { .. } => json!(0.31),
         Request::TicketSpends => json!({
-            "GAME-11": 0.31, "GAME-12": 0.84, "GAME-13": 0.22, "GAME-14": 0.12, "GAME-15": 0.09,
+            "EDIT-2": 0.18, "GAME-8": 0.84, "GAME-4": 0.11, "GAME-11": 0.31, "GAME-12": 0.84, "GAME-13": 0.22, "GAME-14": 0.12, "GAME-15": 0.09,
+            "GAME-16": 0.11, "GAME-17": 2.06, "GAME-18": 0.84, "GAME-19": 0.08, "GAME-20": 1.12,
+            "GAME-2": 0.38, "GAME-5": 0.91, "GAME-6": 1.24, "GAME-7": 2.06, "GAME-9": 1.96,
+            "GAME-10": 0.52, "GAME-21": 0.07, "GAME-22": 0.35, "EDIT-1": 0.3,
         }),
+        // When tickets last changed; the rest are left out.
+        Request::UpdatedAt => json!({
+            "EDIT-1": at(4), "EDIT-2": at(26), "GAME-13": at(2), "GAME-15": at(1),
+            "GAME-16": at(1500), "GAME-18": at(1450), "GAME-19": at(70), "GAME-20": at(65),
+            "GAME-21": at(300), "GAME-22": at(290),
+        }),
+        // The menus goal is merged; the save-games goal is done but not merged.
+        Request::MergedTickets => json!(["GAME-17", "GAME-18"]),
         Request::Asks => json!([{
-            "id": "ASK-1", "ticket": "GAME-3", "hire": "dev", "kind": "permission",
+            "id": "ASK-1", "ticket": "GAME-3", "hire": "dev", "kind": "permission", "at_ms": at(2),
             "tool": "Bash",
             "input": {"command": "cargo run --example waves", "description": "Try the wave spawner"},
-            "reasons": ["no rule allows it"],
+            "reasons": ["Approver: running an example opens a game window, so it is yours to decide"],
         }, {
-            "id": "ASK-2", "ticket": "GAME-4", "hire": "dev", "kind": "permission",
+            "id": "ASK-2", "ticket": "GAME-4", "hire": "dev", "kind": "permission", "at_ms": at(6),
             "tool": "Edit",
             "input": {"file_path": "src/player/movement.rs",
                       "old_string": "const COYOTE_TIME: f32 = 0.08;",
                       "new_string": "const COYOTE_TIME: f32 = 0.12;"},
-            "reasons": ["src/player is protected"],
+            "reasons": ["Movement feel is tuned by hand: ask before changing it (protect-player)"],
         }, {
-            "id": "ASK-3", "ticket": "GAME-13", "hire": "composer", "kind": "permission",
+            "id": "ASK-3", "ticket": "GAME-13", "hire": "composer", "kind": "permission", "at_ms": at(9),
             "tool": "Bash",
             "input": {"command": "ffmpeg -i assets/music/boss_theme_raw.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a libvorbis -q:a 5 assets/music/boss_theme.ogg"},
-            "reasons": ["no rule allows it"],
+            "reasons": [],
         }]),
         Request::Budget => json!({
             "limits": {"daily_usd": 10.0, "ticket_usd": 2.0, "run_usd": null, "min_run_usd": 0.05,
                        "projects": {"game": 6.0, "editor": 4.0}, "hires": {"dev": 8.0, "artist": 2.0}},
             "spent_24h": {"total": 6.4, "by_project": {"game": 4.2, "editor": 1.5, "assets": 0.7},
-                          "by_hire": {"dev": 4.6, "artist": 0.6, "producer": 0.6, "reviewer": 0.6}},
-            "runs_24h": 17,
+                          "by_hire": {"dev": 4.4, "artist": 0.6, "producer": 0.6, "reviewer": 0.5,
+                                      "approver": 0.2, "router": 0.1},
+                          "by_model": {"sonnet": 4.9, "haiku": 0.9, "opus": 0.6},
+                          "by_ticket": {"GAME-7": 2.06, "GAME-9": 1.96, "GAME-6": 1.24, "GAME-20": 1.12,
+                                        "GAME-5": 0.91},
+                          "runs_by_hire": {"dev": 9, "artist": 2, "producer": 1, "reviewer": 3,
+                                           "approver": 41, "router": 6}},
+            "runs_24h": 62,
             "reserved": {"GAME-2": 0.5, "GAME-5": 0.4, "EDIT-1": 0.25},
         }),
         Request::Files {
             kind: FileKind::Hires,
         } => json!([
-            hire_file("dev", "engineer", "sonnet", 0.5, "file_ticket"),
-            hire_file("artist", "pixel artist", "haiku", 0.3, ""),
-            hire_file(
-                "producer",
-                "producer",
-                "opus",
-                1.0,
-                "file_ticket, ask_owner"
-            ),
-            hire_file("tester", "qa", "haiku", 0.2, ""),
-            hire_file("reviewer", "reviewer", "sonnet", 0.2, ""),
+            hire_file("dev", "engineer", "sonnet", "opus", "Writes code, with tests, in small steps."),
+            hire_file("artist", "pixel artist", "sonnet", "", "Pixel art and UI."),
+            hire_file("producer", "producer", "sonnet", "", "Plans goals as small tickets."),
+            hire_file("tester", "critic", "opus", "sonnet", "Design critic for menus and feel."),
+            hire_file("reviewer", "reviewer", "opus", "sonnet", "Reads every diff before it lands."),
             {"name": "composer", "problem": "line 3: did not find expected key", "text": ""},
+            hire_file("approver", "approver", "haiku", "", "Decides tool calls no rule covers."),
+            hire_file("router", "router", "haiku", "", "Picks the hire for new tickets."),
         ]),
-        Request::Files { .. } => json!([
-            {"name": "protect-player", "problem": null,
-             "text": "---\nkind: gate\nlevel: ask\naction: \"edit:src/player/**\"\nwhen:\n  projects: [game]\n---\nMovement feel is tuned by hand: ask before changing it.\n"},
-            {"name": "allow-cargo-test", "problem": null,
-             "text": "---\nkind: gate\nlevel: allow\naction: \"bash:cargo test\"\n---\nTests are always safe to run.\n"},
-            {"name": "small-commits", "problem": null,
-             "text": "---\nkind: guide\nlevel: warn\n---\nKeep each ticket to one topic and a small diff.\n"},
+        Request::HiresToday => json!({
+            "dev": {"done": 6}, "artist": {"done": 1}, "producer": {"planned": 2},
+            "tester": {"critiques": 4}, "reviewer": {"reviews": 11},
+            "approver": {"allowed": 81, "denied": 11, "to_owner": 4}, "router": {"routed": 12},
+        }),
+        Request::ApproverCalls { limit } => {
+            let call = |ticket: &str,
+                        minutes: u64,
+                        tool: &str,
+                        what: &str,
+                        verdict: &str,
+                        reason: &str| {
+                json!({"ticket": ticket, "at": at(minutes), "tool": tool, "what": what,
+                       "verdict": verdict, "reason": reason})
+            };
+            let calls = [
+                call(
+                    "GAME-3",
+                    2,
+                    "Bash",
+                    "cargo run --example waves",
+                    "to_owner",
+                    "Running an example opens a game window, so it is yours to decide.",
+                ),
+                call(
+                    "GAME-2",
+                    4,
+                    "Bash",
+                    "cargo test -p game player::jump",
+                    "allowed",
+                    "Runs the movement tests inside the worktree.",
+                ),
+                call(
+                    "GAME-5",
+                    7,
+                    "Bash",
+                    "cargo clippy --all-targets -- -D warnings",
+                    "allowed",
+                    "Lints the worktree; nothing leaves it.",
+                ),
+                call(
+                    "GAME-2",
+                    12,
+                    "Bash",
+                    "rm -rf ~/.cargo/registry/cache",
+                    "denied",
+                    "Clearing the shared Cargo cache is outside the ticket and slows every other build.",
+                ),
+                call(
+                    "GAME-5",
+                    15,
+                    "WebFetch",
+                    "https://docs.rs/bevy/latest/bevy/time/struct.Timer.html",
+                    "allowed",
+                    "Reads public documentation.",
+                ),
+                call(
+                    "GAME-6",
+                    18,
+                    "Bash",
+                    "git diff --stat main...HEAD",
+                    "allowed",
+                    "Reads the branch's own changes.",
+                ),
+                call(
+                    "GAME-6",
+                    21,
+                    "Bash",
+                    "cargo test --workspace",
+                    "allowed",
+                    "Runs the tests inside the worktree.",
+                ),
+                call(
+                    "GAME-5",
+                    26,
+                    "Bash",
+                    "cargo run --release -- --capture shake.png",
+                    "allowed",
+                    "The ticket's capture step, writing inside the worktree.",
+                ),
+            ];
+            json!(calls[..calls.len().min(*limit)])
+        }
+        Request::RuleFiles => json!([
+            rule_file(
+                "studio",
+                "",
+                "no-push",
+                "kind: gate\nlevel: block\naction: \"bash:git push\"",
+                "The studio lands work; agents never push."
+            ),
+            rule_file(
+                "studio",
+                "",
+                "read-dependencies",
+                "kind: gate\nlevel: allow\naction: \"read:~/.cargo/registry/**\"",
+                "Agents may read the source of Rust dependencies."
+            ),
+            rule_file(
+                "studio",
+                "",
+                "house-style",
+                "kind: guide\nlevel: warn",
+                "Read CONTRIBUTING.md before you start."
+            ),
+            rule_file(
+                "project",
+                "game",
+                "protect-player",
+                "kind: protect\nlevel: ask\nwhen:\n  paths: [\"src/player/**\"]",
+                "Player movement is tuned by hand. Ask before\nchanging anything under src/player."
+            ),
+            rule_file(
+                "project",
+                "game",
+                "run-the-checks",
+                "kind: check\nlevel: block\ncommand: [cargo, test, --workspace]",
+                "fmt, clippy and tests must pass."
+            ),
         ]),
         _ => Value::Null,
     }
 }
 
 /// A studiod stand-in on a Unix socket: one JSON request line, one reply.
-fn fake_studiod(socket: &Path) -> Result<()> {
+fn fake_studiod(socket: &Path, reply: fn(&Request) -> Value) -> Result<()> {
     let listener = UnixListener::bind(socket)?;
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -319,13 +869,16 @@ fn fake_studiod(socket: &Path) -> Result<()> {
 /// Run logs for the tickets whose pages are photographed.
 fn write_logs(runs: &Path) -> Result<()> {
     std::fs::create_dir_all(runs)?;
+    // One line per entry, 25 seconds apart, the last just now.
     let lines = |entries: &[Value]| {
-        let mut text = entries
-            .iter()
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        text.push('\n');
+        let now = now_ms();
+        let mut text = String::new();
+        for (i, entry) in entries.iter().enumerate() {
+            let mut entry = entry.clone();
+            entry["at"] = json!(now - (entries.len() - i) as u64 * 25_000);
+            text.push_str(&entry.to_string());
+            text.push('\n');
+        }
         text
     };
     let text = |text: &str| json!({"event": {"type": "text", "text": text}});
@@ -394,25 +947,180 @@ fn write_logs(runs: &Path) -> Result<()> {
     long.push(json!({"event": {"type": "permission", "tool": "Bash"}}));
     long.push(json!({"note": "allowed Bash: cargo test (rule allow-cargo-test)"}));
     std::fs::write(runs.join("GAME-2.jsonl"), lines(&long))?;
+    // A run that stopped to ask: its message, the steps after it with their
+    // results, and the words just before the ask.
+    let ago = |minutes: u64, mut entry: Value| {
+        entry["at"] = json!(now_ms() - minutes * 60_000);
+        entry
+    };
+    let numbered = |n: usize| {
+        (0..n)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let id_call = |id: &str, name: &str, input: Value| json!({"event": {"type": "tool_call", "id": id, "name": name, "input": input}});
+    let output = |id: &str, output: String| json!({"event": {"type": "tool_result", "id": id, "output": output, "is_error": false}});
+    let waves = [
+        ago(20, json!({"note": "routed to dev: game logic with tests"})),
+        ago(
+            18,
+            json!({"event": {"type": "started", "session": "s1", "model": "sonnet"}}),
+        ),
+        ago(
+            18,
+            text(
+                "Spawning runs on a fixed timer in `spawning.rs`. I'll move wave sizes into `rules.rs` as a table and drive spawning from it:\n\n- `WAVES`: sizes for waves 1 to 8\n- `wave_size(n)`: the table, then two more per wave\n- `wave_cleared`: true when no enemy is alive",
+            ),
+        ),
+        ago(
+            17,
+            id_call("r1", "Read", json!({"file_path": "src/spawning.rs"})),
+        ),
+        ago(17, output("r1", numbered(142))),
+        ago(
+            17,
+            id_call("r2", "Read", json!({"file_path": "src/rules.rs"})),
+        ),
+        ago(17, output("r2", numbered(310))),
+        ago(16, id_call("g1", "Grep", json!({"pattern": "spawn_enemy"}))),
+        ago(
+            16,
+            output(
+                "g1",
+                "Found 3 files\nsrc/spawning.rs\nsrc/rules.rs\nsrc/main.rs".into(),
+            ),
+        ),
+        ago(
+            14,
+            id_call(
+                "e1",
+                "Edit",
+                json!({"file_path": "src/rules.rs",
+            "old_string": numbered(3), "new_string": numbered(48).replace("line", "row")}),
+            ),
+        ),
+        ago(
+            12,
+            id_call(
+                "e2",
+                "Edit",
+                json!({"file_path": "src/spawning.rs",
+            "old_string": numbered(22), "new_string": numbered(31).replace("line", "wave")}),
+            ),
+        ),
+        ago(
+            8,
+            id_call(
+                "b1",
+                "Bash",
+                json!({"command": "cargo test --locked rules::"}),
+            ),
+        ),
+        ago(
+            8,
+            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo test --locked rules::"}}}),
+        ),
+        ago(
+            8,
+            json!({"note": "approver allowed Bash: tests run inside the worktree"}),
+        ),
+        ago(
+            7,
+            output(
+                "b1",
+                "running 12 tests\ntest result: ok. 12 passed; 0 failed; 0 ignored".into(),
+            ),
+        ),
+        ago(
+            3,
+            text("The tests pass. Before I hand it over I'd like to watch it run."),
+        ),
+        ago(
+            2,
+            id_call(
+                "b2",
+                "Bash",
+                json!({"command": "cargo run --example waves"}),
+            ),
+        ),
+        ago(
+            2,
+            json!({"event": {"type": "permission", "tool": "Bash", "input": {"command": "cargo run --example waves"}}}),
+        ),
+    ];
+    let mut log = String::new();
+    for entry in waves {
+        log.push_str(&entry.to_string());
+        log.push('\n');
+    }
+    std::fs::write(runs.join("GAME-3.jsonl"), log)?;
+    // Checks under way, and a review: notes at fixed times before now.
+    let at = |seconds_ago: u64, entry: Value| {
+        let mut entry = entry;
+        entry["at"] = json!(now_ms() - seconds_ago * 1000);
+        format!("{entry}\n")
+    };
+    let note = |text: &str| json!({"note": text});
     std::fs::write(
-        runs.join("GAME-3.jsonl"),
-        lines(&[
-            text("Waves need a spawner resource and a timer. I'll add both, then try them out."),
-            call("Write", json!({"file_path": "src/enemies/waves.rs"})),
-            call("Edit", json!({"file_path": "src/main.rs"})),
-            json!({"event": {"type": "permission", "tool": "Bash"}}),
-        ]),
+        runs.join("GAME-5.jsonl"),
+        [
+            at(
+                400,
+                text("The screen shakes on every hit now. Handing over to the checks."),
+            ),
+            at(116, note("check: cargo fmt --all --check")),
+            at(112, note("check: cargo clippy --workspace -- -D warnings")),
+            at(74, note("check: cargo test --workspace")),
+        ]
+        .concat(),
+    )?;
+    std::fs::write(
+        runs.join("GAME-6.jsonl"),
+        [
+            at(560, note("checks passed")),
+            at(540, note("review by reviewer (sonnet)")),
+            at(
+                30,
+                call("Read", json!({"file_path": "src/save/high_score.rs"})),
+            ),
+        ]
+        .concat(),
     )?;
     std::fs::write(
         runs.join("GAME-7.jsonl"),
         lines(&[
-            text("Adding a title screen with Start and Quit buttons."),
+            text(
+                "Added a **title screen** with Start and Quit buttons:\n\n- `src/title.rs` spawns the menu\n- `main.rs` starts in the `Title` state\n\n```rust\napp.add_systems(OnEnter(State::Title), spawn_title);\n```",
+            ),
             call("Write", json!({"file_path": "src/title.rs"})),
             call("Edit", json!({"file_path": "src/main.rs"})),
             call("Bash", json!({"command": "cargo test --workspace"})),
             json!({"note": "checks passed"}),
+            json!({"note": "review by reviewer (opus)"}),
             json!({"note": "review passed"}),
+            json!({"note": "gate design by tester (opus)"}),
+            json!({"note": "gate design passed"}),
             fin,
+        ]),
+    )?;
+    std::fs::write(
+        runs.join("GAME-6.jsonl"),
+        lines(&[
+            call("Write", json!({"file_path": "src/save.rs"})),
+            json!({"note": "checks passed"}),
+            json!({"note": "review by reviewer (opus)"}),
+            call("Read", json!({"file_path": "src/save.rs"})),
+        ]),
+    )?;
+    std::fs::write(
+        runs.join("EDIT-1.jsonl"),
+        lines(&[
+            text("The editor needs a palette, undo and saving. I'll file one ticket for each."),
+            call(
+                "mcp__studio__file_ticket",
+                json!({"title": "Save levels as RON files"}),
+            ),
         ]),
     )?;
     Ok(())
@@ -494,39 +1202,126 @@ async fn shoot(
 /// How pages become pictures.
 enum Renderer {
     Browser(PathBuf),
-    QuickLook,
+    QuickLook(Inliner),
 }
 
-/// Renders `url` with Quick Look: fetches the page, inlines the stylesheet
-/// (Quick Look loads nothing) and thumbnails the HTML at desktop width.
-async fn quick_look(base: &str, path: &str, scratch: &Path, out: &Path) -> Result<()> {
-    let client = reqwest::Client::new();
-    let get = |url: String| {
-        client
+/// Makes a page self-contained for Quick Look, which loads nothing: the
+/// stylesheet goes inline, with the fonts in it as data URLs.
+struct Inliner {
+    css: String,
+}
+
+impl Inliner {
+    async fn new(base: &str) -> Result<Inliner> {
+        let client = reqwest::Client::new();
+        let mut css = client
+            .get(format!("{base}/static/app.css"))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        for font in [
+            "ibm-plex-sans-var",
+            "ibm-plex-mono-400",
+            "ibm-plex-mono-500",
+        ] {
+            let path = format!("/static/fonts/{font}.woff2");
+            let bytes = client
+                .get(format!("{base}{path}"))
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await?;
+            css = css.replace(&path, &format!("data:font/woff2;base64,{}", base64(&bytes)));
+        }
+        Ok(Inliner { css })
+    }
+
+    /// The page at `url`, with the stylesheet inline and `theme` forced.
+    async fn page(&self, url: &str, theme: Option<&str>) -> Result<String> {
+        let html = reqwest::Client::new()
             .get(url)
             .header("cookie", format!("studio_token={TOKEN}"))
             .send()
-    };
-    let html = get(format!("{base}{path}"))
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-    let css = get(format!("{base}/static/app.css")).await?.text().await?;
-    let start = html
-        .find("<link rel=\"stylesheet\"")
-        .ok_or("the page has no stylesheet")?;
-    let end = start
-        + html[start..]
-            .find('>')
-            .ok_or("the stylesheet link isn't closed")?
-        + 1;
-    let page = format!("{}<style>{css}</style>{}", &html[..start], &html[end..]);
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let start = html
+            .find("<link rel=\"stylesheet\"")
+            .ok_or("the page has no stylesheet")?;
+        let end = start
+            + html[start..]
+                .find('>')
+                .ok_or("the stylesheet link isn't closed")?
+            + 1;
+        let page = format!(
+            "{}<style>{}</style>{}",
+            &html[..start],
+            self.css,
+            &html[end..]
+        );
+        Ok(match theme {
+            Some(theme) => page.replacen("<html", &format!("<html data-theme=\"{theme}\""), 1),
+            None => page,
+        })
+    }
+}
+
+/// Standard base64, for the fonts' data URLs.
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(ABC[(n >> (18 - 6 * i) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn attribute_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Renders `page` with Quick Look at a CSS `width`. Quick Look lays pages
+/// out in a 1024px square, so the page goes in an iframe of `width` (media
+/// queries see that width), scaled down to fit when it is wider. A narrower
+/// page is cut to its own width.
+async fn quick_look(page: &str, width: u32, scratch: &Path, out: &Path) -> Result<()> {
+    const SIDE: u32 = 1024;
+    let scale = (f64::from(SIDE) / f64::from(width)).min(1.0);
+    let height = (f64::from(SIDE) / scale) as u32;
+    // A narrow frame sits one pixel in, since `sips` crops from (1, 1) at the least.
+    let inset = if width < SIDE { "1px 0 0 1px" } else { "0" };
+    let frame = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
+         html,body{{margin:0;background:#2a2a2e;overflow:hidden}}\
+         iframe{{border:0;display:block;margin:{inset};width:{width}px;height:{height}px;\
+         transform:scale({scale});transform-origin:0 0}}\
+         </style></head><body><iframe srcdoc=\"{}\"></iframe></body></html>",
+        attribute_escape(page)
+    );
     let name = out.file_stem().ok_or("bad output name")?.to_string_lossy();
     let file = scratch.join(format!("{name}.html"));
-    std::fs::write(&file, page)?;
+    std::fs::write(&file, frame)?;
     let status = tokio::process::Command::new("qlmanage")
-        .args(["-t", "-s", &DESKTOP.0.to_string(), "-o"])
+        .args(["-t", "-s", &SIDE.to_string(), "-o"])
         .arg(scratch)
         .arg(&file)
         .stdout(Stdio::null())
@@ -537,15 +1332,32 @@ async fn quick_look(base: &str, path: &str, scratch: &Path, out: &Path) -> Resul
         .await
         .map_err(|_| {
             format!(
-                "Quick Look took longer than {}s on {path}",
+                "Quick Look took longer than {}s on {name}",
                 PAGE_LIMIT.as_secs()
             )
         })??;
     let made = scratch.join(format!("{name}.html.png"));
     if !status.success() || !made.exists() {
-        return Err(format!("Quick Look made no picture of {path}").into());
+        return Err(format!("Quick Look made no picture of {name}").into());
     }
-    std::fs::rename(made, out)?;
+    if width < SIDE {
+        let status = tokio::process::Command::new("sips")
+            .args(["-c", &(SIDE - 1).to_string(), &width.to_string()])
+            .args(["--cropOffset", "1", "1"])
+            .arg(&made)
+            .arg("--out")
+            .arg(out)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await?;
+        if !status.success() {
+            return Err(format!("sips could not crop {name}").into());
+        }
+        std::fs::remove_file(made)?;
+    } else {
+        std::fs::rename(made, out)?;
+    }
     Ok(())
 }
 
@@ -553,33 +1365,41 @@ fn has_quick_look() -> bool {
     Path::new("/usr/bin/qlmanage").exists()
 }
 
-async fn run(out_dir: &Path) -> Result<()> {
-    std::fs::create_dir_all(out_dir)?;
-
-    let dir = tempfile::tempdir()?;
-    let socket = dir.path().join("s.sock");
-    fake_studiod(&socket)?;
-    write_logs(&dir.path().join("runs"))?;
+/// Serves the web UI against a stand-in studiod that answers with `reply`;
+/// returns its base URL.
+async fn serve(dir: &Path, name: &str, reply: fn(&Request) -> Value) -> Result<String> {
+    let socket = dir.join(format!("{name}.sock"));
+    fake_studiod(&socket, reply)?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
     let config = AppConfig {
         socket,
-        data_dir: dir.path().to_path_buf(),
+        data_dir: dir.to_path_buf(),
         token: TOKEN.into(),
         base_url: base.clone(),
     };
     tokio::spawn(async move { topcoat::serve(listener, router(config)).await });
+    Ok(base)
+}
 
-    // One profile for every page, so the login cookie carries over. Logging
-    // in also shows whether the browser works here at all.
+async fn run(out_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+
+    let dir = tempfile::tempdir()?;
+    write_logs(&dir.path().join("runs"))?;
+    let busy = serve(dir.path(), "busy", reply).await?;
+    let idle = serve(dir.path(), "idle", idle_reply).await?;
+
+    // One profile for every page, so the login cookie carries over (cookies
+    // ignore the port). Logging in also shows whether the browser works here.
     let profile = dir.path().join("profile");
     let mut renderer = None;
     if let Some(browser) = find_browser() {
         let login = shoot(
             &browser,
             &profile,
-            &format!("{base}/?token={TOKEN}"),
-            DESKTOP,
+            &format!("{busy}/?token={TOKEN}"),
+            (1024, 1024),
             &dir.path().join("login.png"),
         )
         .await;
@@ -591,40 +1411,81 @@ async fn run(out_dir: &Path) -> Result<()> {
     }
     let renderer = match renderer {
         Some(r) => r,
-        None if has_quick_look() => Renderer::QuickLook,
+        None if has_quick_look() => Renderer::QuickLook(Inliner::new(&busy).await?),
         None => {
             println!("no Chromium browser found (set STUDIO_BROWSER); skipping the page gallery");
             return Ok(());
         }
     };
 
-    // (name, path, also at phone size)
+    // (name, server, path)
     let pages = [
-        ("board", "/", true),
-        ("ticket-working", "/tickets/GAME-2", true),
-        ("ticket-asking", "/tickets/GAME-3", true),
-        ("ticket-ready", "/tickets/GAME-7", false),
-        ("asks", "/asks", true),
-        ("goals", "/goals", false),
-        ("budget", "/budget", false),
-        ("hires", "/hires", false),
-        ("rules", "/rules?file=protect-player", false),
-        ("office", "/office", false),
+        ("board", &busy, "/board"),
+        ("board-idle", &idle, "/board"),
+        ("ticket-working", &busy, "/tickets/GAME-2"),
+        ("ticket-asking", &busy, "/tickets/GAME-3"),
+        ("ticket-ready", &busy, "/tickets/GAME-7"),
+        ("ticket-failed", &busy, "/tickets/GAME-9"),
+        ("ticket-landed-merged", &busy, "/tickets/GAME-17"),
+        ("ticket-landed", &busy, "/tickets/EDIT-2"),
+        ("asks", &busy, "/asks"),
+        ("goals", &busy, "/goals"),
+        ("budget", &busy, "/budget"),
+        ("hires", &busy, "/hires"),
+        ("rules", &busy, "/rules"),
+        (
+            "rules-project",
+            &busy,
+            "/rules?file=protect-player&from=project/game",
+        ),
+        ("hire-edit", &busy, "/hires?file=dev"),
+        ("office", &busy, "/"),
+        // The Last hour drawer, opened (Quick Look only).
+        ("office-lanes", &busy, "/"),
+        ("office-working", &busy, "/?sel=tickets/GAME-2"),
+        ("office-asking", &busy, "/?sel=tickets/GAME-3"),
+        ("office-checks", &busy, "/?sel=tickets/GAME-5"),
+        ("office-review", &busy, "/?sel=tickets/GAME-6"),
+        ("office-ready", &busy, "/?sel=tickets/GAME-7"),
+        ("office-held", &busy, "/?sel=tickets/GAME-10"),
+        ("office-planner", &busy, "/?sel=tickets/EDIT-1"),
+        ("office-hire", &busy, "/?sel=hires/approver"),
+        ("office-goal", &busy, "/?sel=goals/GAME-14"),
+        ("office-idle", &idle, "/"),
     ];
-    for (name, path, phone) in pages {
-        let png = out_dir.join(format!("{name}.png"));
-        match &renderer {
-            Renderer::Browser(browser) => {
-                shoot(browser, &profile, &format!("{base}{path}"), DESKTOP, &png).await?;
-                if phone {
-                    let small = out_dir.join(format!("{name}-phone.png"));
-                    shoot(browser, &profile, &format!("{base}{path}"), PHONE, &small).await?;
-                    println!("wrote {}", small.display());
+    for (name, base, path) in pages {
+        let url = format!("{base}{path}");
+        for (suffix, width) in WIDTHS {
+            let png = out_dir.join(format!("{name}{suffix}.png"));
+            match &renderer {
+                Renderer::Browser(browser) => {
+                    shoot(browser, &profile, &url, (width, 1024), &png).await?;
+                }
+                Renderer::QuickLook(inliner) => {
+                    let mut page = inliner.page(&url, None).await?;
+                    // Opened, with the floor left out so the lanes fit the picture.
+                    if name == "office-lanes" {
+                        page = page
+                            .replacen("<details class=\"group", "<details open class=\"group", 1)
+                            .replacen(
+                                "</head>",
+                                "<style>#office>.grid{display:none}</style></head>",
+                                1,
+                            );
+                    }
+                    quick_look(&page, width, dir.path(), &png).await?;
                 }
             }
-            Renderer::QuickLook => quick_look(&base, path, dir.path(), &png).await?,
+            println!("wrote {}", png.display());
         }
-        println!("wrote {}", png.display());
+        if let (Renderer::QuickLook(inliner), true) = (&renderer, LIGHT.contains(&name)) {
+            let page = inliner.page(&url, Some("light")).await?;
+            for (suffix, width) in &WIDTHS[..2] {
+                let png = out_dir.join(format!("{name}-light{suffix}.png"));
+                quick_look(&page, *width, dir.path(), &png).await?;
+                println!("wrote {}", png.display());
+            }
+        }
     }
     Ok(())
 }

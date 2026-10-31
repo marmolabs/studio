@@ -89,14 +89,14 @@ pub async fn screenshots(ticket: String, files: Vec<EvidenceFile>) -> topcoat::R
         .collect();
     Ok(view! {
         if !shown.is_empty() {
-            <section class="mt-6">
-                <h2 class=(format!("mb-2 text-[12px] font-medium {}", ui::MUTED))>
+            <section>
+                <h2 class=(format!("mb-2.5 {}", ui::SECTION_TITLE))>
                     "Screenshots" if let Some(a) = latest { " · attempt " (a + 1) }
                 </h2>
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     for file in shown {
                         let url = format!("/tickets/{ticket}/evidence/{}/{}", file.attempt, file.name);
-                        <figure class="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                        <figure class=(ui::LIST)>
                             if is_video(&file.name) {
                                 <video src=(url.clone()) controls="" class="block w-full"></video>
                             } else {
@@ -132,26 +132,26 @@ pub async fn art_pairs(ticket: String, files: Vec<EvidenceFile>) -> topcoat::Res
     rows.sort();
     Ok(view! {
         if !rows.is_empty() {
-            <section class="mt-6">
-                <h2 class=(format!("mb-2 text-[12px] font-medium {}", ui::MUTED))>"Art · shipped vs new"</h2>
+            <section>
+                ui::section_head(title: "Art · shipped vs new", count: None, href: String::new(), label: String::new())
                 <div class="space-y-3">
                     for (key, before, after) in rows {
-                        <div class="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                        <div class=(format!("p-3 {}", ui::CARD))>
                             <div class=(format!("mb-2 font-mono text-[12px] {}", ui::MUTED))>(key)</div>
                             <div class="grid grid-cols-2 gap-3">
                                 <figure>
                                     if let Some(url) = before {
                                         <a href=(url.clone()) target="_blank" rel="noopener">
-                                            <img src=(url.clone()) alt="shipped" loading="lazy" style="image-rendering: pixelated" class="block w-full bg-zinc-100 dark:bg-zinc-800">
+                                            <img src=(url.clone()) alt="shipped" loading="lazy" style="image-rendering: pixelated" class="block w-full bg-bg-2">
                                         </a>
                                         <figcaption class=(format!("pt-1.5 text-[12px] {}", ui::MUTED))>"shipped"</figcaption>
                                     } else {
-                                        <div class=(format!("flex min-h-16 items-center justify-center bg-zinc-100 text-[12px] dark:bg-zinc-800 {}", ui::MUTED))>"new file"</div>
+                                        <div class=(format!("flex min-h-16 items-center justify-center bg-bg-2 text-[12px] {}", ui::MUTED))>"new file"</div>
                                     }
                                 </figure>
                                 <figure>
                                     <a href=(after.clone()) target="_blank" rel="noopener">
-                                        <img src=(after.clone()) alt="new" loading="lazy" style="image-rendering: pixelated" class="block w-full bg-zinc-100 dark:bg-zinc-800">
+                                        <img src=(after.clone()) alt="new" loading="lazy" style="image-rendering: pixelated" class="block w-full bg-bg-2">
                                     </a>
                                     <figcaption class=(format!("pt-1.5 text-[12px] {}", ui::MUTED))>"new"</figcaption>
                                 </figure>

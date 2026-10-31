@@ -1,30 +1,39 @@
+//! One ticket: what it asks for, what waits for the owner, everything that
+//! happened on it, and the facts beside it. Live while it is open.
+
 use futures_util::{Stream, StreamExt, stream};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use studio_config::draft::from_feedback;
-use studio_core::ticket::{Ticket, TicketKind};
-use studiod::api::{AskView, Estimate, Request};
+use studio_core::machine::MAX_ATTEMPTS;
+use studio_core::ticket::{FailureClass, Ticket, TicketKind, TicketState};
+use studio_git::Repo;
+use studiod::api::{AskView, Request};
+use studiod::export::{self, Export};
 use topcoat::{
     context::{Cx, app_context},
     datastar::{ElementPatchMode, PatchElements},
     router::{
+        Body,
         content::{
             Form,
             sse::{Event, KeepAlive, Sse},
         },
-        page, path_param, query_params, route,
+        page, path_param, query_params,
+        response::Response,
+        route,
     },
-    view::{View, component, view},
+    view::{Unescaped, View, component, view},
 };
 
-use crate::summary::{latest_activity, tool_arg, truncate};
-use crate::{AppConfig, client, live, ui};
+use crate::summary::truncate;
+use crate::{AppConfig, client, diffstat, live, markdown, ui};
 
+use super::activity::{self, Filer, Logged};
 use super::ask_card::ask_card;
-use super::changes;
-use super::evidence;
-use super::timeline;
+use super::timeline::{exact, relative};
+use super::{changes, evidence};
 
 path_param!(id);
 
@@ -33,16 +42,48 @@ struct LogFrom {
     from: Option<u64>,
 }
 
-/// What the top of a ticket page shows, fetched together.
-struct Top {
+/// How often, in stream ticks, the changed files are looked at again.
+const FILES_EVERY: u32 = 10;
+/// Changed files listed in the rail before the rest are counted.
+const FILES_SHOWN: usize = 12;
+
+/// What the page shows about a ticket, fetched together.
+struct Facts {
     ticket: Ticket,
-    spent: f64,
-    estimate: Option<Estimate>,
+    filer: Filer,
     asks: Vec<AskView>,
-    now: Option<String>,
-    /// When the current run started, for a ticket that is running.
-    started: Option<u64>,
     events: Vec<client::Stamped>,
+    spent: f64,
+    /// The studio's cap on what one ticket may spend. A hire's own cap
+    /// covers only that hire's runs on it, so it isn't shown against the
+    /// whole ticket's spend.
+    cap: Option<f64>,
+    /// Whether the ticket's goal branch is already merged into its base.
+    merged: bool,
+}
+
+async fn facts(config: &AppConfig, id: &str) -> topcoat::Result<Facts> {
+    let tickets: Vec<Ticket> = client::call(&config.socket, Request::Tickets).await?;
+    let ticket = tickets
+        .iter()
+        .find(|t| t.id.to_string() == id)
+        .cloned()
+        .ok_or_else(|| client::error(format!("no ticket {id}")))?;
+    let asks: Vec<AskView> = client::call(&config.socket, Request::Asks)
+        .await
+        .unwrap_or_default();
+    let budget: Value = client::call(&config.socket, Request::Budget)
+        .await
+        .unwrap_or_default();
+    Ok(Facts {
+        filer: activity::filer(&ticket, &tickets),
+        asks: asks.into_iter().filter(|a| a.ticket == id).collect(),
+        events: ticket_events(&config.socket, id).await,
+        spent: spent(&config.socket, id).await,
+        cap: budget["limits"]["ticket_usd"].as_f64(),
+        merged: mergeable(&ticket) && merged_ids(&config.socket).await.iter().any(|m| m == id),
+        ticket,
+    })
 }
 
 /// Whether a run is under way on the ticket, even if paused on an ask.
@@ -55,59 +96,108 @@ fn is_live(kind: &str) -> bool {
 
 /// When the latest run began: the last time the ticket was claimed.
 fn run_started(events: &[client::Stamped]) -> Option<u64> {
-    let claimed = |e: &&client::Stamped| matches!(e.event, studio_core::event::Event::Claimed);
-    events.iter().rev().find(claimed).map(|e| e.at_ms)
+    events.iter().rev().find(|e| claimed(e)).map(|e| e.at_ms)
 }
 
-async fn top(config: &AppConfig, id: &str) -> topcoat::Result<Top> {
-    let ticket = find(&config.socket, id).await?;
-    let asks: Vec<AskView> = client::call(&config.socket, Request::Asks)
+/// Every run begins with a claim, whatever became of the one before it.
+fn claimed(event: &client::Stamped) -> bool {
+    matches!(event.event, studio_core::event::Event::Claimed)
+}
+
+/// Whether the ticket has a goal branch to merge: a plan lands without one.
+fn mergeable(ticket: &Ticket) -> bool {
+    ticket.state.kind() == "landed" && ticket.kind != TicketKind::Plan
+}
+
+/// What the ticket changed; nothing once the worktree is gone.
+#[derive(Clone, Debug, Default)]
+struct Changed {
+    /// Each file as (path, added, removed), from the diff, which studiod
+    /// cuts at 1 MB.
+    files: Vec<(String, u64, u64)>,
+    /// Lines added and removed in all, from `git diff --stat`, which is exact.
+    added: u64,
+    removed: u64,
+}
+
+/// The ticket's changes, from `diff` if the caller has it.
+async fn changed(socket: &Path, id: &str, diff: Option<&str>) -> Changed {
+    let files = diff.map(changes::stats).unwrap_or_default();
+    let stat: Option<String> = client::call(socket, Request::Diffstat { ticket: id.into() })
         .await
         .unwrap_or_default();
-    let now = now_text(&ticket, &config.data_dir).await;
-    let events = ticket_events(&config.socket, id).await;
-    let started = if is_live(ticket.state.kind()) {
-        run_started(&events)
-    } else {
-        None
-    };
-    Ok(Top {
-        spent: spent(&config.socket, id).await,
-        estimate: estimate(&config.socket, id).await,
-        asks: asks.into_iter().filter(|a| a.ticket == id).collect(),
-        now,
-        started,
-        events,
-        ticket,
-    })
+    let (added, removed) = stat
+        .as_deref()
+        .and_then(diffstat::totals)
+        .unwrap_or_else(|| {
+            files
+                .iter()
+                .fold((0, 0), |(a, r), (_, x, y)| (a + x, r + y))
+        });
+    Changed {
+        files,
+        added,
+        removed,
+    }
 }
 
-/// The fragments of the page's top, in the order they are shown.
-async fn top_parts(cx: &Cx, top: Top) -> topcoat::Result<[String; 4]> {
-    let project = top.ticket.project.to_string();
-    let Top {
-        ticket,
-        spent,
-        estimate,
-        asks,
-        now,
-        started,
-        events: _,
-    } = top;
-    let titled = ticket.clone();
+async fn changed_files(socket: &Path, id: &str) -> Changed {
+    let diff: Option<String> = client::call(socket, Request::Diff { ticket: id.into() })
+        .await
+        .unwrap_or_default();
+    changed(socket, id, diff.as_deref()).await
+}
+
+/// The page's live parts, each with its own id: the head, the asks, the
+/// outcome, the activity, the rail and the top bar's actions.
+async fn fragments(
+    cx: &Cx,
+    facts: &Facts,
+    log: &str,
+    changes: &Changed,
+) -> topcoat::Result<[String; 6]> {
+    let ticket = facts.ticket.clone();
+    let kind = ticket.state.kind();
+    let feed = activity::feed(&ticket, &facts.filer, &facts.events, log);
+    let logged = activity::parse_log(log);
+    let since = run_started(&facts.events).unwrap_or(0);
+    let side = Side {
+        model: feed.model.clone(),
+        branch: branch(&ticket, &facts.events),
+        tries: tries(&ticket, &facts.events),
+        time: time_taken(&ticket, &facts.events, ui::now_ms()),
+        spent: facts.spent,
+        cap: facts.cap,
+        stages: stages(&ticket, &logged, since),
+        files: changes.files.clone(),
+    };
+    let unreviewed = logged
+        .iter()
+        .filter(|(at, _)| *at >= since)
+        .any(|(_, l)| matches!(l, Logged::Note(n) if n.starts_with("no reviewer")));
+    let (added, removed) = (changes.added, changes.removed);
+    let project = ticket.project.to_string();
+    let quote = activity::last_words(log);
     Ok([
-        ui::html(cx, view! { cx => head(ticket: titled) }).await?,
+        ui::html(cx, view! { cx => head(ticket: facts.ticket.clone(), filer: facts.filer.clone()) })
+            .await?,
         ui::html(
             cx,
-            view! { cx => ticket_asks(asks: asks, project: project) },
+            view! { cx => ticket_asks(asks: facts.asks.clone(), project: project, quote: quote) },
         )
         .await?,
-        ui::html(cx, view! { cx => now_line(now: now) }).await?,
         ui::html(
             cx,
-            view! { cx => details(ticket: ticket, spent: spent, estimate: estimate, started: started) },
+            view! { cx => outcome(ticket: facts.ticket.clone(), merged: facts.merged, reviewed: !unreviewed, added: added, removed: removed) },
         )
         .await?,
+        ui::html(
+            cx,
+            view! { cx => activity::activity(items: feed.items, state: kind, live: is_live(kind)) },
+        )
+        .await?,
+        ui::html(cx, view! { cx => rail(ticket: facts.ticket.clone(), side: side) }).await?,
+        ui::html(cx, view! { cx => actions(ticket: facts.ticket.clone()) }).await?,
     ])
 }
 
@@ -115,71 +205,55 @@ async fn top_parts(cx: &Cx, top: Top) -> topcoat::Result<[String; 4]> {
 async fn ticket_page(cx: &Cx) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
     let id = path_param::<Id>(cx).to_owned();
-    let top = top(config, &id).await?;
-    let project = top.ticket.project.to_string();
-    let Top {
-        ticket,
-        spent,
-        estimate,
-        asks,
-        now,
-        started,
-        events,
-    } = top;
-    let (text, end) = read_from(&log_path(&config.data_dir, &id), 0).await;
-    let entries = group_lines(log_lines(&text));
-    let timeline_rows = timeline::rows(&events, ui::now_ms());
+    let facts = facts(config, &id).await?;
+    let (log, end) = read_from(&log_path(&config.data_dir, &id), 0).await;
+    let kind = facts.ticket.state.kind();
+    // Fetched once: a diff is too big to send again every second.
+    let diff: Option<String> = client::call(&config.socket, Request::Diff { ticket: id.clone() })
+        .await
+        .unwrap_or_default();
+    let files = changed(&config.socket, &id, diff.as_deref()).await;
+    let captures = evidence::files(&config.socket, &id).await;
+    let [
+        head_html,
+        asks_html,
+        outcome_html,
+        feed_html,
+        rail_html,
+        actions_html,
+    ] = fragments(cx, &facts, &log, &files).await?;
     let stream = format!("@get('/tickets/{id}/stream?from={end}')");
-    // Fetched once: a diff is too big to re-send every second.
-    let review = matches!(ticket.state.kind(), "ready" | "working" | "reviewing");
-    let (stat, diff) = if review {
-        let stat: Option<String> =
-            client::call(&config.socket, Request::Diffstat { ticket: id.clone() })
-                .await
-                .unwrap_or_default();
-        let diff: Option<String> =
-            client::call(&config.socket, Request::Diff { ticket: id.clone() })
-                .await
-                .unwrap_or_default();
-        (stat, diff)
-    } else {
-        (None, None)
-    };
-    let captures = if review {
-        evidence::files(&config.socket, &id).await
-    } else {
-        Vec::new()
-    };
-
     Ok(view! {
-        <a href="/" class="text-[12px] text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
-            "← Board"
-        </a>
-        <div data-init=(stream)>
-            head(ticket: ticket.clone())
-            ticket_asks(asks: asks, project: project)
-            now_line(now: now)
-            details(ticket: ticket, spent: spent, estimate: estimate, started: started)
-        </div>
-        timeline::timeline(rows: timeline_rows)
-        evidence::art_pairs(ticket: id.clone(), files: captures.clone())
-        evidence::screenshots(ticket: id.clone(), files: captures)
-        if review {
-            changes::changes(stat: stat, diff: diff)
-        }
-        <section class="mt-6">
-            <h2 class="mb-2 text-[12px] font-medium text-zinc-500 dark:text-zinc-400">"Run log"</h2>
-            // Reversed, so the box opens scrolled to the newest entry and stays there.
-            <div
-                id="log"
-                class="flex max-h-[70vh] flex-col-reverse overflow-y-auto rounded-lg border border-zinc-300 bg-white p-3 text-[13px] leading-relaxed dark:border-zinc-700 dark:bg-zinc-900"
-            >
-                <div id="log-body" class="min-w-0">
-                    log(entries: entries)
-                </div>
+        <div data-init=(stream) class="grid grid-cols-[minmax(0,1fr)_272px] items-start gap-14 max-[860px]:grid-cols-1 max-[860px]:gap-8">
+            <div class="flex min-w-0 flex-col gap-6">
+                (Unescaped::new_unchecked(head_html))
+                (Unescaped::new_unchecked(asks_html))
+                (Unescaped::new_unchecked(outcome_html))
+                evidence::art_pairs(ticket: id.clone(), files: captures.clone())
+                evidence::screenshots(ticket: id.clone(), files: captures)
+                if kind == "ready" {
+                    changes::changes(diff: diff)
+                }
+                (Unescaped::new_unchecked(feed_html))
             </div>
-        </section>
+            (Unescaped::new_unchecked(rail_html))
+        </div>
+        (Unescaped::new_unchecked(actions_html))
     })
+}
+
+/// What the stream keeps between ticks.
+struct Live {
+    /// The fragments last sent.
+    sent: [String; 6],
+    /// Where the next read of the run log starts, and the log so far.
+    pos: u64,
+    log: String,
+    files: Changed,
+    tick: u32,
+    /// What the fragments were last built from, so they are built again only
+    /// when something changed.
+    built_from: String,
 }
 
 #[route(GET "/tickets/{id}/stream")]
@@ -190,55 +264,138 @@ async fn ticket_stream(
     let id = path_param::<Id>(cx).to_owned();
     let from = query_params::<LogFrom>(cx)?.from.unwrap_or(0);
     let cx = cx.clone();
-    // The log the page already shows: new lines may join its last group, so
-    // the whole log is grouped again whenever it grows.
-    let (seen, _) = read_from(&log_path(&config.data_dir, &id), 0).await;
-    let seen = seen.get(..from as usize).unwrap_or_default().to_string();
-    // What was last sent for the four top fragments and the timeline.
-    let state = (vec![String::new(); 5], from, seen);
-    let events = stream::unfold(state, move |(mut last, pos, mut seen)| {
+    // The log the page already shows; the feed is built again from all of it
+    // whenever it grows, since new lines may join its last group.
+    let (log, _) = read_from(&log_path(&config.data_dir, &id), 0).await;
+    let log = log.get(..from as usize).unwrap_or_default().to_string();
+    let files = changed_files(&config.socket, &id).await;
+    let (sent, from_key) = match facts(&config, &id).await {
+        Ok(facts) => (
+            fragments(&cx, &facts, &log, &files)
+                .await
+                .unwrap_or_default(),
+            built_from(&facts, &files, log.len()),
+        ),
+        Err(_) => Default::default(),
+    };
+    let state = Live {
+        sent,
+        pos: from,
+        log,
+        files,
+        tick: 0,
+        built_from: from_key,
+    };
+    let events = stream::unfold(state, move |mut state| {
         let (config, id, cx) = (config.clone(), id.clone(), cx.clone());
         async move {
             tokio::time::sleep(live::EVERY).await;
-            let mut events = Vec::new();
-            let mut parts: Vec<String> = Vec::new();
-            if let Ok(top) = top(&config, &id).await {
-                let rows = timeline::rows(&top.events, ui::now_ms());
-                if let Ok(rendered) = top_parts(&cx, top).await {
-                    parts.extend(rendered);
-                    if let Ok(html) =
-                        ui::html(&cx, view! { cx => timeline::timeline(rows: rows) }).await
-                    {
-                        parts.push(html);
-                    }
-                }
+            let (text, pos) = read_from(&log_path(&config.data_dir, &id), state.pos).await;
+            state.log.push_str(&text);
+            state.pos = pos;
+            state.tick += 1;
+            if state.tick % FILES_EVERY == 0 {
+                state.files = changed_files(&config.socket, &id).await;
             }
-            if parts.len() == last.len() {
-                for (html, seen) in parts.into_iter().zip(last.iter_mut()) {
-                    if html != *seen {
-                        seen.clone_from(&html);
+            let mut events: Vec<Event> = Vec::new();
+            let Ok(facts) = facts(&config, &id).await else {
+                return Some((events, state));
+            };
+            // Parsing a long log every second is costly, so the parts are
+            // built again only when the log, the facts or the minute moved.
+            let key = built_from(&facts, &state.files, state.log.len());
+            if key == state.built_from {
+                return Some((events, state));
+            }
+            state.built_from = key;
+            if let Ok(parts) = fragments(&cx, &facts, &state.log, &state.files).await {
+                for (html, sent) in parts.into_iter().zip(state.sent.iter_mut()) {
+                    if html != *sent {
+                        sent.clone_from(&html);
                         events.push(PatchElements::new(html).into());
                     }
                 }
             }
-            let (text, pos) = read_from(&log_path(&config.data_dir, &id), pos).await;
-            if !text.is_empty() {
-                seen.push_str(&text);
-                let entries = group_lines(log_lines(&seen));
-                if let Ok(html) = ui::html(&cx, view! { cx => log(entries: entries) }).await {
-                    events.push(
-                        PatchElements::new(html)
-                            .selector("#log-body")
-                            .mode(ElementPatchMode::Inner)
-                            .into(),
-                    );
-                }
-            }
-            Some((events, (last, pos, seen)))
+            Some((events, state))
         }
     })
     .flat_map(|events: Vec<Event>| stream::iter(events.into_iter().map(Ok)));
     Ok(Sse::new(events).keep_alive(KeepAlive::new()))
+}
+
+/// What the page's parts depend on: the facts, the changes, how much log
+/// there is, and the clock (to the second while a run counts its time, else
+/// to the minute, for times such as "3m ago").
+fn built_from(facts: &Facts, files: &Changed, log_len: usize) -> String {
+    let now = ui::now_ms();
+    let clock = if is_live(facts.ticket.state.kind()) {
+        now / 1000
+    } else {
+        now / 60_000
+    };
+    format!(
+        "{:?} {:?} {:?} {} {:?} {} {:?} {} {:?} {log_len} {clock}",
+        facts.ticket,
+        facts.filer,
+        facts.asks,
+        facts.events.len(),
+        facts.events.last().map(|e| e.at_ms),
+        facts.spent,
+        facts.cap,
+        facts.merged,
+        files,
+    )
+}
+
+/// The ticket as Markdown, the same as `studio export` prints.
+#[route(GET "/tickets/{id}/export")]
+async fn export_markdown(cx: &Cx) -> topcoat::Result<Response> {
+    let config = app_context::<AppConfig>(cx);
+    let id = path_param::<Id>(cx).to_owned();
+    let tickets: Vec<Value> = client::call(&config.socket, Request::Tickets).await?;
+    let Some(ticket) = tickets.iter().find(|t| t["id"] == id) else {
+        return Ok(http::Response::builder()
+            .status(http::StatusCode::NOT_FOUND)
+            .body(Body::from(format!("no ticket {id}")))?);
+    };
+    let events: Value = client::call(
+        &config.socket,
+        Request::Events {
+            since: 0,
+            limit: 10_000,
+            ticket: Some(id.clone()),
+        },
+    )
+    .await?;
+    let diffstat: Option<String> =
+        client::call(&config.socket, Request::Diffstat { ticket: id.clone() })
+            .await
+            .unwrap_or_default();
+    let evidence: Value = client::call(&config.socket, Request::Evidence { ticket: id.clone() })
+        .await
+        .unwrap_or_default();
+    let (log, _) = read_from(&log_path(&config.data_dir, &id), 0).await;
+    let summary = export::summary(&log);
+    let text = export::render(&Export {
+        ticket,
+        spend_usd: spent(&config.socket, &id).await,
+        events: &events,
+        summary: summary.as_deref(),
+        diffstat: diffstat.as_deref(),
+        evidence: &evidence,
+    });
+    let name: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    Ok(http::Response::builder()
+        .header(http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(
+            http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}.md\""),
+        )
+        .header("x-content-type-options", "nosniff")
+        .body(Body::from(text))?)
 }
 
 #[derive(Deserialize)]
@@ -263,11 +420,11 @@ async fn land(cx: &Cx) -> topcoat::Result<PatchElements> {
     let text = ui::html(
         cx,
         view! { cx =>
-            <p class="text-zinc-600 dark:text-zinc-400">
+            <p class=(ui::SECONDARY)>
                 "Landed on " <span class="font-mono">(branch)</span> ". Merge it into "
                 <span class="font-mono">(base.clone())</span> " when you're happy."
             </p>
-            merge_button(ticket: id, base: base)
+            merge_button(ticket: id, base: base, merged: false)
         },
     )
     .await?;
@@ -301,14 +458,33 @@ async fn merge(cx: &Cx) -> topcoat::Result<PatchElements> {
     }
 }
 
-/// The button, and what it does, shared by the ticket page and the goals.
+/// Ids of the tickets whose goal branch is merged; none if the daemon can't say.
+pub async fn merged_ids(socket: &Path) -> Vec<String> {
+    client::call(socket, Request::MergedTickets)
+        .await
+        .unwrap_or_default()
+}
+
+/// The button, and what it does, shared by the ticket page and the goals; a
+/// quiet label once the goal is merged.
 #[component]
-pub async fn merge_button(ticket: String, base: String) -> topcoat::Result<impl View> {
+pub async fn merge_button(
+    ticket: String,
+    base: String,
+    merged: bool,
+) -> topcoat::Result<impl View> {
     let post = format!("@post('/tickets/{ticket}/merge')");
     Ok(view! {
-        <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <button class=(format!("{} min-h-10 sm:min-h-0", ui::BUTTON)) data-on:click=(post)>"Merge into " (base)</button>
-            <span class=(format!("text-[12px] {}", ui::MUTED))>"Merges in your checkout; nothing is pushed."</span>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            if merged {
+                <span class=(format!("text-[12.5px] {}", ui::MUTED))>"Merged into " (base) "."</span>
+            } else {
+                <button class=(ui::BUTTON) data-on:click=(post)>
+                    ui::icon(name: "git-merge")
+                    "Merge into " (base)
+                </button>
+                <span class=(format!("text-[12.5px] {}", ui::MUTED))>"Merges in your checkout; nothing is pushed."</span>
+            }
         </div>
     })
 }
@@ -353,7 +529,13 @@ async fn resume(cx: &Cx) -> topcoat::Result<PatchElements> {
     act(cx, |ticket| Request::Resume { ticket }, "Resumed.").await
 }
 
-/// Runs an action and reports it; the stream updates the header.
+#[route(POST "/tickets/{id}/pause")]
+async fn pause(cx: &Cx) -> topcoat::Result<PatchElements> {
+    let done = "Pausing: the agent stops, and the ticket waits until you resume it.";
+    act(cx, |ticket| Request::Pause { ticket }, done).await
+}
+
+/// Runs an action and reports it; the stream updates the page.
 async fn act(
     cx: &Cx,
     request: impl FnOnce(String) -> Request,
@@ -393,51 +575,531 @@ async fn spent(socket: &Path, id: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-async fn estimate(socket: &Path, id: &str) -> Option<Estimate> {
-    let all = client::estimates(socket).await;
-    all.into_iter().find(|e| e.ticket == id)
+/// The branch the ticket's work is on: its own while open, its goal's once
+/// landed. A plan has none, and neither has a ticket that never ran.
+fn branch(ticket: &Ticket, events: &[client::Stamped]) -> Option<String> {
+    if ticket.kind == TicketKind::Plan {
+        return None;
+    }
+    match ticket.state.kind() {
+        "landed" => Some(activity::goal_branch(ticket)),
+        "cancelled" => None,
+        _ => events
+            .iter()
+            .any(claimed)
+            .then(|| Repo::ticket_branch_name(&ticket.id)),
+    }
 }
 
-const GOAL_SHOWN: usize = 48;
+/// "1 of 3": which try this is, once the ticket has run.
+fn tries(ticket: &Ticket, events: &[client::Stamped]) -> Option<String> {
+    let attempt = (ticket.attempts + 1).min(MAX_ATTEMPTS);
+    events
+        .iter()
+        .any(claimed)
+        .then(|| format!("{attempt} of {MAX_ATTEMPTS}"))
+}
 
-/// The facts under the title as (label, value, tooltip). While a run is live
-/// and nothing is booked yet, the spend is the quote, labelled as an estimate.
-fn facts(
-    ticket: &Ticket,
-    spent: f64,
-    estimate: Option<&Estimate>,
-    started: Option<u64>,
-    now: u64,
-) -> Vec<(&'static str, String, String)> {
-    let fact = |label, value: String| (label, value.clone(), value);
-    let mut quote = estimate.and_then(|e| e.quote_usd);
-    let live = is_live(ticket.state.kind());
-    let mut facts = vec![
-        fact("Project", ticket.project.to_string()),
-        fact("Hire", ticket.hire.to_string()),
-        fact("Base", ticket.base_branch.clone()),
-        fact("Attempts", ticket.attempts.to_string()),
-    ];
-    match quote {
-        Some(usd) if live && spent == 0.0 => {
-            facts.push(fact("Est. spend", format!("~{}", ui::usd(usd))));
-            quote = None;
+/// How long the ticket has worked: the current run so far, or from its first
+/// run to its last event once it stopped. A landed ticket stopped working
+/// when it passed review, not when the owner landed it.
+fn time_taken(ticket: &Ticket, events: &[client::Stamped], now: u64) -> Option<String> {
+    let kind = ticket.state.kind();
+    if is_live(kind) {
+        return run_started(events).map(|start| ui::elapsed(now.saturating_sub(start)));
+    }
+    if !matches!(kind, "ready" | "landed" | "failed" | "cancelled") {
+        return None;
+    }
+    let first = events.iter().find(|e| claimed(e))?.at_ms;
+    let passed = |e: &&client::Stamped| matches!(e.event, studio_core::event::Event::ReviewPassed);
+    let last = match events.iter().rev().find(passed) {
+        Some(event) if kind == "landed" => event,
+        _ => events.last()?,
+    };
+    Some(ui::elapsed(last.at_ms.saturating_sub(first)))
+}
+
+/// One stage on a ticket's way to landing.
+#[derive(Clone, Debug, PartialEq)]
+struct Stage {
+    name: String,
+    mark: Mark,
+    /// "waiting for you", why it is held, or "failed".
+    note: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mark {
+    Done,
+    Now,
+    Next,
+    Failed,
+}
+
+/// The stages this ticket goes through: work, checks, review, each gate the
+/// log shows for it, and landing. They are marked from the ticket's state and
+/// from the log since `since`, when its latest run began.
+fn stages(ticket: &Ticket, log: &[(u64, Logged)], since: u64) -> Vec<Stage> {
+    let notes = |from: u64| {
+        log.iter()
+            .filter(move |(at, _)| *at >= from)
+            .filter_map(|(_, l)| match l {
+                Logged::Note(note) => Some(note.as_str()),
+                _ => None,
+            })
+    };
+    let mut names: Vec<String> = vec!["Work".into()];
+    if ticket.kind == TicketKind::Plan {
+        names.push("Done".into());
+    } else {
+        names.extend(["Checks".into(), "Review".into()]);
+        for gate in notes(0).filter_map(activity::gate_of) {
+            let name = gate_stage(gate);
+            if !names.contains(&name) {
+                names.push(name);
+            }
         }
-        _ => facts.push(fact("Spent", ui::usd(spent))),
+        names.push(match activity::goal_name(ticket) {
+            Some(goal) => format!("Land on {}", truncate(&goal, 28)),
+            None => "Land".into(),
+        });
     }
-    if let Some(started) = started {
-        facts.push(fact("Elapsed", ui::elapsed(now.saturating_sub(started))));
+    let last = names.len() - 1;
+    // How far review got in the latest run: the reviewer, then each gate.
+    let reviewed_to = || {
+        let mut at = 2;
+        for note in notes(since) {
+            if note.starts_with("review by ") {
+                at = 2;
+            } else if note == "review passed" || note.starts_with("no reviewer") {
+                at = 3;
+            } else if let Some(gate) = activity::gate_of(note) {
+                let name = gate_stage(gate);
+                let index = names.iter().position(|n| *n == name).unwrap_or(2);
+                let rest = note.strip_prefix("gate ").unwrap_or_default();
+                let rest = rest.strip_prefix(gate).unwrap_or_default();
+                let past = rest.starts_with(" passed") || rest.starts_with(" skipped");
+                at = if past { index + 1 } else { index };
+            }
+        }
+        at.min(last)
+    };
+    let place = |kind: &str| match kind {
+        "checking" => 1.min(last),
+        "reviewing" => reviewed_to(),
+        _ => 0,
+    };
+    let from = ticket
+        .held_from
+        .as_ref()
+        .map_or("working", TicketState::kind);
+    let waiting = "waiting for you".to_string();
+    let (now, mark, note) = match &ticket.state {
+        TicketState::Queued | TicketState::Cancelled => (None, Mark::Next, String::new()),
+        TicketState::Landed => (Some(names.len()), Mark::Done, String::new()),
+        TicketState::Ready => (Some(last), Mark::Now, waiting),
+        TicketState::Asking { .. } => (Some(place(from)), Mark::Now, waiting),
+        state @ TicketState::Held { .. } => (
+            Some(place(from)),
+            Mark::Now,
+            ui::state_detail(state).unwrap_or_default(),
+        ),
+        TicketState::Failed { class, .. } => {
+            let at = match class {
+                FailureClass::Checks => 1.min(last),
+                FailureClass::Review => reviewed_to(),
+                _ => 0,
+            };
+            (Some(at), Mark::Failed, "failed".to_string())
+        }
+        state => (Some(place(state.kind())), Mark::Now, String::new()),
+    };
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let (mark, note) = match now {
+                Some(n) if i < n => (Mark::Done, String::new()),
+                Some(n) if i == n => (mark, note.clone()),
+                _ => (Mark::Next, String::new()),
+            };
+            Stage { name, mark, note }
+        })
+        .collect()
+}
+
+/// "Art gate" for the gate named `art`.
+fn gate_stage(gate: &str) -> String {
+    let mut chars = gate.chars();
+    let first: String = chars
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
+    format!("{first}{} gate", chars.as_str())
+}
+
+/// The title, who filed the ticket and from which goal, and what it asks for.
+#[component]
+async fn head(ticket: Ticket, filer: Filer) -> topcoat::Result<impl View> {
+    let goal = activity::goal_name(&ticket)
+        .filter(|_| ticket.kind == TicketKind::Work)
+        .map(|_| ticket.goal.clone());
+    let (hire, words) = match filer {
+        Filer::Hire(hire) => (Some(hire), "filed this"),
+        Filer::Studio(source) if source.starts_with("ci:") => {
+            (None, "The studio filed this after a CI run failed")
+        }
+        Filer::Studio(_) => (None, "The studio filed this"),
+        Filer::Owner if ticket.kind == TicketKind::Plan => (None, "You set this goal"),
+        Filer::Owner => (None, "You filed this"),
+    };
+    let created = ticket.created_at;
+    Ok(view! {
+        <header id="ticket-head" class="flex flex-col gap-6">
+            <div class="flex flex-col gap-2.5">
+                <h1 class=(ui::PAGE_TITLE)>(ticket.title)</h1>
+                <div class="flex flex-wrap items-center gap-1.5 text-[13px] text-fg-3">
+                    if let Some(hire) = hire {
+                        <span class="text-fg-2">ui::who(hire: hire)</span>
+                    }
+                    // The time stays with what comes before it, so no line
+                    // starts with its dot.
+                    if let Some(goal) = goal {
+                        <span>(words) " from"</span>
+                        <span class="flex min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap">
+                            <a href="/goals" class="min-w-0 hover:[&>span]:border-line-3">ui::goal_chip(goal: goal)</a>
+                            <span title=(exact(created))>"· " (relative(ui::now_ms(), created))</span>
+                        </span>
+                    } else {
+                        <span>
+                            (words) " "
+                            <span class="whitespace-nowrap" title=(exact(created))>"· " (relative(ui::now_ms(), created))</span>
+                        </span>
+                    }
+                </div>
+            </div>
+            if !ticket.detail.trim().is_empty() {
+                <div class=(format!("max-w-[68ch] leading-[22px] text-fg-2 {}", markdown::STYLE))>
+                    (markdown::render(&ticket.detail))
+                </div>
+            }
+            if let Some(feedback) = ticket.feedback {
+                <div class="flex flex-col gap-1.5">
+                    <p class="text-[12.5px] font-medium text-fg-3">"Your notes when you sent it back"</p>
+                    <div class=(format!("max-w-[68ch] border-l-2 border-line-2 pl-3 leading-[22px] text-fg-2 {}", markdown::STYLE))>
+                        (markdown::render(&feedback))
+                    </div>
+                </div>
+            }
+        </header>
+    })
+}
+
+/// The asks waiting on this ticket. The newest gets what the agent said
+/// just before it asked.
+#[component]
+async fn ticket_asks(
+    asks: Vec<AskView>,
+    project: String,
+    quote: Option<String>,
+) -> topcoat::Result<impl View> {
+    let newest = asks.iter().map(|a| a.at_ms).max();
+    Ok(view! {
+        <div id="ticket-asks" class="flex flex-col gap-4 empty:hidden">
+            #[key(ask.id.clone())]
+            for ask in asks {
+                let said = quote
+                    .clone()
+                    .filter(|_| Some(ask.at_ms) == newest && matches!(ask.kind.as_str(), "permission" | "question"));
+                ask_card(ask: ask, title: String::new(), project: project.clone(), quote: said)
+            }
+        </div>
+    })
+}
+
+const OUTCOME: &str = "flex flex-col gap-3.5 rounded-[10px] border border-line bg-bg-2 px-4 py-3.5";
+/// A goal branch in a line of text: `ui::CODE`, cut to the room it has.
+const BRANCH: &str = "mx-0.5 inline-block min-w-0 max-w-full truncate rounded-[5px] border border-line bg-bg-3 px-[5px] align-bottom font-mono text-[12px] leading-[18px] text-fg";
+
+/// Where a ticket that stopped stands, and what can still be done with it.
+#[component]
+async fn outcome(
+    ticket: Ticket,
+    merged: bool,
+    reviewed: bool,
+    added: u64,
+    removed: u64,
+) -> topcoat::Result<impl View> {
+    let id = ticket.id.to_string();
+    let kind = ticket.state.kind();
+    let [on_land, on_retry, on_resume] =
+        ["land", "retry", "resume"].map(|a| format!("@post('/tickets/{id}/{a}')"));
+    let send_back = format!("@post('/tickets/{id}/changes', {{contentType: 'form'}})");
+    let why = ui::state_detail(&ticket.state).unwrap_or_default();
+    let (failed, failed_why) = ui::failure(&ticket.state).unwrap_or_default();
+    let plan = ticket.kind == TicketKind::Plan;
+    let goal_branch = activity::goal_branch(&ticket);
+    let passed = if reviewed {
+        "Passed its checks and review."
+    } else {
+        "Passed its checks. No reviewer runs on another model, so review it yourself."
+    };
+    Ok(view! {
+        <div id="ticket-outcome" class="empty:hidden">
+            if kind == "ready" {
+                <section class=(OUTCOME) aria-label="Ready to land">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        ui::state_icon(state: "ready")
+                        <span class="font-medium">"Ready to land"</span>
+                        if added + removed > 0 {
+                            <span class="text-[12.5px]">ui::diff_size(added: added, removed: removed)</span>
+                        }
+                    </div>
+                    <p class=(ui::SECONDARY)>(passed) " It lands on " <span class=(BRANCH) title=(goal_branch.clone())>(goal_branch.clone())</span> "."</p>
+                    <div class=(ui::ASK_ACTIONS)>
+                        <button type="button" class=(ui::PRIMARY) data-on:click=(on_land)>
+                            ui::icon(name: "git-merge")
+                            "Land"
+                        </button>
+                        <details id="send-back" data-preserve-attr="open" class="group [&[open]]:basis-full">
+                            <summary class=(format!("{} list-none [&::-webkit-details-marker]:hidden", ui::BUTTON))>
+                                ui::icon(name: "corner-down-right")
+                                "Send back"
+                            </summary>
+                            <form data-on:submit=(send_back) class="mt-3 flex flex-col gap-2.5">
+                                <textarea name="feedback" required="" rows="3" aria-label="What should change" placeholder="What should change?" class=(ui::TEXTAREA)></textarea>
+                                <div><button type="submit" class=(ui::BUTTON)>"Send back with these notes"</button></div>
+                            </form>
+                        </details>
+                    </div>
+                </section>
+            } else if kind == "landed" {
+                <section class=(OUTCOME) aria-label="Landed">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        ui::state_icon(state: "landed")
+                        if plan {
+                            <span class="font-medium">"Done"</span>
+                            <span class=(ui::SECONDARY)>"The plan is filed; its tickets are on the board."</span>
+                        } else {
+                            <span class="font-medium">"Landed on "</span>
+                            <span class=(BRANCH) title=(goal_branch.clone())>(goal_branch)</span>
+                        }
+                    </div>
+                    if !plan {
+                        merge_button(ticket: id.clone(), base: ticket.base_branch.clone(), merged: merged)
+                    }
+                </section>
+            } else if kind == "failed" {
+                <section class=(OUTCOME) aria-label="Failed">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        ui::state_icon(state: "failed")
+                        <span class="font-medium">(failed)</span>
+                        if !failed_why.is_empty() {
+                            <span class="min-w-0 text-fg-2 [overflow-wrap:anywhere]">(failed_why)</span>
+                        }
+                    </div>
+                    <div class=(ui::ASK_ACTIONS)>
+                        <button type="button" class=(ui::PRIMARY) data-on:click=(on_retry)>
+                            ui::icon(name: "refresh-cw")
+                            "Try again"
+                        </button>
+                    </div>
+                </section>
+            } else if kind == "held" {
+                <section class=(OUTCOME) aria-label="Held">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        ui::state_icon(state: ui::shown(&ticket.state))
+                        <span class="font-medium">"Held"</span>
+                        <span class="text-fg-2">(why)</span>
+                    </div>
+                    <div class=(ui::ASK_ACTIONS)>
+                        <button type="button" class=(ui::PRIMARY) data-on:click=(on_resume)>
+                            ui::icon(name: "circle-play")
+                            "Resume"
+                        </button>
+                    </div>
+                </section>
+            } else if kind == "cancelled" {
+                <section class=(OUTCOME) aria-label="Cancelled">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        ui::state_icon(state: "cancelled")
+                        <span class="font-medium">"Cancelled"</span>
+                        <span class=(ui::SECONDARY)>"Nothing more runs on it."</span>
+                    </div>
+                </section>
+            }
+        </div>
+    })
+}
+
+/// What the rail shows besides the ticket itself.
+struct Side {
+    model: Option<String>,
+    branch: Option<String>,
+    tries: Option<String>,
+    time: Option<String>,
+    spent: f64,
+    cap: Option<f64>,
+    stages: Vec<Stage>,
+    files: Vec<(String, u64, u64)>,
+}
+
+fn stage_ring(stage: &Stage) -> &'static str {
+    match stage.mark {
+        Mark::Done => "m-0.5 size-3 rounded-full border-[1.5px] border-ok bg-ok",
+        Mark::Failed => "m-0.5 size-3 rounded-full border-[1.5px] border-bad bg-bad",
+        Mark::Now if !stage.note.is_empty() => {
+            "m-0.5 size-3 rounded-full border-[1.5px] border-attn bg-attn shadow-[0_0_0_3px_color-mix(in_srgb,var(--attn)_22%,transparent)]"
+        }
+        Mark::Now => {
+            "m-0.5 size-3 rounded-full border-[1.5px] border-run bg-run shadow-[0_0_0_3px_color-mix(in_srgb,var(--run)_22%,transparent)]"
+        }
+        Mark::Next => "m-0.5 size-3 rounded-full border-[1.5px] border-line-3",
     }
-    if let Some(usd) = quote {
-        facts.push(fact("Quote", format!("~{}", ui::usd(usd))));
-    }
-    if let Some(eta) = estimate.and_then(|e| ui::eta(e.eta_ms)) {
-        facts.push(fact("ETA", eta));
-    }
-    if let Some(name) = ticket.goal.lines().next().filter(|l| !l.is_empty()) {
-        facts.push(("Goal", truncate(name, GOAL_SHOWN), ticket.goal.clone()));
-    }
-    facts
+}
+
+const STAGE: &str = "grid min-h-[30px] grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2.5";
+const RAIL_HEAD: &str = "mb-2 text-[12px] font-medium leading-4 text-fg-3";
+
+/// The facts beside the page: status, who, where, spend and time; the
+/// stages; the changed files.
+#[component]
+async fn rail(ticket: Ticket, side: Side) -> topcoat::Result<impl View> {
+    let Side {
+        model,
+        branch,
+        tries,
+        time,
+        spent,
+        cap,
+        stages,
+        mut files,
+    } = side;
+    let goal = activity::goal_name(&ticket).map(|_| ticket.goal.clone());
+    let more = files.len().saturating_sub(FILES_SHOWN);
+    files.truncate(FILES_SHOWN);
+    Ok(view! {
+        <div id="ticket-rail" class="min-w-0 self-stretch">
+            ui::rail(
+                <dl aria-label="Ticket details">
+                    ui::prop(label: "Status", ui::state_pill(state: ui::shown(&ticket.state)))
+                    ui::prop(label: "Hire",
+                        ui::who(hire: ticket.hire.to_string())
+                        if let Some(model) = model { ui::model_tag(model: model) }
+                    )
+                    if let Some(goal) = goal {
+                        ui::prop(label: "Goal", <a href="/goals" class="min-w-0">ui::goal_chip(goal: goal)</a>)
+                    }
+                    ui::prop(label: "Project", <span class="truncate">(ticket.project.to_string())</span>)
+                    if let Some(branch) = branch {
+                        ui::prop(label: "Branch",
+                            <span class="text-fg-3">ui::icon(name: "git-branch", small: true)</span>
+                            <span class=(format!("truncate {}", ui::MONO)) title=(branch.clone())>(branch)</span>
+                        )
+                    }
+                    if let Some(tries) = tries {
+                        ui::prop(label: "Try", <span class="tabular-nums">(tries)</span>)
+                    }
+                    ui::prop(label: "Spent",
+                        <div class="flex w-full flex-col gap-1.5">
+                            <span class="tabular-nums">
+                                (ui::usd(spent))
+                                if let Some(cap) = cap { <span class=(ui::MUTED)>" of " (ui::limit(cap))</span> }
+                            </span>
+                            if let Some(cap) = cap { ui::meter(value: spent, max: cap) }
+                        </div>
+                    )
+                    if let Some(time) = time {
+                        ui::prop(label: "Time", <span class="tabular-nums">(time)</span>)
+                    }
+                </dl>
+                <div class="h-px bg-line"></div>
+                <section aria-label="Progress">
+                    <h3 class=(RAIL_HEAD)>"Progress"</h3>
+                    <ol class="flex flex-col">
+                        for stage in stages {
+                            <li class=(match stage.mark {
+                                Mark::Now => format!("{STAGE} font-medium text-fg"),
+                                Mark::Done => format!("{STAGE} text-fg-2"),
+                                Mark::Failed => format!("{STAGE} font-medium text-bad-fg"),
+                                Mark::Next => format!("{STAGE} text-fg-3"),
+                            })>
+                                <span class=(stage_ring(&stage))></span>
+                                <span class="truncate">(stage.name)</span>
+                                <span class="text-[12.5px] font-normal text-fg-3">(stage.note)</span>
+                            </li>
+                        }
+                    </ol>
+                </section>
+                if !files.is_empty() {
+                    <div class="h-px bg-line"></div>
+                    <section aria-label="Changes">
+                        <h3 class=(RAIL_HEAD)>"Changes"</h3>
+                        <ul class="flex flex-col gap-1.5">
+                            for (path, added, removed) in files {
+                                <li class="flex items-center gap-2 text-[12.5px]">
+                                    <span class="text-fg-3">ui::icon(name: "file-diff", small: true)</span>
+                                    <span class="min-w-0 truncate font-mono text-[12px] text-fg-2" title=(path.clone())>(path)</span>
+                                    <span class="ml-auto">ui::diff_size(added: added, removed: removed)</span>
+                                </li>
+                            }
+                            if more > 0 {
+                                <li class=(format!("text-[12.5px] {}", ui::MUTED))>"and " (more) " more"</li>
+                            }
+                        </ul>
+                    </section>
+                }
+            )
+        </div>
+    })
+}
+
+/// The top bar's actions: the Markdown export, and a menu with Pause or
+/// Resume and Cancel when they apply.
+#[component]
+async fn actions(ticket: Ticket) -> topcoat::Result<impl View> {
+    let id = ticket.id.to_string();
+    let kind = ticket.state.kind();
+    let can_pause = matches!(kind, "claimed" | "working" | "reviewing");
+    let can_resume = kind == "held";
+    let can_cancel = !matches!(kind, "landed" | "cancelled");
+    let [on_pause, on_resume] = ["pause", "resume"].map(|a| format!("@post('/tickets/{id}/{a}')"));
+    let confirm = format!(
+        "confirm('Cancel {id}? Its run stops and it will not run again.') && @post('/tickets/{id}/cancel')"
+    );
+    Ok(view! {
+        <div id="ticket-actions">
+            ui::top_actions(
+                <a href=(format!("/tickets/{id}/export")) download="" class=(ui::GHOST_SM) aria-label="Export as Markdown">
+                    ui::icon(name: "file-text", small: true)
+                    <span class=(ui::LABEL)>"Export as Markdown"</span>
+                </a>
+                if can_pause || can_resume || can_cancel {
+                    ui::menu(id: "ticket-menu", label: "More actions",
+                        if can_pause {
+                            <button type="button" class=(ui::MENU_ITEM) popovertarget="ticket-menu" popovertargetaction="hide" data-on:click=(on_pause)>
+                                ui::icon(name: "pause")
+                                "Pause"
+                            </button>
+                        }
+                        if can_resume {
+                            <button type="button" class=(ui::MENU_ITEM) popovertarget="ticket-menu" popovertargetaction="hide" data-on:click=(on_resume)>
+                                ui::icon(name: "circle-play")
+                                "Resume"
+                            </button>
+                        }
+                        if can_cancel {
+                            <button type="button" class=(ui::MENU_ITEM_DANGER) popovertarget="ticket-menu" popovertargetaction="hide" data-on:click=(confirm)>
+                                ui::icon(name: "circle-x")
+                                "Cancel ticket"
+                            </button>
+                        }
+                    )
+                }
+            )
+        </div>
+    })
 }
 
 /// The last stretch of a run log, for what the agent is doing now.
@@ -465,382 +1127,7 @@ pub async fn log_tail(data_dir: &Path, id: &str) -> String {
     }
 }
 
-const NOW_SHOWN: usize = 160;
-
-/// What a live ticket is doing right now; `None` for one that isn't running.
-async fn now_text(ticket: &Ticket, data_dir: &Path) -> Option<String> {
-    match ticket.state.kind() {
-        "working" | "claimed" => {
-            let tail = log_tail(data_dir, &ticket.id.to_string()).await;
-            Some(latest_activity(&tail, NOW_SHOWN).unwrap_or_else(|| "Starting up".to_string()))
-        }
-        "checking" => Some("Running the project's checks".to_string()),
-        "reviewing" => Some("Being reviewed".to_string()),
-        _ => None,
-    }
-}
-
-#[component]
-async fn head(ticket: Ticket) -> topcoat::Result<impl View> {
-    let kind = ticket.state.kind();
-    let detail = ui::state_detail(&ticket.state);
-    Ok(view! {
-        <header id="ticket-head" class="mt-3 space-y-3">
-            <div class="flex flex-wrap items-center gap-2">
-                <span class="font-mono text-[12px] text-zinc-500 dark:text-zinc-400">(ticket.id.to_string())</span>
-                ui::state_pill(state: kind)
-                if let Some(detail) = detail {
-                    <span class="text-[12px] text-amber-700 dark:text-amber-400">(detail)</span>
-                }
-            </div>
-            <h1 class=(format!("leading-tight {}", ui::PAGE_TITLE))>(ticket.title)</h1>
-        </header>
-    })
-}
-
-/// The asks waiting on this ticket, right under its title.
-#[component]
-async fn ticket_asks(asks: Vec<AskView>, project: String) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div id="ticket-asks" class="space-y-3 empty:hidden [&:not(:empty)]:mt-3">
-            #[key(ask.id.clone())]
-            for ask in asks {
-                ask_card(ask: ask, title: String::new(), project: project.clone(), compact: false)
-            }
-        </div>
-    })
-}
-
-#[component]
-async fn now_line(now: Option<String>) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div id="ticket-now" class="empty:hidden [&:not(:empty)]:mt-3">
-            if let Some(now) = now {
-                <p class="flex items-baseline gap-2 text-[12px]">
-                    <span class="relative top-px inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"></span>
-                    <span class="shrink-0 font-medium text-zinc-500 dark:text-zinc-400">"Now"</span>
-                    <span class="min-w-0 truncate font-mono text-zinc-700 dark:text-zinc-300" title=(now.clone())>(now)</span>
-                </p>
-            }
-        </div>
-    })
-}
-
-#[component]
-async fn details(
-    ticket: Ticket,
-    spent: f64,
-    estimate: Option<Estimate>,
-    started: Option<u64>,
-) -> topcoat::Result<impl View> {
-    let kind = ticket.state.kind();
-    let id = ticket.id.to_string();
-    let [on_land, on_resume, on_retry, on_cancel] =
-        ["land", "resume", "retry", "cancel"].map(|a| format!("@post('/tickets/{id}/{a}')"));
-    let facts = facts(&ticket, spent, estimate.as_ref(), started, ui::now_ms());
-    // A plan lands without a branch of its own to merge.
-    let mergeable = kind == "landed" && ticket.kind != TicketKind::Plan;
-    let send_back = format!("@post('/tickets/{id}/changes', {{contentType: 'form'}})");
-    Ok(view! {
-        <div id="ticket-details" class="mt-3 space-y-3">
-            <div class="flex flex-wrap gap-1.5">
-                for (label, value, title) in facts {
-                    chip(label: label, value: value, title: title)
-                }
-            </div>
-            if let Some(feedback) = ticket.feedback {
-                <p class="max-w-3xl whitespace-pre-wrap rounded-md bg-zinc-100 px-2 py-1 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    "Feedback: " (feedback)
-                </p>
-            }
-            <div class="flex flex-wrap items-start gap-2">
-                if kind == "ready" {
-                    <button class=(ui::PRIMARY) data-on:click=(on_land)>"Land"</button>
-                }
-                if kind == "held" {
-                    <button class=(ui::PRIMARY) data-on:click=(on_resume)>"Resume"</button>
-                }
-                if kind == "failed" {
-                    <button class=(ui::PRIMARY) data-on:click=(on_retry)>"Retry"</button>
-                }
-                if !matches!(kind, "landed" | "cancelled") {
-                    <button class=(ui::QUIET) data-on:click=(on_cancel)>"Cancel"</button>
-                }
-            </div>
-            if mergeable {
-                merge_button(ticket: id.clone(), base: ticket.base_branch.clone())
-            }
-            if kind == "ready" {
-                <form data-on:submit=(send_back) class="flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-start">
-                    <textarea name="feedback" required="" rows="2" placeholder="What should change?" class=(ui::INPUT)></textarea>
-                    <button type="submit" class=(ui::BUTTON)>"Request changes"</button>
-                </form>
-            }
-        </div>
-    })
-}
-
-/// A labelled fact: the label muted, the value beside it, `title` on hover.
-#[component]
-async fn chip(label: &'static str, value: String, title: String) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <span title=(title) class="inline-flex max-w-full items-baseline gap-1.5 rounded-md bg-zinc-100 px-2 py-1 text-[12px] ring-1 ring-inset ring-zinc-300 dark:bg-zinc-800 dark:ring-zinc-600">
-            <span class=(format!("shrink-0 {}", ui::MUTED))>(label)</span>
-            <span class="min-w-0 truncate font-medium">(value)</span>
-        </span>
-    })
-}
-
-/// One rendered line of the run log.
-#[derive(Clone, Debug, PartialEq)]
-struct Line {
-    kind: LineKind,
-    text: String,
-    /// A tool call's tool, and its raw input for a tooltip.
-    tool: String,
-    raw: String,
-}
-
-impl Line {
-    fn new(kind: LineKind, text: String) -> Line {
-        Line {
-            kind,
-            text,
-            tool: String::new(),
-            raw: String::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum LineKind {
-    Text,
-    Tool,
-    Ask,
-    Error,
-    Note,
-    End,
-}
-
-const TOOL_INPUT_SHOWN: usize = 300;
-const TOOL_ARG_SHOWN: usize = 200;
-
-/// The same lines `studio log` prints, from the run log's JSON lines.
-fn log_lines(text: &str) -> Vec<Line> {
-    let mut lines = Vec::new();
-    for raw in text.lines() {
-        let Ok(entry) = serde_json::from_str::<Value>(raw) else {
-            continue;
-        };
-        if let Some(note) = entry["note"].as_str() {
-            // A rule answered the ask the line before: show only the answer.
-            if note.starts_with("allowed ")
-                && lines.last().is_some_and(|l: &Line| l.kind == LineKind::Ask)
-            {
-                lines.pop();
-            }
-            lines.push(Line::new(LineKind::Note, note.to_string()));
-            continue;
-        }
-        let e = &entry["event"];
-        let str_of = |key: &str| e[key].as_str().unwrap_or_default().to_string();
-        let line = match e["type"].as_str().unwrap_or_default() {
-            "text" => Line::new(LineKind::Text, str_of("text")),
-            "tool_call" => {
-                let name = str_of("name");
-                let arg = truncate(&tool_arg(&name, &e["input"]), TOOL_ARG_SHOWN);
-                Line {
-                    tool: name,
-                    raw: truncate(&e["input"].to_string(), TOOL_INPUT_SHOWN),
-                    ..Line::new(LineKind::Tool, arg)
-                }
-            }
-            "tool_result" if e["is_error"] == true => Line::new(LineKind::Error, str_of("output")),
-            "permission" => Line::new(LineKind::Ask, format!("asked to use {}", str_of("tool"))),
-            "question" => Line::new(LineKind::Ask, "asked a question".to_string()),
-            "finished" => {
-                let outcome = e["outcome"]["outcome"].as_str().unwrap_or("unknown");
-                let cost = e["cost"]["usd"].as_f64().unwrap_or(0.0);
-                Line::new(
-                    LineKind::End,
-                    format!("finished: {outcome} · {}", ui::usd(cost)),
-                )
-            }
-            _ => continue,
-        };
-        lines.push(line);
-    }
-    lines
-}
-
-/// Consecutive calls of one tool, with the policy rules that allowed them.
-#[derive(Clone, Debug, PartialEq)]
-struct Group {
-    tool: String,
-    calls: Vec<Line>,
-    rules: Vec<String>,
-}
-
-/// What the run log shows: a line, a group of tool calls, or rule lines that
-/// belong to no call.
-#[derive(Clone, Debug, PartialEq)]
-enum Entry {
-    Line(Line),
-    Group(Group),
-    Rules(Vec<String>),
-}
-
-/// The tool an "allowed ..." policy line is about.
-fn ruled_tool(line: &Line) -> Option<&str> {
-    if line.kind != LineKind::Note {
-        return None;
-    }
-    line.text.strip_prefix("allowed ")?.split(':').next()
-}
-
-/// Folds runs of the same tool into one entry. The log writes a rule line
-/// after its call, so it joins the nearest group of that tool; a rule with no
-/// such group becomes one entry with a count.
-fn group_lines(lines: Vec<Line>) -> Vec<Entry> {
-    let mut entries: Vec<Entry> = Vec::new();
-    for line in lines {
-        if let Some(tool) = ruled_tool(&line).map(str::to_string) {
-            let group = entries
-                .iter_mut()
-                .rev()
-                .take_while(|e| !matches!(e, Entry::Line(_)))
-                .find_map(|e| match e {
-                    Entry::Group(group) if group.tool == tool => Some(group),
-                    _ => None,
-                });
-            if let Some(group) = group {
-                group.rules.push(line.text);
-            } else if let Some(Entry::Rules(rules)) = entries.last_mut() {
-                rules.push(line.text);
-            } else {
-                entries.push(Entry::Rules(vec![line.text]));
-            }
-            continue;
-        }
-        if line.kind != LineKind::Tool {
-            entries.push(Entry::Line(line));
-            continue;
-        }
-        match entries.last_mut() {
-            Some(Entry::Group(group)) if group.tool == line.tool => group.calls.push(line),
-            _ => entries.push(Entry::Group(Group {
-                tool: line.tool.clone(),
-                calls: vec![line],
-                rules: Vec::new(),
-            })),
-        }
-    }
-    entries
-}
-
-/// Entries only grow at the end, so an entry's place is its id: that and
-/// `data-preserve-attr` keep a group open when the stream re-sends the log.
-#[component]
-async fn log(entries: Vec<Entry>) -> topcoat::Result<impl View> {
-    Ok(view! {
-        if entries.is_empty() {
-            <p class=(ui::MUTED)>"Nothing yet."</p>
-        }
-        for (index, entry) in entries.into_iter().enumerate() {
-            match entry {
-                Entry::Line(line) => log_line(line: line),
-                Entry::Group(group) => tool_group(group: group, id: format!("log-entry-{index}")),
-                Entry::Rules(rules) => rule_lines(rules: rules, id: format!("log-entry-{index}")),
-            }
-        }
-    })
-}
-
-#[component]
-async fn log_line(line: Line) -> topcoat::Result<impl View> {
-    Ok(view! {
-        match line.kind {
-            LineKind::Text => <p class="my-2 max-w-prose whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100">(line.text)</p>,
-            LineKind::Tool => tool_row(line: line),
-            LineKind::Ask => <p class="text-[12px] text-amber-700 dark:text-amber-400">"? " (line.text)</p>,
-            LineKind::Error => <p class="whitespace-pre-wrap font-mono text-[12px] text-rose-700 dark:text-rose-400">"! " (line.text)</p>,
-            LineKind::Note => <p class=(format!("whitespace-pre-wrap text-[12px] {}", ui::MUTED))>"· " (line.text)</p>,
-            LineKind::End => <p class="my-2 border-t border-zinc-200 pt-2 text-[12px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">"= " (line.text)</p>,
-        }
-    })
-}
-
-/// One tool call: the tool, then its argument, which scrolls if it is long.
-#[component]
-async fn tool_row(line: Line) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <p class="flex items-baseline gap-2 py-px" title=(line.raw)>
-            <span class="shrink-0 rounded bg-sky-50 px-1.5 py-px text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300">(line.tool)</span>
-            <span class=(format!("min-w-0 overflow-x-auto whitespace-nowrap font-mono text-[12px] {}", ui::MUTED))>(line.text)</span>
-        </p>
-    })
-}
-
-/// "Read ×6" over the newest call; it opens to every call and rule line. A
-/// lone call with no rule is just its row.
-#[component]
-async fn tool_group(group: Group, id: String) -> topcoat::Result<impl View> {
-    let Group { tool, calls, rules } = group;
-    let plain = calls.len() == 1 && rules.is_empty();
-    let last = calls.last().map(|c| c.text.clone()).unwrap_or_default();
-    let mut label = format!("{tool} ×{}", calls.len());
-    if !rules.is_empty() {
-        label.push_str(&format!(" · {} allowed", rules.len()));
-    }
-    let first = calls.first().cloned();
-    Ok(view! {
-        if plain {
-            if let Some(call) = first {
-                tool_row(line: call)
-            }
-        } else {
-            <details id=(id) data-preserve-attr="open" class="py-px">
-                <summary class="flex cursor-pointer select-none items-baseline gap-2 marker:content-none">
-                    <span class="shrink-0 rounded bg-sky-50 px-1.5 py-px text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300">(label)</span>
-                    <span class=(format!("min-w-0 truncate font-mono text-[12px] {}", ui::MUTED))>(last)</span>
-                </summary>
-                <div class="ml-2 mt-1 space-y-px border-l border-zinc-300 pl-3 dark:border-zinc-700">
-                    for rule in rules {
-                        <p class=(format!("overflow-x-auto whitespace-nowrap font-mono text-[11px] {}", ui::MUTED))>"· " (rule)</p>
-                    }
-                    for call in calls {
-                        tool_row(line: call)
-                    }
-                </div>
-            </details>
-        }
-    })
-}
-
-/// Rule lines that follow no tool call: one quiet line, or a count that opens
-/// to them.
-#[component]
-async fn rule_lines(rules: Vec<String>, id: String) -> topcoat::Result<impl View> {
-    let label = format!("· {} rules applied", rules.len());
-    Ok(view! {
-        if rules.len() == 1 {
-            for rule in rules {
-                <p class=(format!("text-[12px] {}", ui::MUTED))>"· " (rule)</p>
-            }
-        } else {
-            <details id=(id) data-preserve-attr="open" class="text-[12px]">
-                <summary class=(format!("cursor-pointer select-none {}", ui::MUTED))>(label)</summary>
-                <div class="ml-2 mt-1 border-l border-zinc-300 pl-3 dark:border-zinc-700">
-                    for rule in rules {
-                        <p class=(format!("overflow-x-auto whitespace-nowrap font-mono text-[11px] {}", ui::MUTED))>(rule)</p>
-                    }
-                </div>
-            </details>
-        }
-    })
-}
-
-fn log_path(data_dir: &Path, id: &str) -> PathBuf {
+pub fn log_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("runs").join(format!("{id}.jsonl"))
 }
 
@@ -867,211 +1154,170 @@ async fn read_from(path: &Path, pos: u64) -> (String, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use studio_core::event::Event;
 
-    #[test]
-    fn log_lines_follow_the_cli() {
-        let text = [
-            r#"{"event":{"type":"started","session":"s"}}"#,
-            r#"{"event":{"type":"tool_call","name":"Bash","input":{"command":"ls"}}}"#,
-            r#"{"event":{"type":"permission","tool":"Bash"}}"#,
-            r#"{"note":"`cargo test` failed"}"#,
-            "not json",
-            r#"{"event":{"type":"finished","outcome":{"outcome":"success"},"cost":{"usd":0.0019}}}"#,
-        ]
-        .join("\n");
-        let lines = log_lines(&text);
-        let kinds: Vec<LineKind> = lines.iter().map(|l| l.kind).collect();
-        assert_eq!(
-            kinds,
-            [LineKind::Tool, LineKind::Ask, LineKind::Note, LineKind::End]
-        );
-        assert_eq!(lines[0].tool, "Bash");
-        assert_eq!(lines[0].text, "ls");
-        assert_eq!(lines[0].raw, r#"{"command":"ls"}"#);
-        assert_eq!(lines[3].text, "finished: success · $0.0019");
+    fn ticket(state: Value, extra: Value) -> Ticket {
+        let mut base = serde_json::json!({
+            "id": "GAME-2", "project": "game", "title": "t", "goal": "Enemy waves",
+            "hire": "dev", "state": state, "attempts": 0, "base_branch": "main",
+            "created_at": 0,
+        });
+        if let (Some(base), Some(extra)) = (base.as_object_mut(), extra.as_object()) {
+            base.extend(extra.clone());
+        }
+        serde_json::from_value(base).unwrap()
     }
 
-    #[test]
-    fn long_tool_input_is_cut_on_a_char_boundary() {
-        let input = "é".repeat(400);
-        let raw =
-            serde_json::json!({"event": {"type": "tool_call", "name": "Write", "input": input}});
-        let lines = log_lines(&raw.to_string());
-        assert!(lines[0].text.ends_with('…'));
-    }
-
-    fn call(tool: &str, arg: &str) -> String {
-        let input = if tool == "Bash" {
-            serde_json::json!({"command": arg})
-        } else {
-            serde_json::json!({"file_path": arg})
-        };
-        serde_json::json!({"event": {"type": "tool_call", "name": tool, "input": input}})
-            .to_string()
-    }
-
-    /// A call that a rule let through, in the order the worker logs them.
-    fn allowed(tool: &str, arg: &str) -> Vec<String> {
-        vec![
-            call(tool, arg),
-            format!(r#"{{"event":{{"type":"permission","tool":"{tool}"}}}}"#),
-            format!(r#"{{"note":"allowed {tool}: inside the worktree"}}"#),
-        ]
-    }
-
-    fn shape(text: &str) -> Vec<String> {
-        group_lines(log_lines(text))
+    fn marks(stages: &[Stage]) -> Vec<String> {
+        stages
             .iter()
-            .map(|e| match e {
-                Entry::Line(l) => format!("{:?}", l.kind),
-                Entry::Group(g) => format!("{} x{} rules {}", g.tool, g.calls.len(), g.rules.len()),
-                Entry::Rules(r) => format!("rules {}", r.len()),
+            .map(|s| {
+                format!("{} {:?} {}", s.name, s.mark, s.note)
+                    .trim()
+                    .to_string()
             })
             .collect()
     }
 
+    fn notes(texts: &[&str]) -> Vec<(u64, Logged)> {
+        texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (10 + i as u64, Logged::Note(t.to_string())))
+            .collect()
+    }
+
     #[test]
-    fn runs_of_one_tool_fold_into_groups_with_their_rules() {
-        let text = [
-            vec![
-                r#"{"event":{"type":"text","text":"Looking around"}}"#.to_string(),
-                call("Read", "a.rs"),
-                call("Read", "b.rs"),
-                call("Read", "c.rs"),
-            ],
-            allowed("Edit", "a.rs"),
-            allowed("Edit", "b.rs"),
-            allowed("Bash", "cargo test"),
-            vec![
-                r#"{"event":{"type":"text","text":"Done"}}"#.to_string(),
-                r#"{"note":"checks passed"}"#.to_string(),
-            ],
-        ]
-        .concat()
-        .join("\n");
+    fn stages_follow_the_ticket() {
+        let none = serde_json::json!({});
+        let working = ticket(serde_json::json!("working"), none.clone());
         assert_eq!(
-            shape(&text),
+            marks(&stages(&working, &[], 0)),
             [
-                "Text",
-                "Read x3 rules 0",
-                "Edit x2 rules 2",
-                "Bash x1 rules 1",
-                "Text",
-                "Note"
+                "Work Now",
+                "Checks Next",
+                "Review Next",
+                "Land on Enemy waves Next"
             ]
         );
+        // A gate that ran on an earlier try still shows, and the one
+        // running now is current.
+        let log = notes(&[
+            "gate art by critic (opus)",
+            "gate art failed: too wide",
+            "review by reviewer (sonnet)",
+            "review passed",
+            "gate art: measured 2 file(s)",
+            "gate art by critic (opus)",
+        ]);
+        let reviewing = ticket(serde_json::json!("reviewing"), none.clone());
+        assert_eq!(
+            marks(&stages(&reviewing, &log, 12)),
+            [
+                "Work Done",
+                "Checks Done",
+                "Review Done",
+                "Art gate Now",
+                "Land on Enemy waves Next"
+            ]
+        );
+        let asking = ticket(
+            serde_json::json!({"asking": {"ask": "a1"}}),
+            serde_json::json!({"held_from": "reviewing"}),
+        );
+        assert_eq!(
+            marks(&stages(&asking, &log[..3], 0))[2],
+            "Review Now waiting for you"
+        );
+        let ready = ticket(serde_json::json!("ready"), none.clone());
+        assert_eq!(
+            marks(&stages(&ready, &[], 0))[3],
+            "Land on Enemy waves Now waiting for you"
+        );
+        let failed = ticket(
+            serde_json::json!({"failed": {"class": "checks", "detail": "boom"}}),
+            none.clone(),
+        );
+        assert_eq!(
+            marks(&stages(&failed, &[], 0))[..2],
+            ["Work Done", "Checks Failed failed"]
+        );
+        let held = ticket(
+            serde_json::json!({"held": {"reason": "paused"}}),
+            serde_json::json!({"held_from": "checking"}),
+        );
+        assert_eq!(marks(&stages(&held, &[], 0))[1], "Checks Now paused");
+        let landed = ticket(serde_json::json!("landed"), none.clone());
+        assert!(stages(&landed, &[], 0).iter().all(|s| s.mark == Mark::Done));
+        let plan = ticket(
+            serde_json::json!("working"),
+            serde_json::json!({"kind": "plan"}),
+        );
+        assert_eq!(marks(&stages(&plan, &[], 0)), ["Work Now", "Done Next"]);
+    }
+
+    fn stamped(at_ms: u64, event: Event) -> client::Stamped {
+        client::Stamped { at_ms, event }
     }
 
     #[test]
-    fn a_rule_stays_with_its_own_tool() {
-        // The next tool's group gets nothing from the call before it.
-        let text = [allowed("Edit", "a.rs"), vec![call("Read", "b.rs")]]
-            .concat()
-            .join("\n");
-        assert_eq!(shape(&text), ["Edit x1 rules 1", "Read x1 rules 0"]);
-        // Calls made together, then their rules together.
-        let text = [
-            call("Edit", "a.rs"),
-            call("Bash", "ls"),
-            r#"{"note":"allowed Edit: inside the worktree"}"#.to_string(),
-            r#"{"note":"allowed Bash: ls"}"#.to_string(),
-        ]
-        .join("\n");
-        assert_eq!(shape(&text), ["Edit x1 rules 1", "Bash x1 rules 1"]);
-        // Rules with no call of their tool.
-        let text = [
-            r#"{"note":"allowed Edit: inside the worktree"}"#,
-            r#"{"note":"allowed Bash: ls"}"#,
-        ]
-        .join("\n");
-        assert_eq!(shape(&text), ["rules 2"]);
+    fn the_rail_counts_tries_and_time() {
+        let never = ticket(serde_json::json!("queued"), serde_json::json!({}));
+        assert_eq!(tries(&never, &[]), None);
+        assert_eq!(branch(&never, &[]), None);
+        let events = [
+            stamped(0, Event::Claimed),
+            stamped(240_000, Event::ReviewPassed),
+            stamped(3_600_000, Event::Landed),
+        ];
+        let landed = ticket(serde_json::json!("landed"), serde_json::json!({}));
+        assert_eq!(tries(&landed, &events).as_deref(), Some("1 of 3"));
+        // The wait for the owner to land it isn't work.
+        assert_eq!(
+            time_taken(&landed, &events, 9_000_000).as_deref(),
+            Some("4m")
+        );
+        assert_eq!(
+            branch(&landed, &events).as_deref(),
+            Some("studio/goal/enemy-waves")
+        );
+        // The counter stops one short on the last try.
+        let failed = ticket(
+            serde_json::json!({"failed": {"class": "checks", "detail": ""}}),
+            serde_json::json!({"attempts": 2}),
+        );
+        assert_eq!(tries(&failed, &events).as_deref(), Some("3 of 3"));
+        let working = ticket(serde_json::json!("working"), serde_json::json!({}));
+        let events = [stamped(60_000, Event::Claimed)];
+        assert_eq!(
+            time_taken(&working, &events, 180_000).as_deref(),
+            Some("2m")
+        );
+        assert_eq!(branch(&working, &events).as_deref(), Some("studio/game-2"));
     }
 
     #[tokio::test]
-    async fn a_group_keeps_its_id_and_stays_open_as_the_log_grows() {
+    async fn detail_and_feedback_render_as_markdown() {
+        let t = ticket(
+            serde_json::json!("queued"),
+            serde_json::json!({
+                "detail": "Waves come from `rules.rs`",
+                "feedback": "**Quit** needs a confirm\nkeep `Esc`",
+            }),
+        );
         let cx = Cx::default();
-        let two = [call("Read", "a.rs"), call("Read", "b.rs")].join("\n");
-        let three = [two.clone(), call("Read", "c.rs")].join("\n");
-        for text in [two, three] {
-            let entries = group_lines(log_lines(&text));
-            let html = ui::html(&cx, view! { cx => log(entries: entries) })
-                .await
-                .unwrap();
-            assert!(html.contains(r#"id="log-entry-0""#), "{html}");
-            assert!(html.contains(r#"data-preserve-attr="open""#), "{html}");
-        }
-    }
-
-    #[test]
-    fn a_run_of_calls_stays_one_group_when_it_grows() {
-        let first = group_lines(log_lines(
-            &[call("Read", "a.rs"), call("Read", "b.rs")].join("\n"),
-        ));
-        let all = group_lines(log_lines(
-            &[
-                call("Read", "a.rs"),
-                call("Read", "b.rs"),
-                call("Read", "c.rs"),
-            ]
-            .join("\n"),
-        ));
-        assert!(matches!(&first[..], [Entry::Group(g)] if g.calls.len() == 2));
-        assert!(matches!(&all[..], [Entry::Group(g)] if g.calls.len() == 3));
-    }
-
-    #[test]
-    fn facts_show_the_estimate_while_a_run_is_live() {
-        let mut ticket: Ticket = serde_json::from_value(serde_json::json!({
-            "id": "GAME-2", "project": "game", "title": "t", "goal": "Ship the menus\nand more",
-            "hire": "dev", "state": "working", "attempts": 1, "base_branch": "main",
-            "created_at": 0,
-        }))
+        let html = ui::html(
+            &cx,
+            view! { cx => head(ticket: t, filer: Filer::Hire("producer".into())) },
+        )
+        .await
         .unwrap();
-        let estimate = Estimate {
-            ticket: "GAME-2".into(),
-            quote_usd: Some(0.42),
-            eta_ms: None,
-        };
-        let shown = |facts: Vec<(&str, String, String)>| -> Vec<(String, String)> {
-            facts.into_iter().map(|(l, v, _)| (l.into(), v)).collect()
-        };
-        let live = shown(facts(&ticket, 0.0, Some(&estimate), Some(1_000), 301_000));
-        assert!(
-            live.contains(&("Est. spend".into(), "~$0.42".into())),
-            "{live:?}"
-        );
-        assert!(live.contains(&("Elapsed".into(), "5m".into())), "{live:?}");
-        assert!(
-            live.contains(&("Goal".into(), "Ship the menus".into())),
-            "{live:?}"
-        );
-        assert!(!live.iter().any(|(l, _)| l == "Quote"), "{live:?}");
-        // A run paused on an ask is still the current run.
-        assert!(is_live("asking"));
-        ticket.state = studio_core::ticket::TicketState::Queued;
-        let queued = shown(facts(&ticket, 0.0, Some(&estimate), None, 0));
-        assert!(
-            queued.contains(&("Spent".into(), "$0.00".into())),
-            "{queued:?}"
-        );
-        assert!(
-            queued.contains(&("Quote".into(), "~$0.42".into())),
-            "{queued:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn agent_text_is_escaped() {
-        let entries = group_lines(vec![Line::new(
-            LineKind::Text,
-            "<script>alert(1)</script>".into(),
-        )]);
-        let cx = Cx::default();
-        let html = ui::html(&cx, view! { cx => log(entries: entries) })
-            .await
-            .unwrap();
-        assert!(html.contains("&lt;script&gt;"));
-        assert!(!html.contains("<script>"));
+        assert!(html.contains("<code>rules.rs</code>"), "{html}");
+        assert!(html.contains("<strong>Quit</strong>"), "{html}");
+        assert!(html.contains("<br />"), "{html}");
+        assert!(html.contains(">producer"), "{html}");
+        assert!(html.contains("filed this"), "{html}");
+        assert!(html.contains(r#"href="/goals""#), "{html}");
     }
 
     #[tokio::test]

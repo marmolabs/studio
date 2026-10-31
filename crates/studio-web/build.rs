@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (os, arch) => return Err(format!("no pinned Tailwind CLI for {os}/{arch}").into()),
     };
     topcoat::tailwind::BuildConfig::new()
-        .cwd("src")
+        .input("src/app.css")
         .version_checksum(TAILWIND, checksum)
         .render()?;
     Ok(())

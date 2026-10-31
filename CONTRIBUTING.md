@@ -34,8 +34,9 @@ a pull request.
 cargo run -q -p studio-web --example gallery -- /tmp/gallery
 ```
 
-It needs a Chromium browser: `$STUDIO_BROWSER` if set, else Chrome, Brave or
-Chromium. Without one it prints a line and exits 0. Run it after a change to
+It uses a Chromium browser: `$STUDIO_BROWSER` if set, else Chrome, Brave or
+Chromium. When none can run, it falls back to Quick Look on macOS; with
+neither it prints a line and exits 0. Run it after a change to
 the web UI and look at the images.
 
 ## Lint rules
