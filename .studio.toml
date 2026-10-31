@@ -1,0 +1,32 @@
+# Commands that must pass before a change can land. Each runs in the
+# ticket's worktree; a failure goes back to the agent with its output.
+verify = [
+  ["cargo", "fmt", "--all", "--check"],
+  ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+  ["cargo", "test", "--workspace"],
+]
+
+# Reviewed work lands on its goal branch by itself; merging into
+# foundation stays with the owner.
+auto_land = true
+
+# Paths agents may not change without asking you.
+protected = [
+  ".studio.toml",
+  ".github/**",
+  "LICENSE",
+  "install.sh",
+  "rust-toolchain.toml",
+]
+
+# Web UI changes are screenshotted with the page gallery, and the designer
+# judges the pictures before review.
+capture = ["cargo", "run", "-q", "-p", "studio-web", "--example", "gallery", "--", "{out}"]
+capture_paths = ["crates/studio-web/**"]
+
+[[gates]]
+name = "design"
+paths = ["crates/studio-web/**"]
+hire = "designer"
+prompt = "Judge the screenshots against the ticket and the bar in your instructions."
+rounds = 2

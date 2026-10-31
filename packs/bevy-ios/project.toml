@@ -1,0 +1,27 @@
+# Template for a Bevy iOS game's .studio.toml. Adjust paths to the repo's layout.
+verify = [
+  ["cargo", "fmt", "--check"],
+  ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+  ["cargo", "test", "--locked"],
+]
+
+# Plays the game with scripted input and writes screenshots into {out}.
+capture = ["cargo", "run", "--release", "--", "--capture", "{out}"]
+# Only changes to these files need a new capture.
+capture_paths = ["src/**", "assets/**"]
+
+# Art changes go to the art critic before the owner sees them.
+[[gates]]
+name = "art"
+paths = ["assets/**/*.png", "src/**/sprite*"]
+hire = "art-critic"
+prompt = "Judge the new or changed art against the screenshots."
+# Optional: run a lint on each changed file and give its output to the critic.
+# measure = ["your-pixel-lint", "{file}"]
+
+# Store copy is read by the reviewer; the store hire writes it.
+[[gates]]
+name = "store-copy"
+paths = ["**/store/**/*.md", "**/fastlane/**/*.md"]
+hire = "reviewer"
+prompt = "Check the copy is accurate, within store limits and does not rename the app."

@@ -1,0 +1,3 @@
+name = "bevy-ios"
+description = "Hires, rules and skills for a Bevy game that ships on iOS."
+version = "0.1.0"

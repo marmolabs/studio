@@ -1,0 +1,36 @@
+[package]
+name = "studio-web"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap = { workspace = true }
+futures-util = "0.3"
+getrandom = "0.3"
+http = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+studio-config = { path = "../studio-config" }
+studio-git = { path = "../studio-git" }
+studio-core = { path = "../studio-core" }
+studiod = { path = "../studiod" }
+subtle = "2"
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "time"] }
+topcoat = { version = "=0.10.0", features = ["datastar", "tailwind"] }
+url = "2"
+
+[build-dependencies]
+topcoat = { version = "=0.10.0", default-features = false, features = ["tailwind"] }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["net", "process"] }
+
+[lints]
+workspace = true
