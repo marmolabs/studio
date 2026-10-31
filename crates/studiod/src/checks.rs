@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// A capture often builds the project first, so it gets as long as a check.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MEASURE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const OUTPUT_LIMIT: usize = 4000;
 const MEASURE_LIMIT: usize = 2000;
@@ -68,7 +69,7 @@ async fn exec(dir: &Path, command: &[String], timeout: Duration) -> Result<(), S
 }
 
 /// Runs the command to the end. `None` for an empty command; the error says
-/// "timed out" or "could not start: ...".
+/// "timed out after N minutes" or "could not start: ...".
 async fn output(
     dir: &Path,
     command: &[String],
@@ -84,7 +85,10 @@ async fn output(
         .kill_on_drop(true)
         .output();
     match tokio::time::timeout(timeout, child).await {
-        Err(_) => Err("timed out".to_string()),
+        Err(_) => Err(format!(
+            "timed out after {} minutes",
+            timeout.as_secs() / 60
+        )),
         Ok(Err(err)) => Err(format!("could not start: {err}")),
         Ok(Ok(out)) => Ok(Some(out)),
     }

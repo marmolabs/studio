@@ -1374,8 +1374,8 @@ impl Studio {
         let ticket = self.ticket(id)?;
         let repo = Repo::open(&self.project(&ticket.project)?.path)?;
         let files = match worker::find_worktree(&repo, id)? {
-            Some(worktree) => crate::evidence::list(&worktree.path),
-            None => Vec::new(),
+            Some(worktree) => crate::evidence::all(&worktree.path),
+            None => crate::evidence::list_kept(&self.paths.data_dir, &id.to_string()),
         };
         Ok(Response::ok(files))
     }
@@ -1840,7 +1840,18 @@ impl Studio {
         match repo.land(&worktree, &branch)? {
             LandOutcome::Merged { sha } => {
                 let ticket = self.append(id, Event::Landed)?;
-                let _ = repo.remove_worktree(&worktree, false);
+                // The worktree goes, so its evidence moves to the data folder;
+                // if that fails, the worktree stays for `studio gc`. Anything
+                // else left in it came from checks after the last commit.
+                let log = crate::runlog::RunLog::new(&self.paths.data_dir, &id.to_string());
+                match crate::evidence::keep(&worktree.path, &self.paths.data_dir, &id.to_string()) {
+                    Ok(_) => {
+                        let _ = repo.remove_worktree(&worktree, true);
+                    }
+                    Err(err) => log.note(&format!(
+                        "kept the worktree: its evidence couldn't be copied: {err}"
+                    )),
+                }
                 Ok(Landing::Landed {
                     ticket: Box::new(ticket),
                     branch,

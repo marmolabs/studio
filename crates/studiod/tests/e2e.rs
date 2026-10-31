@@ -2171,18 +2171,30 @@ async fn a_failing_gate_sends_the_work_back_until_it_passes() {
             .unwrap()
             .starts_with("art gate:")
     );
-    assert_eq!(
-        ok(
-            &studio,
-            Request::Evidence {
-                ticket: "GAME-1".into()
-            }
-        )
-        .await
+    // Both attempts' screenshots, and the image the gate wrote for each:
+    // the ticket page shows the pairs apart from the screenshots.
+    let evidence = ok(
+        &studio,
+        Request::Evidence {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    let mut names: Vec<String> = evidence
         .as_array()
         .unwrap()
-        .len(),
-        2
+        .iter()
+        .map(|f| format!("{}/{}", f["attempt"], f["name"].as_str().unwrap()))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "0/after-assets-hero-png.png",
+            "0/title.png",
+            "1/after-assets-hero-png.png",
+            "1/title.png"
+        ]
     );
 }
 
@@ -3088,4 +3100,63 @@ async fn a_ticket_held_for_quota_tries_again_once_the_limit_resets() {
     an_ask(&studio).await;
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn evidence_and_image_pairs_outlive_the_worktree() {
+    let setup = setup("");
+    write_project(
+        &setup,
+        &project_with_art(&format!("{CAPTURE}\ncapture_paths = [\"assets/**\"]")),
+    );
+    let studio = studio(&setup, FakeRuntime::new(vec![finished(0.01, true, false)]));
+    ok(&studio, create("Art")).await;
+    studio.spawn_scheduler();
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    // What a gate leaves for its critic: the shipped and the new image.
+    let worktree = setup.repo.join(".studio/worktrees/game-1");
+    for name in ["before-hero-png.png", "after-hero-png.png"] {
+        fs::write(worktree.join(".studio-evidence/0").join(name), name).unwrap();
+    }
+    let evidence = async || {
+        let files = ok(
+            &studio,
+            Request::Evidence {
+                ticket: "GAME-1".into(),
+            },
+        )
+        .await;
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let path = f["path"].as_str().unwrap().to_string();
+                (f["name"].as_str().unwrap().to_string(), path)
+            })
+            .collect::<Vec<_>>()
+    };
+    let names =
+        |files: &[(String, String)]| files.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+    let before = evidence().await;
+    assert_eq!(
+        names(&before),
+        ["after-hero-png.png", "before-hero-png.png", "title.png"]
+    );
+
+    ok(
+        &studio,
+        Request::Land {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    assert!(!worktree.exists(), "{}", run_log(&setup));
+    let after = evidence().await;
+    assert_eq!(names(&after), names(&before));
+    let kept = setup.paths.data_dir.join("evidence/GAME-1/0");
+    for (name, path) in &after {
+        assert_eq!(Path::new(path), kept.join(name));
+        assert!(Path::new(path).is_file());
+    }
 }

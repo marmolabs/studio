@@ -121,10 +121,10 @@ This file sits in a project's root. Every field is optional.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `verify` | `[]` | Commands that must pass after each attempt, each an array: `["cargo", "test"]`. Agents may also run them (program and subcommand, like `cargo test`) without asking. |
+| `verify` | `[]` | Commands that must pass after each attempt, each an array: `["cargo", "test"]`. Agents may also run them (program and subcommand, like `cargo test`) without asking. Each gets 30 minutes. |
 | `protected` | `[]` | Path globs agents may not change without asking you. Same as an ask-level `protect` rule for this project. |
 | `integration_branch` | none | Branch for this repo. |
-| `capture` | `[]` | Command that runs the project and writes screenshots into `{out}`. |
+| `capture` | `[]` | Command that runs the project and writes screenshots into `{out}`. It gets 30 minutes, building included. |
 | `capture_paths` | `[]` | Changed-file globs that call for a capture. Empty means any change. |
 | `gates` | `[]` | Critic gates, below. |
 | `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |

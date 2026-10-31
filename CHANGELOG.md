@@ -16,7 +16,9 @@ budget limits low.
   (changed images beside their shipped versions, plus a `measure` command's
   output), and a reviewer on a different model reads the diff. Work that fails
   goes back to the agent, up to three tries, and can move to a stronger model.
-  A project's `capture` command adds screenshots to the ticket.
+  A project's `capture` command adds screenshots to the ticket, kept after it
+  lands. Checks and captures get 30 minutes each, and agents wait for long
+  builds rather than leave them running in the background.
 - Ready work lands on its goal branch, by itself with `auto_land`, and
   `studio merge` brings a finished goal into your branch. The studio commits
   as you and never pushes.

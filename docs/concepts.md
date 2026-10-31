@@ -149,7 +149,9 @@ appear in the "Images · shipped vs new" section, not among the screenshots.
 
 If a project sets `capture`, the studio runs that command after checks pass.
 It writes screenshots or clips into a per-attempt folder in the worktree.
-Critics see the images, and you see them on the ticket. Evidence files are
+Critics see the images, and you see them on the ticket. When the ticket
+lands and its worktree goes, its evidence is kept in the data folder
+(`evidence/<ticket>/`), so the ticket still shows it. Evidence files are
 `png`, `jpg`, `gif` or `mp4`. Names starting `before-` or `after-` are reserved
 for gates, so a capture must not use them.
 

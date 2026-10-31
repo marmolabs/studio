@@ -241,3 +241,27 @@ fn reports_a_missing_binary() {
     assert!(!report.installed);
     assert!(report.problem.is_some());
 }
+
+#[tokio::test]
+async fn runs_keep_long_commands_in_the_foreground() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = dir.path().join("env.txt");
+    let runtime = ClaudeCode::with_program(
+        "sh",
+        vec![
+            "-c".into(),
+            r#"printf '%s %s\n' "$CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "$BASH_MAX_TIMEOUT_MS" > "$0""#
+                .into(),
+            seen.to_string_lossy().into_owned(),
+        ],
+    );
+    let mut run = runtime
+        .start(RunSpec {
+            cwd: dir.path().to_path_buf(),
+            prompt: "Build it".into(),
+            ..RunSpec::default()
+        })
+        .unwrap();
+    while run.next().await.is_some() {}
+    assert_eq!(fs::read_to_string(&seen).unwrap(), "1 1800000\n");
+}

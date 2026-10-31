@@ -1539,6 +1539,8 @@ fn first_prompt(ticket: &Ticket) -> String {
          Write tools: shell commands that write files wait for the owner's approval. \
          Leave changes uncommitted; the studio commits them, then runs the project's \
          checks and, if the project has one, its screenshot capture. \
+         Builds and tests can take many minutes: give such commands a long timeout \
+         and wait for them, since nothing keeps running after you finish. \
          Finish with a short summary of what you changed.",
     );
     prompt

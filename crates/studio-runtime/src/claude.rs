@@ -20,6 +20,9 @@ use tokio::sync::mpsc;
 const QUESTION_TOOL: &str = "AskUserQuestion";
 const STDERR_LIMIT: usize = 4096;
 
+/// The longest an agent's shell command may run: 30 minutes, as a check.
+const BASH_MAX_TIMEOUT_MS: &str = "1800000";
+
 pub struct ClaudeCode {
     program: PathBuf,
     prefix_args: Vec<String>,
@@ -143,6 +146,11 @@ impl Runtime for ClaudeCode {
             .args(&self.prefix_args)
             .args(ClaudeCode::args(&spec))
             .current_dir(&spec.cwd)
+            // A run ends when the agent stops, so nothing may keep running in
+            // the background after it, and a long build may take as long as
+            // one of the project's checks.
+            .env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
+            .env("BASH_MAX_TIMEOUT_MS", BASH_MAX_TIMEOUT_MS)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
