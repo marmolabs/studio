@@ -37,7 +37,7 @@
     --pop: 0 16px 40px rgba(17, 24, 39, .14), 0 0 0 1px var(--line-2);
   }
 }
-:root[data-theme="light"] {
+:root[data-theme="light"], :root:has(#theme-flip:checked) {
   color-scheme: light;
   --bg: #ffffff; --bg-2: #f9f9fb; --bg-3: #f0f0f3; --bg-4: #e8e8ec; --hover: #fafafb;
   --line: #e8e8ec; --line-2: #d9d9e0; --line-3: #cdced6;
@@ -65,6 +65,23 @@
   --h-cyan: #4ccce6; --h-violet: #b399ff; --h-pink: #f19ed2; --h-teal: #0bd8b6; --h-gray: #b0b4ba; --h-gold: #e2c36b;
   --pop: 0 16px 40px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-2);
 }
+/* The moon button (a checkbox) flips to the theme the system doesn't use. */
+@media (prefers-color-scheme: light) {
+  :root:has(#theme-flip:checked) {
+    color-scheme: dark;
+    --bg: #111113; --bg-2: #18191b; --bg-3: #212225; --bg-4: #272a2d; --hover: #17181a;
+    --line: #26282b; --line-2: #363a3f; --line-3: #43484e;
+    --fg: #edeef0; --fg-2: #b0b4ba; --fg-3: #8b8f98;
+    --primary: #edeef0; --primary-hover: #ffffff; --on-primary: #111113;
+    --attn: #ffc53d; --attn-fg: #ffca16; --attn-bg: #2b1f08; --attn-line: #5c3d05;
+    --run: #3b9eff; --run-fg: #70b8ff; --run-bg: #0d2847; --run-line: #104d87;
+    --ok: #46a758; --ok-fg: #71d083; --ok-bg: #1b2a1e; --ok-line: #2d5736;
+    --bad: #e5484d; --bad-fg: #ff9592; --bad-bg: #3b1219; --bad-line: #72232d;
+    --ring: #3b9eff; --seg-check: #2870bd;
+    --h-cyan: #4ccce6; --h-violet: #b399ff; --h-pink: #f19ed2; --h-teal: #0bd8b6; --h-gray: #b0b4ba; --h-gold: #e2c36b;
+    --pop: 0 16px 40px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-2);
+  }
+}
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 400 14px/20px var(--sans); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
@@ -91,7 +108,14 @@ h1, h2, h3, p { margin: 0; }
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav a { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 6px; color: var(--fg-2); font-weight: 500; transition: background .12s, color .12s; }
 .nav a:hover { background: var(--bg-3); color: var(--fg); }
-.nav a[aria-current="page"] { background: var(--bg-3); color: var(--fg); }
+.nav a[aria-current="page"],
+.app:not(:has(.view:not(#office):target)) .nav a[data-nav="office"],
+.app:has(#board:target, #ticket:target) .nav a[data-nav="board"],
+.app:has(#asks:target) .nav a[data-nav="asks"],
+.app:has(#goals:target) .nav a[data-nav="goals"],
+.app:has(#hires:target) .nav a[data-nav="hires"],
+.app:has(#rules:target) .nav a[data-nav="rules"],
+.app:has(#budget:target) .nav a[data-nav="budget"] { background: var(--bg-3); color: var(--fg); }
 .nav .count { margin-left: auto; font: 500 12px/1 var(--sans); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .nav .count.attn { color: #1d1400; background: var(--attn); border-radius: 999px; padding: 3px 7px; }
 .nav-label { padding: 18px 8px 6px; font: 500 12px/16px var(--sans); color: var(--fg-3); }
@@ -106,15 +130,15 @@ h1, h2, h3, p { margin: 0; }
 
 /* The office collapses the sidebar to an icon rail, so the floor gets the width. */
 @media (min-width: 761px) {
-  .app.rail .side { width: 64px; padding: 14px 10px 12px; align-items: center; }
-  .app.rail .brand { padding: 0; margin-bottom: 14px; justify-content: center; }
-  .app.rail .brand b, .app.rail .tag-proto, .app.rail .nav .lbl, .app.rail .nav .count:not(.attn) { display: none; }
-  .app.rail .nav-label { padding: 10px 0; font-size: 0; }
-  .app.rail .nav-label::before { content: ""; display: block; width: 24px; height: 1px; background: var(--line); }
-  .app.rail .nav a { position: relative; width: 40px; padding: 0; justify-content: center; }
-  .app.rail .nav .count.attn { position: absolute; top: 1px; right: -2px; padding: 2px 5px; font-size: 10px; }
-  .app.rail .side-foot { align-items: center; padding: 12px 0 4px; }
-  .app.rail .side-foot .mini, .app.rail .live > span:not(.pulse), .app.rail .foot-row > span { display: none; }
+  .app:not(:has(.view:not(#office):target)) .side { width: 64px; padding: 14px 10px 12px; align-items: center; }
+  .app:not(:has(.view:not(#office):target)) .brand { padding: 0; margin-bottom: 14px; justify-content: center; }
+  .app:not(:has(.view:not(#office):target)) .brand b, .app:not(:has(.view:not(#office):target)) .tag-proto, .app:not(:has(.view:not(#office):target)) .nav .lbl, .app:not(:has(.view:not(#office):target)) .nav .count:not(.attn) { display: none; }
+  .app:not(:has(.view:not(#office):target)) .nav-label { padding: 10px 0; font-size: 0; }
+  .app:not(:has(.view:not(#office):target)) .nav-label::before { content: ""; display: block; width: 24px; height: 1px; background: var(--line); }
+  .app:not(:has(.view:not(#office):target)) .nav a { position: relative; width: 40px; padding: 0; justify-content: center; }
+  .app:not(:has(.view:not(#office):target)) .nav .count.attn { position: absolute; top: 1px; right: -2px; padding: 2px 5px; font-size: 10px; }
+  .app:not(:has(.view:not(#office):target)) .side-foot { align-items: center; padding: 12px 0 4px; }
+  .app:not(:has(.view:not(#office):target)) .side-foot .mini, .app:not(:has(.view:not(#office):target)) .live > span:not(.pulse), .app:not(:has(.view:not(#office):target)) .foot-row > span { display: none; }
 }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -542,9 +566,20 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 .input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent); }
 .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
-.toast { position: fixed; right: max(20px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--bg-2); color: var(--fg); box-shadow: var(--pop); font-size: 13px; transform: translateY(12px); opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 20; }
-.toast.show { opacity: 1; transform: none; }
-.view { display: contents; }
+/* One view at a time: the one the address names, else the Office. */
+.view { display: none; }
+.view:target, .view:has(:target), .main:not(:has(:target)) > #office { display: contents; }
+/* The inspector shows the panel the address names, else what needs you. */
+.ins-panel { display: none; }
+.ins-panel:target, .inspector:not(:has(.ins-panel:target)) > .ins-overview { display: contents; }
+/* Floor items are links to their panels; these keep their button look. */
+a.station, a.sitter { text-align: center; }
+a.qcard { display: inline-flex; align-items: center; }
+.tcard:has(.stretch) { position: relative; }
+.tcard .stretch::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.tcard:has(.stretch) .btn { position: relative; z-index: 1; }
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#theme-flip:focus-visible + label { outline: 2px solid var(--ring); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
 /* Phone: the sidebar becomes a top bar with a scrolling nav; rails stack. */
@@ -707,7 +742,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
       </div>
       <div class="foot-row">
         <span class="faint" style="font-size:12.5px">Sample data</span>
-        <button class="btn ghost icon sm" id="theme" type="button" aria-label="Switch light or dark"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
+        <input class="vh" type="checkbox" id="theme-flip" aria-label="Switch light or dark"><label class="btn ghost icon sm" for="theme-flip" aria-hidden="true"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></label>
       </div>
     </div>
   </aside>
@@ -715,7 +750,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
   <main class="main">
 
 <!-- OFFICE -->
-<section class="view" data-view="office">
+<section class="view" id="office" data-view="office">
   <header class="top">
     <h1>Office</h1>
     <nav class="segctl" aria-label="View"><a href="#office" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
@@ -726,8 +761,8 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
       <span><b>$34.12</b> of $100 <span class="meter"><i style="width:34%"></i></span></span>
     </div>
     <div class="actions">
-      <button class="btn" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
-      <button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
+      <button class="btn" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
+      <button class="btn primary" type="button" popovertarget="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
     </div>
   </header>
   <div class="page office-page">
@@ -737,30 +772,30 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         <div class="room r-work">
           <div class="room-h"><span class="rl">Workspace</span><span class="rc">3 at their desks</span></div>
           <div class="desks">
-            <button class="station" type="button" data-sel="GAME-14" aria-label="engineer on GAME-14 needs you">
+            <a class="station" href="#sel-GAME-14" aria-label="engineer on GAME-14 needs you">
               <span class="bubble" title="cargo run --example waves"><span>Run a command</span></span>
               <span class="person attn cyan" style="--p:25"><span class="face">EN</span><span class="badge" aria-hidden="true">!</span></span>
               <span class="workdesk"><i class="attn"></i></span>
               <span class="tid">GAME-14</span>
               <span class="tt">Spawn enemies in waves</span>
               <span class="ts attn">Needs you · 2m</span>
-            </button>
-            <button class="station" type="button" data-sel="GAME-17" aria-label="engineer on GAME-17 needs you">
+            </a>
+            <a class="station" href="#sel-GAME-17" aria-label="engineer on GAME-17 needs you">
               <span class="bubble" title="Edit src/player/movement.rs"><span>Edit a protected file</span></span>
               <span class="person attn cyan" style="--p:25"><span class="face">EN</span><span class="badge" aria-hidden="true">!</span></span>
               <span class="workdesk"><i class="attn"></i></span>
               <span class="tid">GAME-17</span>
               <span class="tt">Tune coyote time to 120 ms</span>
               <span class="ts attn">Needs you · 2m</span>
-            </button>
-            <button class="station" type="button" data-sel="GAME-15" aria-label="artist working on GAME-15">
+            </a>
+            <a class="station" href="#sel-GAME-15" aria-label="artist working on GAME-15">
               <span class="bubble-slot"></span>
               <span class="person run pink" style="--p:25"><span class="face">AR</span></span>
               <span class="workdesk"><i class="run"></i></span>
               <span class="tid">GAME-15</span>
               <span class="tt">Draw the title screen logo</span>
               <span class="ts run">Working · try 2</span>
-            </button>
+            </a>
             <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
             <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
             <div class="station free"><span class="bubble-slot"></span><span class="seat"></span><span class="workdesk"><i></i></span><span class="ts">Free desk</span></div>
@@ -774,39 +809,39 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
             <span class="rack"><i></i><i class="on b"></i><i></i><i></i><i class="on"></i><i></i><i></i><i class="on b"></i></span>
             <span class="rack"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
           </div>
-          <button class="tcard run" type="button" data-sel="GAME-12" aria-label="GAME-12 in checks">
+          <a class="tcard run" href="#sel-GAME-12" aria-label="GAME-12 in checks">
             <span class="tc-top"><span class="mono">GAME-12</span><span class="faint num">1m 12s</span></span>
             <span class="mono tc-cmd">cargo test --workspace</span>
             <span class="track run" style="width:100%"><i style="width:60%"></i></span>
-          </button>
+          </a>
         </div>
 
         <div class="room r-plan">
           <div class="room-h"><span class="rl">Planning</span><span class="rc">3 goals open</span></div>
           <div class="whiteboard">
-            <button class="goalrow" type="button" data-sel="goal-menus"><span class="gl"><span>Polish the menus</span><span class="faint num">3/6</span></span><span class="track" style="width:100%"><i style="width:50%"></i></span></button>
-            <button class="goalrow" type="button" data-sel="goal-waves"><span class="gl"><span>Enemy waves</span><span class="num" style="color:var(--attn-fg)">0/3</span></span><span class="track" style="width:100%"><i style="width:3%;background:var(--attn)"></i></span></button>
-            <button class="goalrow" type="button" data-sel="goal-editor"><span class="gl"><span>Editor basics</span><span class="faint num">1/3</span></span><span class="track" style="width:100%"><i style="width:33%"></i></span></button>
+            <a class="goalrow" href="#sel-goal-menus"><span class="gl"><span>Polish the menus</span><span class="faint num">3/6</span></span><span class="track" style="width:100%"><i style="width:50%"></i></span></a>
+            <a class="goalrow" href="#sel-goal-waves"><span class="gl"><span>Enemy waves</span><span class="num" style="color:var(--attn-fg)">0/3</span></span><span class="track" style="width:100%"><i style="width:3%;background:var(--attn)"></i></span></a>
+            <a class="goalrow" href="#sel-goal-editor"><span class="gl"><span>Editor basics</span><span class="faint num">1/3</span></span><span class="track" style="width:100%"><i style="width:33%"></i></span></a>
           </div>
         </div>
 
         <div class="room r-review">
           <div class="room-h"><span class="rl">Review</span><span class="rc">1 reviewing</span></div>
-          <button class="station" type="button" data-sel="GAME-11" aria-label="reviewer on GAME-11">
+          <a class="station" href="#sel-GAME-11" aria-label="reviewer on GAME-11">
             <span class="person review violet" style="--p:85"><span class="face">RV</span></span>
             <span class="roundtable"><i></i></span>
             <span class="tid">GAME-11</span>
             <span class="tt">Pause menu with resume and quit</span>
             <span class="ts review">Reading src/pause.rs</span>
-          </button>
+          </a>
         </div>
 
         <div class="room r-ready">
           <div class="room-h"><span class="rl">Ready to land</span><span class="rc">1 ticket</span></div>
-          <div class="tcard ok" data-sel="GAME-9" role="button" tabindex="0" aria-label="GAME-9 ready to land">
+          <div class="tcard ok"><a class="stretch" href="#sel-GAME-9" aria-label="GAME-9 ready to land"></a>
             <span class="tc-top"><span class="mono">GAME-9</span><span class="num"><span class="add">+184</span> <span class="del">−12</span></span></span>
             <span class="tc-title">Title screen with Start and Quit</span>
-            <span class="tc-foot"><span class="faint num">$2.06</span><button class="btn sm primary" type="button" data-act="Landed GAME-9"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></span>
+            <span class="tc-foot"><span class="faint num">$2.06</span><button class="btn sm primary" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></span>
           </div>
           <div class="slot">Nothing else ready</div>
         </div>
@@ -815,8 +850,8 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
           <div class="room-h"><span class="rl">Lounge</span><span class="rc">2 resting</span></div>
           <div class="lounge">
             <div class="sofa">
-              <button class="sitter" type="button" data-sel="producer" aria-label="producer, resting"><span class="person idle gold"><span class="face">PR</span></span><span class="ts">producer · 2h</span></button>
-              <button class="sitter" type="button" data-sel="designer" aria-label="designer, resting"><span class="person idle teal"><span class="face">DE</span></span><span class="ts">designer · 12m</span></button>
+              <a class="sitter" href="#sel-producer" aria-label="producer, resting"><span class="person idle gold"><span class="face">PR</span></span><span class="ts">producer · 2h</span></a>
+              <a class="sitter" href="#sel-designer" aria-label="designer, resting"><span class="person idle teal"><span class="face">DE</span></span><span class="ts">designer · 12m</span></a>
             </div>
             <div class="props" aria-hidden="true"><span class="prop-ic"><svg class="i"><use href="#i-coffee"/></svg></span><span class="prop-ic plant"><svg class="i"><use href="#i-sprout"/></svg></span></div>
           </div>
@@ -825,10 +860,10 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         <div class="room r-front">
           <div class="room-h"><span class="rl">Front desk</span><span class="rc">Calls and routing</span></div>
           <div class="frontdesk">
-            <button class="sitter" type="button" data-sel="approver" aria-label="approver"><span class="person plain"><span class="face">AP</span></span><span class="ts"><b>96</b> decided · <b class="attn-t">4</b> to you</span></button>
-            <button class="sitter" type="button" data-sel="router" aria-label="router"><span class="person plain"><span class="face">RO</span></span><span class="ts"><b>12</b> routed</span></button>
+            <a class="sitter" href="#sel-approver" aria-label="approver"><span class="person plain"><span class="face">AP</span></span><span class="ts"><b>96</b> decided · <b class="attn-t">4</b> to you</span></a>
+            <a class="sitter" href="#sel-router" aria-label="router"><span class="person plain"><span class="face">RO</span></span><span class="ts"><b>12</b> routed</span></a>
           </div>
-          <div class="upnext"><span class="faint">Up next</span><button class="qcard" type="button" data-sel="GAME-18">GAME-18</button><button class="qcard" type="button" data-sel="EDIT-4">EDIT-4</button></div>
+          <div class="upnext"><span class="faint">Up next</span><a class="qcard" href="#sel-GAME-18">GAME-18</a><a class="qcard" href="#sel-EDIT-4">EDIT-4</a></div>
         </div>
 
         <div class="room r-shipped">
@@ -843,22 +878,23 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         </div>
       </div>
 
-      <aside class="inspector" id="inspector" aria-label="Inspector" aria-live="polite">
+      <aside class="inspector" id="inspector" aria-label="Inspector">
+        <div class="ins-panel ins-overview">
         <div class="ins-h"><h2>Needs you</h2><span class="n">2</span><span class="spacer"></span><a class="btn ghost sm" href="#asks">All asks</a></div>
         <div class="ins-b">
           <div class="mini-ask">
             <div class="mh"><svg class="i sm" aria-hidden="true"><use href="#i-shield-alert"/></svg><span class="mono">GAME-14</span>Run a command<span class="t-ago">2m</span></div>
             <div class="mb"><div class="cmd">cargo run --example waves</div><div class="why">No rule covers running examples in <span class="mono">game</span>.</div>
-              <div class="ask-actions"><button class="btn sm primary" type="button" data-act="Allowed GAME-14">Allow</button><button class="btn sm" type="button" data-act="Denied GAME-14">Deny</button><button class="btn sm ghost" type="button" data-sel="GAME-14">Details</button></div></div>
+              <div class="ask-actions"><button class="btn sm primary" type="button">Allow</button><button class="btn sm" type="button">Deny</button><a class="btn sm ghost" href="#sel-GAME-14">Details</a></div></div>
           </div>
           <div class="mini-ask">
             <div class="mh"><svg class="i sm" aria-hidden="true"><use href="#i-shield-alert"/></svg><span class="mono">GAME-17</span>Edit a protected file<span class="t-ago">2m</span></div>
             <div class="mb"><div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div>
-              <div class="ask-actions"><button class="btn sm primary" type="button" data-act="Allowed GAME-17">Allow</button><button class="btn sm" type="button" data-act="Denied GAME-17">Deny</button><button class="btn sm ghost" type="button" data-sel="GAME-17">Details</button></div></div>
+              <div class="ask-actions"><button class="btn sm primary" type="button">Allow</button><button class="btn sm" type="button">Deny</button><a class="btn sm ghost" href="#sel-GAME-17">Details</a></div></div>
           </div>
           <div class="ins-sec">
             <h3>Ready to land</h3>
-            <div class="row compact" style="border:1px solid var(--line);border-radius:10px;grid-template-columns:16px minmax(0,1fr) auto"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><div class="main-col"><span class="t">Title screen with Start and Quit</span><span class="d">GAME-9 · <span class="add">+184</span> <span class="del">−12</span></span></div><button class="btn sm" type="button" data-act="Landed GAME-9">Land</button></div>
+            <div class="row compact" style="border:1px solid var(--line);border-radius:10px;grid-template-columns:16px minmax(0,1fr) auto"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><div class="main-col"><span class="t">Title screen with Start and Quit</span><span class="d">GAME-9 · <span class="add">+184</span> <span class="del">−12</span></span></div><button class="btn sm" type="button">Land</button></div>
           </div>
           <div class="ins-sec">
             <h3>Today</h3>
@@ -874,6 +910,156 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
             </div>
           </div>
           <p class="faint" style="font-size:12.5px">Click anyone on the floor to see their work.</p>
+        </div>
+        </div>
+        <!-- Panels for things on the floor (the app renders these on the server). -->
+        <div class="ins-panel" id="sel-GAME-14">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Spawn enemies in waves</div><span class="mono">GAME-14 · Enemy waves</span></div>
+            <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to run a command<span class="t-ago">2m ago</span></div>
+              <div class="ask-b"><div class="cmd">cargo run --example waves</div><div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.</div>
+                <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button">Always allow <span class="code">cargo run</span></button></div></div></section>
+            <dl class="kv"><dt>Spent</dt><dd>$0.42 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>18m</dd><dt>Changes</dt><dd><span class="add">+79</span> <span class="del">−25</span> in 2 files</dd></dl>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-17">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Tune coyote time to 120 ms</div><span class="mono">GAME-17 · no goal</span></div>
+            <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to edit a protected file<span class="t-ago">2m ago</span></div>
+              <div class="ask-b"><div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div><div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 120 ms. This is the only line that changes.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/player</span> is protected by your rule <a href="#rules">protect-player</a>.</div>
+                <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button></div></div></section>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-15">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av pink">AR</span><b style="font-weight:500">artist</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:25"></span>Working</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Draw the title screen logo</div><span class="mono">GAME-15 · Polish the menus</span></div>
+            <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span>Writing assets/ui/logo.png</span><span class="tm">40s</span></div>
+            <div class="steps" style="width:100%"><div class="bar"><i class="now"></i><i></i><i></i><i></i></div><span class="lbl"><b>Working</b> · try 2 of 3, after the design critic sent it back</span></div>
+            <div class="ins-sec"><h3>Latest steps</h3><div class="steps-list">
+              <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span class="k">Read</span><span class="v">assets/ui/palette.png</span><span class="res">2m</span></div>
+              <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span class="k">Write</span><span class="v">assets/ui/logo.png</span><span class="res">now</span></div>
+            </div></div>
+            <div class="said" style="font-size:13px"><svg class="i sm" style="color:var(--bad-fg);margin-top:3px" aria-hidden="true"><use href="#i-circle-x"/></svg><span>Design critic on try 1: “The logo strokes vanish at 1x. Use 2px strokes and the palette's darkest blue.”</span></div>
+            <dl class="kv"><dt>Spent</dt><dd>$0.91 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>12m on this try</dd><dt>Branch</dt><dd class="mono" style="font-size:12px">studio/game-15</dd></dl>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a><button class="btn ghost" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-pause"/></svg>Pause</button><button class="btn ghost danger" type="button">Cancel</button></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-12">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="i" aria-hidden="true"><use href="#i-flask-conical"/></svg><b style="font-weight:500">Checks</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Fix the jump buffer dropping early presses</div><span class="mono">GAME-12 · engineer finished try 1</span></div>
+            <div class="ins-sec"><h3>Project checks</h3><div class="steps-list">
+              <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">fmt</span><span class="v">cargo fmt --all --check</span><span class="res ok">4s</span></div>
+              <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">clippy</span><span class="v">cargo clippy -- -D warnings</span><span class="res ok">38s</span></div>
+              <div class="tool"><span class="prog" style="--p:60;width:14px;height:14px"></span><span class="k">test</span><span class="v">cargo test --workspace</span><span class="res">1m 12s</span></div>
+            </div></div>
+            <p class="faint" style="font-size:13px">Then the design critic and the reviewer read it.</p>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-11">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av violet">RV</span><b style="font-weight:500">reviewer</b><span class="model">opus</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:85"></span>Reviewing</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Pause menu with resume and quit</div><span class="mono">GAME-11 · Polish the menus</span></div>
+            <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span>Reading src/pause.rs</span><span class="tm">8s</span></div>
+            <div class="steps" style="width:100%"><div class="bar"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><span class="lbl"><b>Review</b> · checks and the design critic passed</span></div>
+            <dl class="kv"><dt>Written by</dt><dd><span class="who"><span class="av cyan">EN</span>engineer, sonnet</span></dd><dt>Changes</dt><dd><span class="add">+212</span> <span class="del">−18</span> in 4 files</dd><dt>Spent</dt><dd>$1.24 <span class="faint">of $8.00</span></dd></dl>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-9">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><b style="font-weight:500">Ready to land</b><span class="spacer"></span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Title screen with Start and Quit</div><span class="mono">GAME-9 · Polish the menus</span></div>
+            <p class="muted" style="font-size:13px">Passed checks, the design critic and review on the first try.</p>
+            <div class="files"><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/title.rs</span><span class="num"><span class="add">+168</span> <span class="del">−0</span></span></div><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/main.rs</span><span class="num"><span class="add">+16</span> <span class="del">−12</span></span></div></div>
+            <div class="ins-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-git-merge"/></svg>Land on Polish the menus</button><a class="btn" href="#ticket">Open ticket</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-producer">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av gold">PR</span><b style="font-weight:500">producer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
+          <div class="ins-b">
+            <p class="muted" style="font-size:13px">Plans goals into tickets. Idle for 2 hours; planned 2 goals today.</p>
+            <div class="ins-actions"><button class="btn primary" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Give it a goal</button><a class="btn ghost" href="#hires">Edit hire</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-designer">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av teal">DE</span><b style="font-weight:500">designer</b><span class="model">opus</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
+          <div class="ins-b">
+            <p class="muted" style="font-size:13px">Judges web and art changes from their screenshots before review. Idle for 12 minutes; 4 critiques today, 1 sent back.</p>
+            <div class="ins-actions"><a class="btn ghost" href="#hires">Edit hire</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-approver">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av">AP</span><b style="font-weight:500">approver</b><span class="model">haiku</span><span class="spacer"></span></div>
+          <div class="ins-b">
+            <p class="muted" style="font-size:13px">Decides the tool calls no rule covers, so only the risky ones reach you.</p>
+            <dl class="kv"><dt>Today</dt><dd>96 calls: 81 allowed, 11 denied, 4 sent to you</dd><dt>Spent</dt><dd>$0.48</dd></dl>
+            <div class="ins-sec"><h3>Latest</h3><div class="events">
+              <div class="e"><span class="when">2m</span><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg><span class="txt">Sent you <b>GAME-14</b>: <span class="code">cargo run --example waves</span></span></div>
+              <div class="e"><span class="when">9m</span><svg class="i sm" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="txt">Allowed <span class="code">cargo test</span> in <b>GAME-12</b></span></div>
+              <div class="e"><span class="when">14m</span><svg class="i sm" style="color:var(--bad-fg)" aria-hidden="true"><use href="#i-x"/></svg><span class="txt">Denied <span class="code">curl</span> in <b>GAME-15</b>: not needed</span></div>
+            </div></div>
+            <div class="ins-actions"><a class="btn ghost" href="#rules">Rules</a><a class="btn ghost" href="#hires">Edit hire</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-router">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><span class="av">RO</span><b style="font-weight:500">router</b><span class="model">haiku</span><span class="spacer"></span></div>
+          <div class="ins-b">
+            <p class="muted" style="font-size:13px">Picks the hire for each new ticket. Routed 12 today: 10 to engineer, 2 to artist.</p>
+            <div class="ins-actions"><button class="btn primary" type="button" popovertarget="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New ticket</button><a class="btn ghost" href="#hires">Edit hire</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-goal-menus">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Polish the menus</div><span class="mono">game · studio/goal/polish-the-menus</span></div>
+            <div class="mini"><span class="num">3 of 6 landed · $9.42</span><div class="meter"><i style="width:50%;background:var(--ok)"></i></div></div>
+            <div class="events">
+              <div class="e"><span class="when mono">9</span><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="txt"><b>Title screen with Start and Quit</b> · ready</span></div>
+              <div class="e"><span class="when mono">11</span><span class="prog" style="--p:85"></span><span class="txt"><b>Pause menu with resume and quit</b> · review</span></div>
+              <div class="e"><span class="when mono">15</span><span class="prog" style="--p:25"></span><span class="txt"><b>Draw the title screen logo</b> · working</span></div>
+              <div class="e"><span class="when mono">18</span><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="txt"><b>Gamepad support in menus</b> · up next</span></div>
+            </div>
+            <div class="ins-actions"><a class="btn" href="#goals">Open goal<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-goal-waves">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Enemy waves</div><span class="mono">game · studio/goal/enemy-waves</span></div>
+            <p class="muted" style="font-size:13px">0 of 3 landed. GAME-14 is waiting for you to allow a command.</p>
+            <div class="ins-actions"><a class="btn primary" href="#sel-GAME-14">See the ask</a><a class="btn" href="#goals">Open goal</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-goal-editor">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Editor basics</div><span class="mono">editor · studio/goal/editor-basics</span></div>
+            <p class="muted" style="font-size:13px">1 of 3 landed. EDIT-4 is queued for the next free run slot.</p>
+            <div class="ins-actions"><a class="btn" href="#goals">Open goal</a></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-GAME-18">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Gamepad support in menus</div><span class="mono">GAME-18 · Polish the menus</span></div>
+            <p class="muted" style="font-size:13px">Starts after GAME-9 lands: tickets in a goal run one at a time.</p>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button">Cancel</button></div>
+          </div>
+        </div>
+        <div class="ins-panel" id="sel-EDIT-4">
+          <div class="ins-h"><a class="btn ghost icon sm" href="#office" aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></a><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
+          <div class="ins-b">
+            <div><div class="ins-title">Snap tiles to the grid in the level editor</div><span class="mono">EDIT-4 · Editor basics</span></div>
+            <p class="muted" style="font-size:13px">Queued. It starts when one of the 5 run slots frees up.</p>
+            <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button">Cancel</button></div>
+          </div>
         </div>
       </aside>
     </div>
@@ -907,166 +1093,17 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
     </details>
   </div>
 
-  <!-- Inspector panels for things on the floor (prototype only: the app renders these on the server). -->
-  <template id="t-GAME-14">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Spawn enemies in waves</div><span class="mono">GAME-14 · Enemy waves</span></div>
-      <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to run a command<span class="t-ago">2m ago</span></div>
-        <div class="ask-b"><div class="cmd">cargo run --example waves</div><div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.</div>
-          <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed GAME-14"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied GAME-14"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span></button></div></div></section>
-      <dl class="kv"><dt>Spent</dt><dd>$0.42 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>18m</dd><dt>Changes</dt><dd><span class="add">+79</span> <span class="del">−25</span> in 2 files</dd></dl>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-    </div>
-  </template>
-  <template id="t-GAME-17">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av cyan">EN</span><b style="font-weight:500">engineer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Tune coyote time to 120 ms</div><span class="mono">GAME-17 · no goal</span></div>
-      <section class="ask" aria-label="Waiting for you"><div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg>Wants to edit a protected file<span class="t-ago">2m ago</span></div>
-        <div class="ask-b"><div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div><div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 120 ms. This is the only line that changes.”</span></div><div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/player</span> is protected by your rule <a href="#rules">protect-player</a>.</div>
-          <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed GAME-17"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied GAME-17"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button></div></div></section>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-    </div>
-  </template>
-  <template id="t-GAME-15">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av pink">AR</span><b style="font-weight:500">artist</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:25"></span>Working</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Draw the title screen logo</div><span class="mono">GAME-15 · Polish the menus</span></div>
-      <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span>Writing assets/ui/logo.png</span><span class="tm">40s</span></div>
-      <div class="steps" style="width:100%"><div class="bar"><i class="now"></i><i></i><i></i><i></i></div><span class="lbl"><b>Working</b> · try 2 of 3, after the design critic sent it back</span></div>
-      <div class="ins-sec"><h3>Latest steps</h3><div class="steps-list">
-        <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span class="k">Read</span><span class="v">assets/ui/palette.png</span><span class="res">2m</span></div>
-        <div class="tool"><svg class="i" aria-hidden="true"><use href="#i-file-pen-line"/></svg><span class="k">Write</span><span class="v">assets/ui/logo.png</span><span class="res">now</span></div>
-      </div></div>
-      <div class="said" style="font-size:13px"><svg class="i sm" style="color:var(--bad-fg);margin-top:3px" aria-hidden="true"><use href="#i-circle-x"/></svg><span>Design critic on try 1: “The logo strokes vanish at 1x. Use 2px strokes and the palette's darkest blue.”</span></div>
-      <dl class="kv"><dt>Spent</dt><dd>$0.91 <span class="faint">of $8.00</span></dd><dt>Time</dt><dd>12m on this try</dd><dt>Branch</dt><dd class="mono" style="font-size:12px">studio/game-15</dd></dl>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a><button class="btn ghost" type="button" data-act="Paused GAME-15"><svg class="i sm" aria-hidden="true"><use href="#i-pause"/></svg>Pause</button><button class="btn ghost danger" type="button" data-act="Cancelled GAME-15">Cancel</button></div>
-    </div>
-  </template>
-  <template id="t-GAME-12">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-flask-conical"/></svg><b style="font-weight:500">Checks</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Fix the jump buffer dropping early presses</div><span class="mono">GAME-12 · engineer finished try 1</span></div>
-      <div class="ins-sec"><h3>Project checks</h3><div class="steps-list">
-        <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">fmt</span><span class="v">cargo fmt --all --check</span><span class="res ok">4s</span></div>
-        <div class="tool"><svg class="i" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="k">clippy</span><span class="v">cargo clippy -- -D warnings</span><span class="res ok">38s</span></div>
-        <div class="tool"><span class="prog" style="--p:60;width:14px;height:14px"></span><span class="k">test</span><span class="v">cargo test --workspace</span><span class="res">1m 12s</span></div>
-      </div></div>
-      <p class="faint" style="font-size:13px">Then the design critic and the reviewer read it.</p>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-    </div>
-  </template>
-  <template id="t-GAME-11">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av violet">RV</span><b style="font-weight:500">reviewer</b><span class="model">opus</span><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:85"></span>Reviewing</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Pause menu with resume and quit</div><span class="mono">GAME-11 · Polish the menus</span></div>
-      <div class="doing"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg><span>Reading src/pause.rs</span><span class="tm">8s</span></div>
-      <div class="steps" style="width:100%"><div class="bar"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><span class="lbl"><b>Review</b> · checks and the design critic passed</span></div>
-      <dl class="kv"><dt>Written by</dt><dd><span class="who"><span class="av cyan">EN</span>engineer, sonnet</span></dd><dt>Changes</dt><dd><span class="add">+212</span> <span class="del">−18</span> in 4 files</dd><dt>Spent</dt><dd>$1.24 <span class="faint">of $8.00</span></dd></dl>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-    </div>
-  </template>
-  <template id="t-GAME-9">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><b style="font-weight:500">Ready to land</b><span class="spacer"></span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Title screen with Start and Quit</div><span class="mono">GAME-9 · Polish the menus</span></div>
-      <p class="muted" style="font-size:13px">Passed checks, the design critic and review on the first try.</p>
-      <div class="files"><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/title.rs</span><span class="num"><span class="add">+168</span> <span class="del">−0</span></span></div><div class="file"><svg class="i sm faint" aria-hidden="true"><use href="#i-file-diff"/></svg><span class="mono">src/main.rs</span><span class="num"><span class="add">+16</span> <span class="del">−12</span></span></div></div>
-      <div class="ins-actions"><button class="btn primary" type="button" data-act="Landed GAME-9"><svg class="i" aria-hidden="true"><use href="#i-git-merge"/></svg>Land on Polish the menus</button><a class="btn" href="#ticket">Open ticket</a></div>
-    </div>
-  </template>
-  <template id="t-producer">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av gold">PR</span><b style="font-weight:500">producer</b><span class="model">sonnet</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
-    <div class="ins-b">
-      <p class="muted" style="font-size:13px">Plans goals into tickets. Idle for 2 hours; planned 2 goals today.</p>
-      <div class="ins-actions"><button class="btn primary" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Give it a goal</button><a class="btn ghost" href="#hires">Edit hire</a></div>
-    </div>
-  </template>
-  <template id="t-designer">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av teal">DE</span><b style="font-weight:500">designer</b><span class="model">opus</span><span class="spacer"></span><span class="pill neutral">Resting</span></div>
-    <div class="ins-b">
-      <p class="muted" style="font-size:13px">Judges web and art changes from their screenshots before review. Idle for 12 minutes; 4 critiques today, 1 sent back.</p>
-      <div class="ins-actions"><a class="btn ghost" href="#hires">Edit hire</a></div>
-    </div>
-  </template>
-  <template id="t-approver">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av">AP</span><b style="font-weight:500">approver</b><span class="model">haiku</span><span class="spacer"></span></div>
-    <div class="ins-b">
-      <p class="muted" style="font-size:13px">Decides the tool calls no rule covers, so only the risky ones reach you.</p>
-      <dl class="kv"><dt>Today</dt><dd>96 calls: 81 allowed, 11 denied, 4 sent to you</dd><dt>Spent</dt><dd>$0.48</dd></dl>
-      <div class="ins-sec"><h3>Latest</h3><div class="events">
-        <div class="e"><span class="when">2m</span><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg><span class="txt">Sent you <b>GAME-14</b>: <span class="code">cargo run --example waves</span></span></div>
-        <div class="e"><span class="when">9m</span><svg class="i sm" style="color:var(--ok-fg)" aria-hidden="true"><use href="#i-check"/></svg><span class="txt">Allowed <span class="code">cargo test</span> in <b>GAME-12</b></span></div>
-        <div class="e"><span class="when">14m</span><svg class="i sm" style="color:var(--bad-fg)" aria-hidden="true"><use href="#i-x"/></svg><span class="txt">Denied <span class="code">curl</span> in <b>GAME-15</b>: not needed</span></div>
-      </div></div>
-      <div class="ins-actions"><a class="btn ghost" href="#rules">Rules</a><a class="btn ghost" href="#hires">Edit hire</a></div>
-    </div>
-  </template>
-  <template id="t-router">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><span class="av">RO</span><b style="font-weight:500">router</b><span class="model">haiku</span><span class="spacer"></span></div>
-    <div class="ins-b">
-      <p class="muted" style="font-size:13px">Picks the hire for each new ticket. Routed 12 today: 10 to engineer, 2 to artist.</p>
-      <div class="ins-actions"><button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New ticket</button><a class="btn ghost" href="#hires">Edit hire</a></div>
-    </div>
-  </template>
-  <template id="t-goal-menus">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Polish the menus</div><span class="mono">game · studio/goal/polish-the-menus</span></div>
-      <div class="mini"><span class="num">3 of 6 landed · $9.42</span><div class="meter"><i style="width:50%;background:var(--ok)"></i></div></div>
-      <div class="events">
-        <div class="e"><span class="when mono">9</span><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="txt"><b>Title screen with Start and Quit</b> · ready</span></div>
-        <div class="e"><span class="when mono">11</span><span class="prog" style="--p:85"></span><span class="txt"><b>Pause menu with resume and quit</b> · review</span></div>
-        <div class="e"><span class="when mono">15</span><span class="prog" style="--p:25"></span><span class="txt"><b>Draw the title screen logo</b> · working</span></div>
-        <div class="e"><span class="when mono">18</span><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="txt"><b>Gamepad support in menus</b> · up next</span></div>
-      </div>
-      <div class="ins-actions"><a class="btn" href="#goals">Open goal<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-    </div>
-  </template>
-  <template id="t-goal-waves">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Enemy waves</div><span class="mono">game · studio/goal/enemy-waves</span></div>
-      <p class="muted" style="font-size:13px">0 of 3 landed. GAME-14 is waiting for you to allow a command.</p>
-      <div class="ins-actions"><button class="btn primary" type="button" data-sel="GAME-14">See the ask</button><a class="btn" href="#goals">Open goal</a></div>
-    </div>
-  </template>
-  <template id="t-goal-editor">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><b style="font-weight:500">Goal</b><span class="spacer"></span><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Editor basics</div><span class="mono">editor · studio/goal/editor-basics</span></div>
-      <p class="muted" style="font-size:13px">1 of 3 landed. EDIT-4 is queued for the next free run slot.</p>
-      <div class="ins-actions"><a class="btn" href="#goals">Open goal</a></div>
-    </div>
-  </template>
-  <template id="t-GAME-18">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Gamepad support in menus</div><span class="mono">GAME-18 · Polish the menus</span></div>
-      <p class="muted" style="font-size:13px">Starts after GAME-9 lands: tickets in a goal run one at a time.</p>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button" data-act="Cancelled GAME-18">Cancel</button></div>
-    </div>
-  </template>
-  <template id="t-EDIT-4">
-    <div class="ins-h"><button class="btn ghost icon sm" type="button" data-back aria-label="Back to what needs you"><svg class="i" aria-hidden="true"><use href="#i-chevron-left"/></svg></button><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><b style="font-weight:500">Up next</b><span class="spacer"></span></div>
-    <div class="ins-b">
-      <div><div class="ins-title">Snap tiles to the grid in the level editor</div><span class="mono">EDIT-4 · Editor basics</span></div>
-      <p class="muted" style="font-size:13px">Queued. It starts when one of the 5 run slots frees up.</p>
-      <div class="ins-actions"><a class="btn" href="#ticket">Open ticket</a><button class="btn ghost danger" type="button" data-act="Cancelled EDIT-4">Cancel</button></div>
-    </div>
-  </template>
 </section>
 
 <!-- BOARD -->
-<section class="view" data-view="board" hidden>
+<section class="view" id="board" data-view="board">
   <header class="top">
     <h1>Board</h1>
     <nav class="segctl" aria-label="View"><a href="#office"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
     <span class="chip"><svg class="i" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>All projects</span>
     <div class="actions">
-      <button class="btn" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
-      <button class="btn primary" type="button" data-open="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
+      <button class="btn" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
+      <button class="btn primary" type="button" popovertarget="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
     </div>
   </header>
   <div class="page">
@@ -1081,17 +1118,17 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 
     <div class="box">
       <div class="grp"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you <span class="n">2</span><a class="side-note" href="#asks">Open asks</a></div>
-      <div class="row" data-ask="GAME-14">
+      <div class="row">
         <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
         <span class="id">GAME-14</span>
         <div class="main-col"><a class="t" href="#ticket">Spawn enemies in waves</a><span class="d">Wants to run <span class="code">cargo run --example waves</span><span class="reason">No rule covers it</span></span></div>
-        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">6m</span><button class="btn sm" type="button" data-act="Denied">Deny</button><button class="btn sm primary" type="button" data-act="Allowed">Allow</button></div>
+        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">6m</span><button class="btn sm" type="button">Deny</button><button class="btn sm primary" type="button">Allow</button></div>
       </div>
-      <div class="row" data-ask="GAME-17">
+      <div class="row">
         <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
         <span class="id">GAME-17</span>
         <div class="main-col"><a class="t" href="#ticket">Tune coyote time to 120 ms</a><span class="d">Wants to edit <span class="code">src/player/movement.rs</span><span class="reason">src/player is protected</span></span></div>
-        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">2m</span><button class="btn sm" type="button" data-act="Denied">Deny</button><button class="btn sm primary" type="button" data-act="Allowed">Allow</button></div>
+        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">2m</span><button class="btn sm" type="button">Deny</button><button class="btn sm primary" type="button">Allow</button></div>
       </div>
 
       <div class="grp"><span class="prog" style="--p:50" aria-hidden="true"></span>Running <span class="n">3</span></div>
@@ -1119,7 +1156,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         <svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>
         <span class="id">GAME-9</span>
         <div class="main-col"><a class="t" href="#ticket">Title screen with Start and Quit</a><span class="d">Passed checks, design and review · <span class="add">+184</span> <span class="del">−12</span></span></div>
-        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the menus</span><span class="w">$2.06</span><button class="btn sm" type="button" data-act="Landed"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></div>
+        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the menus</span><span class="w">$2.06</span><button class="btn sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></div>
       </div>
 
       <div class="grp"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Up next <span class="n">2</span></div>
@@ -1156,7 +1193,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 </section>
 
 <!-- TICKET -->
-<section class="view" data-view="ticket" hidden>
+<section class="view" id="ticket" data-view="ticket">
   <header class="top">
     <nav class="crumbs" aria-label="Breadcrumb"><a href="#board">Board</a><svg class="i sm" aria-hidden="true"><use href="#i-chevron-right"/></svg><span class="mono">GAME-14</span></nav>
     <div class="actions">
@@ -1183,9 +1220,9 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
             <div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div>
             <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.<a href="#rules">Add a rule</a></div>
             <div class="ask-actions">
-              <button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button>
-              <button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button>
-              <button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span> in game</button>
+              <button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button>
+              <button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button>
+              <button class="btn ghost" type="button">Always allow <span class="code">cargo run</span> in game</button>
               <span class="spacer"></span>
               <button class="note-toggle" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-message-square-text"/></svg>Add a note</button>
             </div>
@@ -1261,7 +1298,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 </section>
 
 <!-- ASKS -->
-<section class="view" data-view="asks" hidden>
+<section class="view" id="asks" data-view="asks">
   <header class="top"><h1>Asks</h1><span class="faint" style="font-size:13px">The approver decided 96 calls today and sent you 4.</span></header>
   <div class="page" style="max-width:880px">
     <section class="ask" aria-label="GAME-14 asks">
@@ -1270,7 +1307,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         <div class="cmd">cargo run --example waves</div>
         <div class="said"><span class="av cyan">EN</span><span>“I want to watch two waves play out to check that the pause feels right.”</span></div>
         <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">game</span>, and the approver left it to you.<a href="#rules">Add a rule</a></div>
-        <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button" data-act="Always allowed">Always allow <span class="code">cargo run</span> in game</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+        <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button">Always allow <span class="code">cargo run</span> in game</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
       </div>
     </section>
     <section class="ask" aria-label="GAME-17 asks">
@@ -1279,15 +1316,15 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
         <div class="diff"><div class="f">src/player/movement.rs</div><div class="l m">- const COYOTE_TIME: f32 = 0.08;</div><div class="l p">+ const COYOTE_TIME: f32 = 0.12;</div></div>
         <div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 120 ms. This is the only line that changes.”</span></div>
         <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/player</span> is protected by your rule <a href="#rules">protect-player</a>.</div>
-        <div class="ask-actions"><button class="btn primary" type="button" data-act="Allowed"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button" data-act="Denied"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
+        <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
       </div>
     </section>
   </div>
 </section>
 
 <!-- GOALS -->
-<section class="view" data-view="goals" hidden>
-  <header class="top"><h1>Goals</h1><div class="actions"><button class="btn primary" type="button" data-open="new-goal"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New goal</span></button></div></header>
+<section class="view" id="goals" data-view="goals">
+  <header class="top"><h1>Goals</h1><div class="actions"><button class="btn primary" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New goal</span></button></div></header>
   <div class="page">
     <div class="table">
       <table class="goals">
@@ -1299,7 +1336,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
           <tr class="sub"><td colspan="6"><span class="cellflex"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="mono faint">GAME-18</span><a href="#ticket">Gamepad support in menus</a><span class="faint">· Up next</span></span></td></tr>
           <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Enemy waves</b><span class="faint">game · studio/goal/enemy-waves</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:3%"></i></span><span class="faint num">0 of 3</span></span></td><td class="r num">$0.42</td><td><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></td><td class="r faint">2m ago</td><td></td></tr>
           <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Editor basics</b><span class="faint">editor · studio/goal/editor-basics</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:33%"></i></span><span class="faint num">1 of 3</span></span></td><td class="r num">$1.88</td><td><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></td><td class="r faint">5h ago</td><td></td></tr>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Settings</b><span class="faint">game · studio/goal/settings</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:100%"></i></span><span class="faint num">2 of 2</span></span></td><td class="r num">$1.96</td><td><span class="pill ok"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Done</span></td><td class="r faint">1h ago</td><td class="r"><button class="btn sm" type="button" data-act="Merged into master"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge</button></td></tr>
+          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Settings</b><span class="faint">game · studio/goal/settings</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:100%"></i></span><span class="faint num">2 of 2</span></span></td><td class="r num">$1.96</td><td><span class="pill ok"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Done</span></td><td class="r faint">1h ago</td><td class="r"><button class="btn sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge</button></td></tr>
           <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b class="muted">Audio pass</b><span class="faint">game · merged into master</span></span></span></td><td><span class="cellflex"><span class="track neutral"><i style="width:100%"></i></span><span class="faint num">4 of 4</span></span></td><td class="r num">$6.10</td><td><span class="pill neutral"><svg class="st landed" style="color:var(--fg-3)" aria-hidden="true"><use href="#s-landed"/></svg>Merged</span></td><td class="r faint">Yesterday</td><td></td></tr>
         </tbody>
       </table>
@@ -1308,7 +1345,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 </section>
 
 <!-- BUDGET -->
-<section class="view" data-view="budget" hidden>
+<section class="view" id="budget" data-view="budget">
   <header class="top"><h1>Budget</h1><span class="faint" style="font-size:13px">Spend over the last 24 hours. A run only starts if its allowance fits under every limit.</span></header>
   <div class="page">
     <div class="kpis">
@@ -1361,7 +1398,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 </section>
 
 <!-- HIRES -->
-<section class="view" data-view="hires" hidden>
+<section class="view" id="hires" data-view="hires">
   <header class="top"><h1>Hires</h1><div class="actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New hire</span></button></div></header>
   <div class="page">
     <section>
@@ -1391,7 +1428,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
 </section>
 
 <!-- RULES -->
-<section class="view" data-view="rules" hidden>
+<section class="view" id="rules" data-view="rules">
   <header class="top"><h1>Rules</h1><div class="actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New rule</span></button></div></header>
   <div class="page">
     <div class="split">
@@ -1407,7 +1444,7 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
       <div class="ed">
         <div class="ed-h"><h2>protect-player</h2><span class="pill neutral">protect</span><span class="pill attn">ask</span><span class="faint" style="font-size:12.5px">game/.studio/rules/protect-player.md</span></div>
         <pre class="src" aria-label="Rule file"><span class="k">---</span><span><span class="k">kind:</span> protect</span><span><span class="k">level:</span> ask</span><span><span class="k">when:</span></span><span>  <span class="k">paths:</span> ["src/player/**"]</span><span class="k">---</span><span>Player movement is tuned by hand. Ask before</span><span>changing anything under src/player.</span></pre>
-        <div class="ed-f"><button class="btn ghost danger sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-circle-x"/></svg>Delete rule</button><span class="spacer"></span><span class="faint" style="font-size:12.5px">Applies from the next run</span><button class="btn primary sm" type="button" data-act="Saved">Save</button></div>
+        <div class="ed-f"><button class="btn ghost danger sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-circle-x"/></svg>Delete rule</button><span class="spacer"></span><span class="faint" style="font-size:12.5px">Applies from the next run</span><button class="btn primary sm" type="button">Save</button></div>
       </div>
     </div>
   </div>
@@ -1416,9 +1453,9 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
   </main>
 </div>
 
-<dialog class="dialog" id="new-ticket" aria-labelledby="nt-title">
+<div class="dialog" id="new-ticket" popover role="dialog" aria-labelledby="nt-title">
   <form method="dialog">
-    <div class="dh"><h2 id="nt-title">New ticket</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" value="cancel" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="dh"><h2 id="nt-title">New ticket</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" type="button" popovertarget="new-ticket" popovertargetaction="hide" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
     <div class="db">
       <div class="two">
         <div class="field"><label for="nt-project">Project</label><select class="input" id="nt-project"><option>game</option><option>editor</option></select></div>
@@ -1427,95 +1464,18 @@ textarea.input { height: auto; min-height: 104px; padding: 10px 12px; line-heigh
       <div class="field"><label for="nt-title-in">Title</label><input class="input" id="nt-title-in" value="Add a high score table"></div>
       <div class="field"><label for="nt-detail">Details</label><textarea class="input" id="nt-detail">Keep the top ten scores with initials, saved between sessions. Show them from the title screen.</textarea><span class="hint">What done looks like. Markdown works.</span></div>
     </div>
-    <div class="df"><span class="faint" style="font-size:12.5px">Lands on its own branch. Nothing is pushed.</span><span class="spacer"></span><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="create" data-act="Created GAME-19">Create ticket</button></div>
+    <div class="df"><span class="faint" style="font-size:12.5px">Lands on its own branch. Nothing is pushed.</span><span class="spacer"></span><button class="btn" type="button" popovertarget="new-ticket" popovertargetaction="hide">Cancel</button><button class="btn primary" type="button" popovertarget="new-ticket" popovertargetaction="hide">Create ticket</button></div>
   </form>
-</dialog>
-<dialog class="dialog" id="new-goal" aria-labelledby="ng-title">
+</div>
+<div class="dialog" id="new-goal" popover role="dialog" aria-labelledby="ng-title">
   <form method="dialog">
-    <div class="dh"><h2 id="ng-title">New goal</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" value="cancel" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="dh"><h2 id="ng-title">New goal</h2><span class="spacer" style="flex:1"></span><button class="btn ghost icon sm" type="button" popovertarget="new-goal" popovertargetaction="hide" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button></div>
     <div class="db">
       <div class="field"><label for="ng-project">Project</label><select class="input" id="ng-project"><option>game</option><option>editor</option></select></div>
       <div class="field"><label for="ng-name">Goal</label><input class="input" id="ng-name" value="Boss fight at the end of wave 10"></div>
       <div class="field"><label for="ng-brief">Brief for the producer</label><textarea class="input" id="ng-brief">One boss with two phases. It should feel fair: telegraph every attack. Reuse the enemy sprites where you can.</textarea><span class="hint">The producer splits it into tickets that land on one branch.</span></div>
     </div>
-    <div class="df"><span class="spacer"></span><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="create" data-act="Planning the goal">Start planning</button></div>
+    <div class="df"><span class="spacer"></span><button class="btn" type="button" popovertarget="new-goal" popovertargetaction="hide">Cancel</button><button class="btn primary" type="button" popovertarget="new-goal" popovertargetaction="hide">Start planning</button></div>
   </form>
-</dialog>
-<div class="toast" id="toast" role="status" aria-live="polite"><svg class="i" aria-hidden="true" style="color:var(--ok)"><use href="#i-circle-check"/></svg><span id="toast-text">Done</span></div>
+</div>
 
-<script>
-(function () {
-  var views = document.querySelectorAll('[data-view]');
-  var links = document.querySelectorAll('[data-nav]');
-  function show() {
-    var name = (location.hash || '#office').slice(1);
-    if (!document.querySelector('[data-view="' + name + '"]')) name = 'office';
-    views.forEach(function (v) { v.hidden = v.getAttribute('data-view') !== name; });
-    document.querySelector('.app').classList.toggle('rail', name === 'office');
-    var navName = name === 'ticket' ? 'board' : name;
-    links.forEach(function (a) {
-      if (a.getAttribute('data-nav') === navName) a.setAttribute('aria-current', 'page');
-      else a.removeAttribute('aria-current');
-    });
-    window.scrollTo(0, 0);
-  }
-  window.addEventListener('hashchange', show);
-  show();
-
-  var toast = document.getElementById('toast');
-  var toastText = document.getElementById('toast-text');
-  var timer;
-  function say(text) {
-    toastText.textContent = text;
-    toast.classList.add('show');
-    clearTimeout(timer);
-    timer = setTimeout(function () { toast.classList.remove('show'); }, 2200);
-  }
-  document.addEventListener('click', function (e) {
-    var act = e.target.closest('[data-act]');
-    if (act) {
-      var row = act.closest('[data-ask]');
-      say(act.getAttribute('data-act') + (row ? ' · ' + row.getAttribute('data-ask') : ''));
-      if (row) { row.style.opacity = '.45'; }
-    }
-    var open = e.target.closest('[data-open]');
-    if (open) {
-      var d = document.getElementById(open.getAttribute('data-open'));
-      if (d && d.showModal) d.showModal();
-    }
-  });
-
-  var inspector = document.getElementById('inspector');
-  var overview = inspector ? inspector.innerHTML : '';
-  function clearPressed() {
-    document.querySelectorAll('[data-sel][aria-pressed="true"]').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
-  }
-  function select(el) {
-    var key = el.getAttribute('data-sel');
-    var t = document.getElementById('t-' + key);
-    if (!t || !inspector) return;
-    clearPressed();
-    document.querySelectorAll('.floor [data-sel="' + key + '"]').forEach(function (x) { x.setAttribute('aria-pressed', 'true'); });
-    inspector.innerHTML = t.innerHTML;
-    inspector.scrollTop = 0;
-  }
-  document.addEventListener('click', function (e) {
-    var back = e.target.closest('[data-back]');
-    if (back && inspector) { clearPressed(); inspector.innerHTML = overview; return; }
-    var sel = e.target.closest('[data-sel]');
-    if (sel) select(sel);
-  });
-  document.addEventListener('keydown', function (e) {
-    var el = e.target;
-    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('.floor [role="button"][data-sel]')) { e.preventDefault(); select(el); }
-  });
-
-  var themeBtn = document.getElementById('theme');
-  themeBtn.addEventListener('click', function () {
-    var root = document.documentElement;
-    var dark = getComputedStyle(root).colorScheme.indexOf('dark') !== -1;
-    root.setAttribute('data-theme', dark ? 'light' : 'dark');
-    themeBtn.querySelector('use').setAttribute('href', dark ? '#i-sun' : '#i-moon');
-  });
-})();
-</script>

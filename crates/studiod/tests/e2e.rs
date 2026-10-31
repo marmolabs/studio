@@ -1020,8 +1020,11 @@ async fn spend_is_reported_by_day_model_and_ticket() {
     let days = days.as_array().unwrap();
     assert_eq!(days.len(), 3);
     assert_eq!(days[0]["usd"], 0.0);
-    assert!((days[2]["usd"].as_f64().unwrap() - 0.25).abs() < 1e-9);
+    // Today's, unless the run crossed midnight.
+    let late = days[1]["usd"].as_f64().unwrap() + days[2]["usd"].as_f64().unwrap();
+    assert!((late - 0.25).abs() < 1e-9);
     assert!(days[0]["start_ms"].as_u64() < days[2]["start_ms"].as_u64());
+    assert!(days[0]["date"].as_str() < days[2]["date"].as_str());
 
     let budget = ok(&studio, Request::Budget).await;
     assert!((budget["spent_24h"]["by_ticket"]["GAME-1"].as_f64().unwrap() - 0.25).abs() < 1e-9);
@@ -2773,6 +2776,8 @@ async fn hires_today_counts_passed_work_reviews_and_the_approvers_calls() {
         .unwrap()
         .as_millis() as u64;
     let notes = [
+        json!({"at": now, "event": {"type": "permission", "request_id": "r", "tool": "Bash",
+                                    "input": {"command": "curl example.com"}}}),
         json!({"at": now, "note": "approver denied Bash: not needed"}),
         json!({"at": now - 2 * 86_400_000, "note": "approver allowed Bash: too old"}),
     ]
@@ -2789,6 +2794,17 @@ async fn hires_today_counts_passed_work_reviews_and_the_approvers_calls() {
             today["gatekeeper"]["allowed"].as_u64()
         ),
         (Some(1), Some(0))
+    );
+
+    let calls = ok(&studio, Request::ApproverCalls { limit: 10 }).await;
+    assert_eq!(calls.as_array().unwrap().len(), 1, "{calls}");
+    assert_eq!(
+        (&calls[0]["ticket"], &calls[0]["verdict"], &calls[0]["what"]),
+        (
+            &json!("GAME-9"),
+            &json!("denied"),
+            &json!("curl example.com")
+        )
     );
 }
 

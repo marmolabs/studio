@@ -1,8 +1,11 @@
 # Web UI design
 
 `prototype.html` is the reference for every page: open it in a browser (sidebar
-links switch pages, the Office first; the moon button switches theme) or render
-it with Quick Look (below). Build the app to look and behave like it. Its CSS is the design system:
+links switch pages, the Office first; picking on the floor opens its panel; the
+moon button switches theme) or render it with Quick Look (below), which shows
+the Office. Like the app, it has no script of its own: links and `:target` pick
+the page and the panel, popovers open the dialogs, and a checkbox flips the
+theme. Build the app to look and behave like it. Its CSS is the design system:
 take the values, spacing and structure from it. Its data is sample data; the
 app shows only real data from studiod.
 

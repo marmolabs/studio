@@ -230,9 +230,9 @@ First release. Early; expect breaking changes.
   icons and counts, a sticky top bar, and shared components
   (state glyphs and rings, pills, avatars, chips, KPI strip, grouped rows,
   step bar, meters, rail properties, ask card, popover menu and dialog).
-- studiod: `SpendByDay` gives spend per 24-hour window for the last days;
-  `Budget`'s 24-hour spend also splits by model and by ticket; `Status` counts
-  goals and rule files.
+- studiod: `SpendByDay` gives spend per calendar day, in the time zone of the
+  machine studiod runs on, for the last days; `Budget`'s 24-hour spend also
+  splits by model and by ticket; `Status` counts goals and rule files.
 - The board, rebuilt to the new design: four figures (what needs you and the
   oldest wait, what is running by stage, what is ready to land with its diff
   size, and the last 24 hours' spend with 14 days of it as a sparkline), then
@@ -246,6 +246,16 @@ First release. Early; expect breaking changes.
 - Tickets held for budget or quota start again by themselves, so every page
   draws them as "On hold" in grey, apart from what needs you; the board lists
   them under Up next.
+- The approver's panel in the office lists its latest calls: what it allowed,
+  denied or sent to you, the command, path or URL, the ticket, and, for a
+  denial, why (every reason shows on hover). studiod has a new
+  `ApproverCalls` request that reads them from the run logs.
+- The budget chart's bars are calendar days labelled by date, with the month
+  on the first bar and on the first of each month; a phone labels every third
+  day.
+- The design prototype has no script: links and `:target` pick the page and
+  the inspector panel, popovers open its dialogs, and a checkbox flips the
+  theme.
 - Ticket and Asks pages rebuilt to the new design. A ticket shows who filed
   it and from which goal, its detail as Markdown, the ask card (the command or
   the edit as a diff, what the agent said just before asking, why it reached

@@ -7,7 +7,7 @@ use studio_core::event::Event as TicketEvent;
 use studio_core::machine::MAX_ATTEMPTS;
 use studio_core::ticket::{Ticket, TicketKind};
 use studio_git::Repo;
-use studiod::api::{AskView, Request};
+use studiod::api::{ApproverCall, AskView, Request};
 use topcoat::context::Cx;
 use topcoat::view::{BoxView, Child, View, ViewExt, component, view};
 
@@ -40,6 +40,8 @@ pub struct Detail {
     pub by_hire: BTreeMap<String, f64>,
     /// No reviewer on another model read the selected ready ticket.
     pub owner_reviews: bool,
+    /// The approver's latest calls, newest first, when it is picked.
+    pub calls: Vec<ApproverCall>,
 }
 
 /// What a panel reads once and keeps while its stream runs: the budget's cap
@@ -50,12 +52,20 @@ pub struct Detail {
 pub struct Memo {
     cap: Option<Option<f64>>,
     ready: Option<(u64, Files, bool)>,
+    /// The approver's latest calls, with when they were read.
+    calls: Option<(u64, Vec<ApproverCall>)>,
 }
 
 const SAID_SHOWN: usize = 280;
 const STEPS_SHOWN: usize = 3;
 const RECENT_SHOWN: usize = 5;
 const ARG_SHOWN: usize = 120;
+/// The approver's calls its panel lists. studiod reads every fresh run log
+/// for them, so they are read again at most every `CALLS_EVERY` ms.
+const CALLS_SHOWN: usize = 8;
+const CALLS_EVERY: u64 = 30_000;
+/// How much of a call's command or path shows; its title has the rest.
+const CALL_WHAT: usize = 60;
 
 pub async fn detail(config: &AppConfig, office: &Office, sel: &str, memo: &mut Memo) -> Detail {
     let socket = &config.socket;
@@ -124,11 +134,28 @@ pub async fn detail(config: &AppConfig, office: &Office, sel: &str, memo: &mut M
                 ..Detail::default()
             }
         }
-        Some(("hires", _)) => Detail {
-            by_hire: serde_json::from_value(budget().await["spent_24h"]["by_hire"].clone())
-                .unwrap_or_default(),
-            ..Detail::default()
-        },
+        Some(("hires", id)) => {
+            let approver = office.member(id).is_some_and(|m| m.role == "approver");
+            let calls = match &memo.calls {
+                _ if !approver => Vec::new(),
+                Some((at, calls)) if office.now.saturating_sub(*at) < CALLS_EVERY => calls.clone(),
+                _ => {
+                    let limit = CALLS_SHOWN;
+                    let calls: Vec<ApproverCall> =
+                        client::call(socket, Request::ApproverCalls { limit })
+                            .await
+                            .unwrap_or_default();
+                    memo.calls = Some((office.now, calls.clone()));
+                    calls
+                }
+            };
+            Detail {
+                by_hire: serde_json::from_value(budget().await["spent_24h"]["by_hire"].clone())
+                    .unwrap_or_default(),
+                calls,
+                ..Detail::default()
+            }
+        }
         _ => Detail::default(),
     }
 }
@@ -192,6 +219,7 @@ const PANEL_TITLE: &str =
     "text-[16px] font-semibold leading-[22px] tracking-[-0.01em] [text-wrap:balance]";
 const DOING: &str = "flex min-w-0 items-center gap-2 rounded-[7px] border border-line bg-bg-2 px-2.5 py-[7px] text-[13px] leading-[18px] text-fg-2 [&>.i]:size-3.5 [&>.i]:text-fg-3";
 const TOOL_ROW: &str = "grid grid-cols-[16px_auto_minmax(0,1fr)_auto] items-center gap-2.5 border-t border-line px-3 py-[7px] text-[12.5px] first:border-t-0 [&>.i]:size-3.5 [&>.i]:text-fg-3";
+const TICKET_LINK: &str = "font-medium text-fg hover:underline";
 const EVENT_ROW: &str = "grid grid-cols-[36px_16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5 text-[13px] leading-5 first:border-t-0 first:pt-0.5 [&>.st]:mt-0.5 [&>.prog]:mt-0.5";
 /// A ticket in a list: its id, glyph and title.
 const TICKET_ROW: &str = "grid grid-cols-[64px_16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5 text-[13px] leading-5 first:border-t-0 first:pt-0.5 hover:bg-bg-2 [&>.st]:mt-0.5 [&>.prog]:mt-0.5";
@@ -1160,6 +1188,8 @@ async fn hire_panel(
     let producer = member.role == "producer";
     let words = role_words(&member.role);
     let did = office.today.get(&id).map(hires::did).unwrap_or_default();
+    let calls = detail.calls.clone();
+    let now = office.now;
     Ok(view! {
         head(
             who(hire: id.clone(), model: member.model.clone(), plain: front || resting)
@@ -1190,6 +1220,16 @@ async fn hire_panel(
                 <dt>"Spent"</dt>
                 <dd><span class="tabular-nums">(ui::usd(spent))</span> <span class="text-fg-3">" in the last 24 hours"</span></dd>
             </dl>
+            if !calls.is_empty() {
+                <section>
+                    <h3 class=(SECTION_LABEL)>"Latest"</h3>
+                    <div class="flex flex-col">
+                        for call in calls {
+                            call_row(call: call, now: now)
+                        }
+                    </div>
+                </section>
+            }
             if !open.is_empty() {
                 <section>
                     <h3 class=(SECTION_LABEL)>"On now"</h3>
@@ -1225,6 +1265,47 @@ async fn hire_panel(
                 }
                 <a href=(format!("/hires?file={id}")) class=(ui::GHOST)>"Edit hire"</a>
             </div>
+        </div>
+    })
+}
+
+/// One of the approver's calls, worded as the design has them: "Allowed
+/// `cargo test` in GAME-12", "Denied `curl` in GAME-15: not needed", "Sent
+/// you GAME-14: `cargo run`". The approver's reason shows on hover.
+#[component]
+async fn call_row(call: ApproverCall, now: u64) -> topcoat::Result<impl View> {
+    let what = if call.what.is_empty() {
+        words::tool_name(&call.tool)
+    } else {
+        truncate(&call.what, CALL_WHAT)
+    };
+    let code = format!("{} inline-block max-w-full truncate align-bottom", ui::CODE);
+    let link = format!("/tickets/{}", call.ticket);
+    let ticket = call.ticket.clone();
+    let full = call.what.clone();
+    Ok(view! {
+        <div class=(EVENT_ROW) title=(call.reason.clone())>
+            <span class="text-[12px] tabular-nums text-fg-3">(ago(now.saturating_sub(call.at)))</span>
+            if call.verdict == "allowed" {
+                <span class="flex h-5 items-center text-ok-fg">ui::icon(name: "check", small: true)</span>
+                <span class="min-w-0 text-fg-2">
+                    "Allowed " <code class=(code.clone()) title=(full.clone())>(what.clone())</code>
+                    " in " <a href=(link.clone()) class=(TICKET_LINK)>(ticket.clone())</a>
+                </span>
+            } else if call.verdict == "denied" {
+                <span class="flex h-5 items-center text-bad-fg">ui::icon(name: "x", small: true)</span>
+                <span class="min-w-0 text-fg-2">
+                    "Denied " <code class=(code.clone()) title=(full.clone())>(what.clone())</code>
+                    " in " <a href=(link.clone()) class=(TICKET_LINK)>(ticket.clone())</a>
+                    ": " (call.reason.clone())
+                </span>
+            } else {
+                ui::state_icon(state: "asking")
+                <span class="min-w-0 text-fg-2">
+                    "Sent you " <a href=(link) class=(TICKET_LINK)>(ticket)</a>
+                    ": " <code class=(code) title=(full)>(what)</code>
+                </span>
+            }
         </div>
     })
 }
@@ -1480,7 +1561,7 @@ async fn event_row(
             <span class="text-[12px] tabular-nums text-fg-3">(ago(now.saturating_sub(happened.at_ms)))</span>
             ui::state_icon(state: state)
             <span class="min-w-0 text-fg-2">
-                <a href=(format!("/tickets/{}", happened.ticket_id)) class="font-medium text-fg hover:underline">(happened.ticket_id.clone())</a>
+                <a href=(format!("/tickets/{}", happened.ticket_id)) class=(TICKET_LINK)>(happened.ticket_id.clone())</a>
                 " " (said)
             </span>
         </div>

@@ -1,5 +1,6 @@
 use crate::api::{
-    AskView, Estimate, FileKind, FileView, HireDay, RECENT_EVENTS, Request, Response, RuleFile,
+    APPROVER_CALLS, AskView, Estimate, FileKind, FileView, HireDay, RECENT_EVENTS, Request,
+    Response, RuleFile,
 };
 use crate::budget::{self, DAY_MS, Reservation};
 use crate::gc;
@@ -1222,6 +1223,12 @@ impl Studio {
             Request::Files { kind } => self.files(kind),
             Request::RuleFiles => Ok(Response::ok(self.rule_file_list())),
             Request::HiresToday => self.hires_today(),
+            Request::ApproverCalls { limit } => {
+                let since = now_ms().saturating_sub(DAY_MS);
+                let runs = self.paths.data_dir.join("runs");
+                let limit = limit.min(APPROVER_CALLS);
+                Ok(Response::ok(today::approver_calls(&runs, since, limit)))
+            }
             Request::SaveFile { kind, name, text } => self.save_file(kind, &name, &text),
             Request::DeleteFile { kind, name } => self.delete_file(kind, &name),
             Request::TestRule { text, since } => {

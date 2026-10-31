@@ -105,9 +105,9 @@ pub enum Request {
     /// Limits (with each hire's own daily and per-ticket caps), spend over the
     /// last 24 hours, and live reservations.
     Budget,
-    /// Spend in each of the last `days` 24-hour windows, as `DaySpend`s,
-    /// oldest first. The last window ends now, so it matches `Budget`'s
-    /// `spent_24h` and the daily limit. At most 90 days.
+    /// Spend on each of the last `days` calendar days in the time zone of
+    /// the machine studiod runs on, as `DaySpend`s, oldest first. The last
+    /// is today so far. At most 90 days.
     SpendByDay {
         #[serde(default = "default_days")]
         days: u32,
@@ -190,6 +190,12 @@ pub enum Request {
     RuleFiles,
     /// What each hire did in the last 24 hours, as `HireDay`s by hire id.
     HiresToday,
+    /// The approver's calls over the last 24 hours, as `ApproverCall`s,
+    /// newest first: at most `limit`, and at most `APPROVER_CALLS`.
+    ApproverCalls {
+        #[serde(default = "default_calls")]
+        limit: usize,
+    },
     /// Replays a rule file's text against the tool calls agents made since
     /// `since` (ms since the epoch), without saving it.
     TestRule {
@@ -265,6 +271,22 @@ pub struct HireDay {
     pub routed: u32,
 }
 
+/// One tool call the approver decided, from the run logs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ApproverCall {
+    pub ticket: String,
+    /// When it decided, in epoch milliseconds.
+    pub at: u64,
+    pub tool: String,
+    /// The Bash command, the path or the URL, else the input JSON cut
+    /// short; empty when the log has no request for the call.
+    #[serde(default)]
+    pub what: String,
+    /// `allowed`, `denied`, or `to_owner` when it left the call to the owner.
+    pub verdict: String,
+    pub reason: String,
+}
+
 /// What a rule would have done to past tool calls.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuleTest {
@@ -307,10 +329,14 @@ pub struct Estimate {
     pub eta_ms: Option<u64>,
 }
 
-/// What was spent in one 24-hour window.
+/// What was spent on one calendar day.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DaySpend {
-    /// The window's start, in epoch milliseconds; it ends 24 hours later.
+    /// The day, as `YYYY-MM-DD`; empty from an older studiod, whose days
+    /// were 24-hour windows ending now.
+    #[serde(default)]
+    pub date: String,
+    /// When the day began, in epoch milliseconds.
     pub start_ms: u64,
     pub usd: f64,
 }
@@ -318,8 +344,15 @@ pub struct DaySpend {
 /// The most events `Request::RecentEvents` returns.
 pub const RECENT_EVENTS: usize = 2000;
 
+/// The most calls `Request::ApproverCalls` returns.
+pub const APPROVER_CALLS: usize = 500;
+
 fn default_limit() -> usize {
     200
+}
+
+fn default_calls() -> usize {
+    50
 }
 
 fn default_days() -> u32 {

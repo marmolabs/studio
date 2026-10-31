@@ -288,7 +288,7 @@ fn rule_file(origin: &str, owner: &str, name: &str, head: &str, why: &str) -> Va
     })
 }
 
-/// What spend history looks like: 14 days, the last one ending now.
+/// What spend history looks like: 14 days to today, across a new month.
 fn spend_by_day(days: u32, today: f64) -> Value {
     const PAST: [f64; 13] = [
         3.1, 4.8, 2.2, 6.9, 5.3, 8.4, 4.1, 0.0, 1.2, 7.6, 6.2, 9.1, 5.8,
@@ -299,7 +299,15 @@ fn spend_by_day(days: u32, today: f64) -> Value {
     let all: Vec<Value> = usd
         .iter()
         .enumerate()
-        .map(|(i, usd)| json!({"start_ms": start + i as u64 * 86_400_000, "usd": usd}))
+        .map(|(i, usd)| {
+            let day = 22 + i;
+            let date = if day > 31 {
+                format!("2026-11-{:02}", day - 31)
+            } else {
+                format!("2026-10-{day}")
+            };
+            json!({"date": date, "start_ms": start + i as u64 * 86_400_000, "usd": usd})
+        })
         .collect();
     json!(all[all.len() - days..])
 }
@@ -714,6 +722,84 @@ fn reply(request: &Request) -> Value {
             "tester": {"critiques": 4}, "reviewer": {"reviews": 11},
             "approver": {"allowed": 81, "denied": 11, "to_owner": 4}, "router": {"routed": 12},
         }),
+        Request::ApproverCalls { limit } => {
+            let call = |ticket: &str,
+                        minutes: u64,
+                        tool: &str,
+                        what: &str,
+                        verdict: &str,
+                        reason: &str| {
+                json!({"ticket": ticket, "at": at(minutes), "tool": tool, "what": what,
+                       "verdict": verdict, "reason": reason})
+            };
+            let calls = [
+                call(
+                    "GAME-3",
+                    2,
+                    "Bash",
+                    "cargo run --example waves",
+                    "to_owner",
+                    "Running an example opens a game window, so it is yours to decide.",
+                ),
+                call(
+                    "GAME-2",
+                    4,
+                    "Bash",
+                    "cargo test -p game player::jump",
+                    "allowed",
+                    "Runs the movement tests inside the worktree.",
+                ),
+                call(
+                    "GAME-5",
+                    7,
+                    "Bash",
+                    "cargo clippy --all-targets -- -D warnings",
+                    "allowed",
+                    "Lints the worktree; nothing leaves it.",
+                ),
+                call(
+                    "GAME-2",
+                    12,
+                    "Bash",
+                    "rm -rf ~/.cargo/registry/cache",
+                    "denied",
+                    "Clearing the shared Cargo cache is outside the ticket and slows every other build.",
+                ),
+                call(
+                    "GAME-5",
+                    15,
+                    "WebFetch",
+                    "https://docs.rs/bevy/latest/bevy/time/struct.Timer.html",
+                    "allowed",
+                    "Reads public documentation.",
+                ),
+                call(
+                    "GAME-6",
+                    18,
+                    "Bash",
+                    "git diff --stat main...HEAD",
+                    "allowed",
+                    "Reads the branch's own changes.",
+                ),
+                call(
+                    "GAME-6",
+                    21,
+                    "Bash",
+                    "cargo test --workspace",
+                    "allowed",
+                    "Runs the tests inside the worktree.",
+                ),
+                call(
+                    "GAME-5",
+                    26,
+                    "Bash",
+                    "cargo run --release -- --capture shake.png",
+                    "allowed",
+                    "The ticket's capture step, writing inside the worktree.",
+                ),
+            ];
+            json!(calls[..calls.len().min(*limit)])
+        }
         Request::RuleFiles => json!([
             rule_file(
                 "studio",

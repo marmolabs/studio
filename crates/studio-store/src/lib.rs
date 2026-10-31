@@ -449,6 +449,44 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Spend on each of the `days` calendar days up to the one holding
+    /// `now_ms`, oldest first, as the day (`YYYY-MM-DD`), when it began
+    /// (epoch ms) and its total. Days follow SQLite's `localtime`, the time
+    /// zone of this process.
+    pub fn spend_by_local_day(&self, now_ms: u64, days: u32) -> Result<Vec<(String, u64, f64)>> {
+        if days == 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "WITH RECURSIVE back(n) AS (
+                 SELECT 0 UNION ALL SELECT n + 1 FROM back WHERE n + 1 < ?2
+             ),
+             day(d, start_s) AS (
+                 SELECT date(?1, 'unixepoch', 'localtime', 'start of day', printf('-%d days', n)),
+                        CAST(strftime('%s', ?1, 'unixepoch', 'localtime', 'start of day',
+                                      printf('-%d days', n), 'utc') AS INTEGER)
+                 FROM back
+             ),
+             spent(d, usd) AS (
+                 SELECT date(at_ms / 1000, 'unixepoch', 'localtime'), SUM(usd) FROM ledger
+                 WHERE at_ms >= (SELECT MIN(start_s) FROM day) * 1000 GROUP BY 1
+             )
+             SELECT day.d, day.start_s, COALESCE(spent.usd, 0.0)
+             FROM day LEFT JOIN spent USING (d) ORDER BY day.d",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![(now_ms / 1000) as i64, i64::from(days)],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64 * 1000,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn rebuild_projections(&mut self) -> Result<()> {
         let tx = self
             .conn

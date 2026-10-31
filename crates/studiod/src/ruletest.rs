@@ -137,9 +137,9 @@ fn worktree_in(input: &Value) -> Option<PathBuf> {
         })
 }
 
-/// The command or path of a tool call, else its input cut short.
-fn what(input: &Value) -> String {
-    let named = ["command", "file_path", "path", "notebook_path"]
+/// The command, path or URL of a tool call, else its input cut short.
+pub(crate) fn what(input: &Value) -> String {
+    let named = ["command", "file_path", "path", "notebook_path", "url"]
         .iter()
         .find_map(|key| input[*key].as_str());
     let text = named.map_or_else(|| input.to_string(), str::to_string);
@@ -221,6 +221,10 @@ mod tests {
     #[test]
     fn what_cuts_other_inputs() {
         let long = "x".repeat(500);
-        assert_eq!(what(&json!({"url": long})).chars().count(), WHAT_CHARS);
+        assert_eq!(what(&json!({"query": long})).chars().count(), WHAT_CHARS);
+        assert_eq!(
+            what(&json!({"url": "https://a.b", "prompt": "x"})),
+            "https://a.b"
+        );
     }
 }

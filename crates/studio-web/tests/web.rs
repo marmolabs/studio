@@ -133,7 +133,8 @@ fn reply(request: &Request) -> Value {
         }),
         Request::SpendByDay { .. } => {
             json!((0..14)
-            .map(|i| json!({"start_ms": i * 86_400_000, "usd": if i == 13 { 2.9 } else { 1.0 }}))
+            .map(|i| json!({"date": format!("2026-10-{:02}", 18 + i), "start_ms": i * 86_400_000,
+                            "usd": if i == 13 { 2.9 } else { 1.0 }}))
             .collect::<Vec<_>>())
         }
         Request::UpdatedAt => {
@@ -163,6 +164,12 @@ fn reply(request: &Request) -> Value {
             "dev": {"done": 2, "reviews": 1},
             "approver": {"allowed": 5, "denied": 1, "to_owner": 2},
         }),
+        Request::ApproverCalls { .. } => json!([
+            {"ticket": "GAME-1", "at": ui_now() - 60_000, "tool": "Bash",
+             "what": "echo <b>hi</b>", "verdict": "denied", "reason": "not <i>needed</i>"},
+            {"ticket": "GAME-2", "at": ui_now() - 120_000, "tool": "Read",
+             "what": "src/a.rs", "verdict": "allowed", "reason": "reads"},
+        ]),
         Request::TestRule { .. } => json!({
             "rule": "gate, block", "scanned": 3,
             "hits": [{"ticket": "GAME-1", "at": 1, "tool": "Bash",
@@ -478,7 +485,7 @@ async fn pages_render_studio_data_escaped() {
         "{budget}"
     );
     assert!(budget.contains("$2 a ticket · game $3"), "{budget}");
-    // The last 7 windows: six of $1 and today's $2.90.
+    // The last 7 days: six of $1 and today's $2.90.
     assert!(
         budget.contains("$8.90") && budget.contains("$1.27 a day on average"),
         "{budget}"
@@ -490,6 +497,10 @@ async fn pages_render_studio_data_escaped() {
     );
     assert!(budget.contains("height:29.0%"), "{budget}");
     assert!(budget.contains(">Today<"), "{budget}");
+    // Each bar is a day, by its date.
+    assert!(budget.contains(r#"title="$1.00 on Oct 18""#), "{budget}");
+    assert!(budget.contains(r#"title="$2.90 today so far""#), "{budget}");
+    assert!(budget.contains(">Oct <"), "{budget}");
     // Runs and spend by hire and model.
     assert!(budget.contains(">dev<"), "{budget}");
     assert!(budget.contains(">sonnet<"), "{budget}");
@@ -807,6 +818,24 @@ async fn office_panels_answer_through_the_usual_endpoints() {
         "{hire}"
     );
     assert!(hire.contains(r#"href="/hires?file=dev""#), "{hire}");
+    assert!(!hire.contains(">Latest<"), "{hire}");
+
+    // The approver lists its latest calls, escaped, each linked to its
+    // ticket; a denial says why.
+    let approver = panel(&web, "hires/approver").await;
+    assert!(approver.contains(">Latest<"), "{approver}");
+    assert!(
+        approver.contains(">echo &lt;b&gt;hi&lt;/b&gt;<"),
+        "{approver}"
+    );
+    assert!(!approver.contains("><b>hi"), "{approver}");
+    assert!(approver.contains("Denied <code"), "{approver}");
+    assert!(
+        approver.contains(": not &lt;i&gt;needed&lt;/i&gt;<"),
+        "{approver}"
+    );
+    assert!(approver.contains("Allowed <code"), "{approver}");
+    assert!(approver.contains(r#"href="/tickets/GAME-2""#), "{approver}");
 
     // A merged goal, an unknown ticket and a forged key show the overview.
     for sel in [
