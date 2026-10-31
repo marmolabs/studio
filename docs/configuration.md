@@ -103,7 +103,7 @@ max_runs = 2
 [[projects]]
 name = "my-game"
 path = "/Users/me/games/my-game"
-integration_branch = "main"
+integration_branch = "master"
 daily_usd = 5.0
 watch_ci = true
 
@@ -149,7 +149,7 @@ verify = [
   ["cargo", "fmt", "--check"],
   ["cargo", "test", "--locked"],
 ]
-integration_branch = "main"
+integration_branch = "master"
 capture = ["cargo", "run", "--release", "--", "--capture", "{out}"]
 capture_paths = ["src/**"]
 

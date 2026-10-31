@@ -16,7 +16,7 @@ puts `studio`, `studiod` and `studio-web` in `~/.local/bin`. It never uses
 `sudo`.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/studio/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/marmolabs/studio/master/install.sh | sh
 ```
 
 Set `STUDIO_INSTALL_DIR` to install somewhere else, or `STUDIO_VERSION` to pick
@@ -26,7 +26,7 @@ Or build from source. This needs Rust 1.98; the repo pins it, so `rustup`
 fetches it.
 
 ```sh
-cargo install --git https://github.com/OWNER/studio studio studiod studio-web
+cargo install --git https://github.com/marmolabs/studio studio studiod studio-web
 ```
 
 Check the setup at any time with `studio doctor`.

@@ -78,7 +78,7 @@ hires at their desks.
 From a release (checks `SHA256SUMS`, installs to `~/.local/bin`, never uses `sudo`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/marmolabs/studio/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/marmolabs/studio/master/install.sh | sh
 ```
 
 With Cargo:
@@ -113,7 +113,7 @@ Answer asks from the web UI or `studio asks`, and merge a finished goal with
 - The [Claude Code](https://claude.com/claude-code) CLI (`claude`), installed
   and logged in. The studio runs it with your login and never reads your
   credentials.
-- `git`. Optional: `gh`, to turn failing CI on your main branch into tickets.
+- `git`. Optional: `gh`, to turn failing CI on your integration branch into tickets.
 - Rust 1.98 to build from source (pinned in `rust-toolchain.toml`).
 
 ## Docs
