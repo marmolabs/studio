@@ -1922,6 +1922,8 @@ dependencies = [
  "studio-config",
  "studio-core",
  "studio-git",
+ "studio-runtime",
+ "studio-store",
  "studiod",
  "subtle",
  "tempfile",

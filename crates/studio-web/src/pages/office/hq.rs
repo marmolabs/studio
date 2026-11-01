@@ -7,9 +7,9 @@ use studio_core::ticket::{HeldReason, Ticket, TicketKind};
 use topcoat::view::{BoxView, Child, Unescaped, View, ViewExt, component, view};
 
 use super::inspector::Detail;
-use super::model::{Doing, Floor, Pin, PinWhat, Scene, TINTS, Turn};
+use super::model::{Doing, Floor, Pin, PinWhat, Scene, Turn};
 use super::panel::{self, Extra};
-use super::{Office, ago, plan, safe};
+use super::{Office, ago, facts, plan, safe};
 use crate::ui;
 
 /// The newest events the live corner shows.
@@ -39,7 +39,7 @@ const PICK_KEY: &str = "const t = evt.target.closest('.iso [data-sel]'); if (t &
 /// The top bar's figures.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hud {
-    /// Open asks plus tickets held for the owner, as on the board.
+    /// Open asks plus tickets held for the owner.
     pub needs_you: u64,
     /// Tickets at work: not paused on an ask.
     pub running: u64,
@@ -54,19 +54,10 @@ pub struct Hud {
 
 impl Hud {
     pub fn of(office: &Office) -> Hud {
-        let held = office
-            .tickets
-            .iter()
-            .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
-            .count();
-        let shipped = super::floor::shipped(office)
-            .iter()
-            .filter(|(t, _)| t.state.kind() == "landed")
-            .count();
         Hud {
-            needs_you: office.status.asks + held as u64,
+            needs_you: facts::needs_you(office).count() as u64,
             running: office.status.at_work(),
-            shipped: shipped as u64,
+            shipped: facts::landed(office).len() as u64,
             desks_used: office.status.running,
             desks: office.status.max_runs,
             spent: office.status.spent_24h,
@@ -143,6 +134,7 @@ impl Parts {
 }
 
 fn project_rows(office: &Office, floor: &Floor) -> Vec<ProjectRow> {
+    let needs = facts::needs_you(office);
     floor
         .projects
         .iter()
@@ -155,32 +147,7 @@ fn project_rows(office: &Office, floor: &Floor) -> Vec<ProjectRow> {
                 .filter(own)
                 .filter(|t| !matches!(t.state.kind(), "landed" | "failed" | "cancelled"))
                 .count() as u64;
-            let working = office
-                .tickets
-                .iter()
-                .filter(own)
-                .filter(|t| {
-                    matches!(
-                        t.state.kind(),
-                        "claimed" | "working" | "checking" | "reviewing"
-                    )
-                })
-                .count() as u64;
-            let held = office
-                .tickets
-                .iter()
-                .filter(own)
-                .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
-                .count() as u64;
-            let asks = office
-                .asks
-                .iter()
-                .filter(|a| {
-                    office
-                        .ticket(&a.ticket)
-                        .is_some_and(|t| t.project.to_string() == *name)
-                })
-                .count() as u64;
+            let working = facts::working_in(office, name) as u64;
             let (landed, total) = floor
                 .goals
                 .iter()
@@ -188,9 +155,9 @@ fn project_rows(office: &Office, floor: &Floor) -> Vec<ProjectRow> {
                 .fold((0, 0), |(l, t), g| (l + g.landed, t + g.total));
             ProjectRow {
                 name: name.clone(),
-                tint: tint % TINTS,
+                tint: facts::wrap(tint),
                 open,
-                needs: asks + held,
+                needs: needs.in_project(office, name) as u64,
                 working,
                 landed,
                 total,
@@ -210,38 +177,33 @@ fn feed(office: &Office) -> Vec<FeedLine> {
             let ticket = office.ticket(&e.ticket_id);
             let who = ticket.map_or_else(|| "A ticket".to_string(), |t| t.hire.to_string());
             let plan = ticket.is_some_and(|t| t.kind == TicketKind::Plan);
-            let (tone, before, after) = match &e.event {
-                TicketEvent::Claimed => ("run", format!("{who} started"), String::new()),
-                TicketEvent::AskOpened { .. } => {
-                    ("needs", String::new(), " needs your say".to_string())
-                }
+            let (before, after) = match &e.event {
+                TicketEvent::Claimed => (format!("{who} started"), String::new()),
+                TicketEvent::AskOpened { .. } => (String::new(), " needs your say".to_string()),
                 TicketEvent::AskResolved { approved, .. } => (
-                    if *approved { "ok" } else { "bad" },
                     "A call on".to_string(),
                     format!(" was {}", decided(*approved)),
                 ),
-                TicketEvent::ChecksStarted => ("run", format!("{who} is checking"), String::new()),
+                TicketEvent::ChecksStarted => (format!("{who} is checking"), String::new()),
                 TicketEvent::ChecksFailed { .. } => {
-                    ("bad", String::new(), " failed its checks".to_string())
+                    (String::new(), " failed its checks".to_string())
                 }
-                TicketEvent::ReviewFailed { .. } => (
-                    "bad",
-                    String::new(),
-                    " was sent back from review".to_string(),
-                ),
+                TicketEvent::ReviewFailed { .. } => {
+                    (String::new(), " was sent back from review".to_string())
+                }
                 TicketEvent::Held { reason } => {
-                    ("held", String::new(), format!(" on hold: {}", why(reason)))
+                    (String::new(), format!(" on hold: {}", why(reason)))
                 }
                 // A plan lands when its tickets are filed.
-                TicketEvent::Landed if plan => ("ok", format!("{who} planned"), String::new()),
-                TicketEvent::Landed => ("ok", String::new(), " landed".to_string()),
-                TicketEvent::Failed { .. } => ("bad", String::new(), " failed".to_string()),
-                TicketEvent::Cancelled => ("held", String::new(), " was cancelled".to_string()),
-                _ => ("held", String::new(), " changed".to_string()),
+                TicketEvent::Landed if plan => (format!("{who} planned"), String::new()),
+                TicketEvent::Landed => (String::new(), " landed".to_string()),
+                TicketEvent::Failed { .. } => (String::new(), " failed".to_string()),
+                TicketEvent::Cancelled => (String::new(), " was cancelled".to_string()),
+                _ => (String::new(), " changed".to_string()),
             };
             FeedLine {
                 ago: ago(office.now.saturating_sub(e.at_ms)),
-                tone,
+                tone: facts::dot(facts::event_state(&e.event)),
                 before,
                 id: e.ticket_id.clone(),
                 after,
@@ -273,7 +235,7 @@ pub async fn projects_strip(rows: Vec<ProjectRow>) -> topcoat::Result<impl View>
                 <button type="button" class="pj-btn on" data-class:on="$focus === 'all'" data-on:click=(focus(None))>"All projects"</button>
                 for row in rows {
                     <button type="button" class="pj-btn" data-class:on=(format!("$focus === {}", row.tint)) data-on:click=(focus(Some(row.tint))) title=(format!("{}: {} in progress or waiting", row.name, row.open))>
-                        <i class=(format!("pjd pj-{}", row.tint))></i>
+                        <i class=(facts::dot_class(row.tint))></i>
                         (row.name.clone())
                         <span class="n">(row.open)</span>
                     </button>
@@ -315,7 +277,7 @@ pub async fn figures(hud: Hud) -> topcoat::Result<impl View> {
                     "shipped"
                 </button>
             </div>
-            <a href="/budget" class="ml-auto flex min-w-[140px] flex-col gap-[5px] max-[900px]:min-w-0 max-[900px]:flex-1" title="Spent in the last 24 hours, of the daily limit">
+            <a href="/?tab=money" class="ml-auto flex min-w-[140px] flex-col gap-[5px] max-[900px]:min-w-0 max-[900px]:flex-1" title="Spent in the last 24 hours, of the daily limit">
                 <span class="flex items-baseline justify-between gap-2.5 whitespace-nowrap text-[12px] text-fg-3">
                     <span class="max-[1100px]:hidden">"Last 24 hours"</span>
                     <span>
@@ -442,10 +404,6 @@ fn picked(svg: String, sel: &str) -> String {
     svg.replace(&at, &format!(r#"{at} data-picked="""#))
 }
 
-fn tint(projects: &[String], project: &str) -> usize {
-    projects.iter().position(|p| p == project).unwrap_or(0) % TINTS
-}
-
 /// One label over the floor, placed in percent of the floor's box.
 #[component]
 async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Result<impl View> {
@@ -453,7 +411,7 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
     let mut hint: Option<&'static str> = None;
     let body: BoxView = match pin.what {
         PinWhat::Ticket(w) => {
-            let n = tint(&projects, &w.project);
+            let n = facts::tint(&projects, &w.project);
             let (tone, state) = match &w.doing {
                 Doing::Working => ("run", "at work".to_string()),
                 Doing::Asking(what) => ("needs", format!("waiting for you: {what}")),
@@ -479,7 +437,7 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
                     } else {
                         <span class="ring" style=(ring)></span>
                     }
-                    <i class=(format!("pjd pj-{n}"))></i>
+                    <i class=(facts::dot_class(n))></i>
                     <b>(w.ticket.clone())</b>
                     <span class="t">(w.title.clone())</span>
                 </button>
@@ -487,12 +445,12 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
             .boxed()
         }
         PinWhat::Ready(c) => {
-            let n = tint(&projects, &c.project);
+            let n = facts::tint(&projects, &c.project);
             let land = format!("@post('/tickets/{}/land')", safe(&c.ticket));
             let label = format!("Land {}", c.ticket);
             view! {
                 <div class="ready" data-pj=(n)>
-                    <i class=(format!("pjd pj-{n}"))></i>
+                    <i class=(facts::dot_class(n))></i>
                     <span><b>(c.ticket.clone())</b>" ready"</span>
                     <button type="button" class=(ui::PRIMARY_SM) aria-label=(label) data-on:click=(land)>"Land"</button>
                 </div>
@@ -538,7 +496,7 @@ pub async fn corners(rows: Vec<ProjectRow>, feed: Vec<FeedLine>) -> topcoat::Res
                 }
                 for row in rows {
                     <button type="button" class="trk" data-on:click=(focus(Some(row.tint)))>
-                        <i class=(format!("pjd pj-{}", row.tint))></i>
+                        <i class=(facts::dot_class(row.tint))></i>
                         <span class="name">(row.name.clone())</span>
                         <span class="bar"><i style=(format!("width: {}%; background: var(--pj-{})", row.percent(), row.tint))></i></span>
                         <span class="num">
@@ -581,10 +539,11 @@ pub async fn side(
     extra: Extra,
     sel: String,
     tab: String,
+    history: usize,
 ) -> topcoat::Result<impl View> {
     Ok(view! {
         <aside id="hq-panel" class="panel overflow-y-auto max-[900px]:overflow-visible max-[900px]:border-l-0! max-[900px]:border-t! max-[900px]:border-line" aria-label="What needs you, projects and team">
-            panel::panel(office: office, detail: detail, extra: extra, sel: sel, tab: tab)
+            panel::panel(office: office, detail: detail, extra: extra, sel: sel, tab: tab, history: history)
         </aside>
     })
 }
@@ -607,7 +566,7 @@ mod tests {
     fn the_hud_counts_what_needs_you_and_what_runs_as_the_board_does() {
         // Four runs hold a slot, but one of them waits on an ask.
         let status: client::Status = serde_json::from_value(json!({
-            "asks": 2, "running": 4,
+            "running": 4,
             "tickets": {"held": 2, "ready": 4, "working": 2, "reviewing": 1, "asking": 1},
             "daily_usd": 100.0, "spent_24h": 34.12,
         }))
@@ -617,9 +576,18 @@ mod tests {
             ticket("G-1", "game", json!({"held": {"reason": "budget"}})),
             ticket("G-2", "game", json!({"held": {"reason": "paused"}})),
         ];
+        // Two asks wait too, and they count however the status counts them.
+        let ask = |id: &str| {
+            serde_json::from_value(json!({
+                "id": id, "ticket": "G-3", "hire": "dev", "kind": "permission",
+                "tool": "Bash", "input": {}, "reasons": [],
+            }))
+            .unwrap()
+        };
         let office = Office {
             status,
             tickets,
+            asks: vec![ask("a1"), ask("a2")],
             ..Office::default()
         };
         assert_eq!(

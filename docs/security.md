@@ -60,28 +60,18 @@ only on a network you trust, never on public Wi-Fi, and run
 
 ## The approver and the router
 
-Two cheap hires work for the studio itself.
-
-The approver decides tool calls that no rule covers, so only dangerous ones
-reach you. It allows what is a normal part of the ticket inside its worktree,
-denies what the ticket doesn't need, and sends to you what is dangerous,
-irreversible or reaches outside the project. A denial does not stop the ticket:
-the agent is told why and tries another way. Asks from your own rules (`protect`
-rules and ask-level gates) and questions from agents always reach you, never the
-approver. When the approver errors, has no budget or gives no clear answer, the
-call goes to you, with the reason shown.
-
-The router picks the hire for a ticket created without one (`studio ticket`
-without `--hire`, the board's "Pick for me", or a producer's `file_ticket`
-without a hire). Without a router, the first engineer takes it.
-
-Each call is capped at $0.05 and charged to the ticket. `studio init` writes
-both hires; deleting `hires/approver.md` or `hires/router.md` turns that one off.
+Two cheap hires work for the studio itself: the approver decides the tool calls
+no rule covers, so only dangerous ones reach you, and the router picks a hire
+for a ticket. Your own `protect` rules, ask-level gates and agents' questions
+always reach you, never the approver. When the approver errors, has no budget
+or gives no clear answer, the call goes to you. See
+[concepts](concepts.md#the-approver-and-the-router).
 
 ## What is not protected
 
 - Anything that can reach the `studiod` Unix socket acts as you. The socket
-  is in the data folder with mode `0600`, so other accounts can't use it. But
+  has mode `0600` (it is in the data folder, or in `/tmp` when that path is too
+  long for a socket), so other accounts can't use it. But
   any process running as your user can approve asks, land tickets and spend
   your budget. Don't share the machine account.
 - Bash commands that you allow run with your privileges, outside any sandbox.

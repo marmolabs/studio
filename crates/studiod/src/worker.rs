@@ -238,7 +238,10 @@ async fn work_on(
                         .collect();
                     let request = review_prompt(&ticket, &worktree.diff()?, &images, &checked);
                     log.note(&format!("review by {} ({})", reviewer.id, reviewer.model));
-                    match run.go(&worktree, &request, &mut None).await? {
+                    studio.set_judge(id, &reviewer.id.0, &reviewer.model, None);
+                    let ended = run.go(&worktree, &request, &mut None).await;
+                    studio.clear_judge(id);
+                    match ended? {
                         AgentEnd::Stopped => return Ok(()),
                         AgentEnd::Done(reply) => {
                             match verdict(reply.as_deref().unwrap_or_default()) {
@@ -1443,10 +1446,13 @@ async fn run_gates(
             "gate {} by {} ({})",
             gate.name, critic.id, critic.model
         ));
+        studio.set_judge(&ticket.id, &critic.id.0, &critic.model, Some(&gate.name));
         let pairs = image_pairs(worktree, ticket.attempts, &files, gate, log);
         let measured = measurements(worktree, &files, gate, log).await;
         let request = gate_prompt(ticket, gate, &diff, &images, &pairs, &measured);
-        let reply = match run.go(worktree, &request, &mut None).await? {
+        let ended = run.go(worktree, &request, &mut None).await;
+        studio.clear_judge(&ticket.id);
+        let reply = match ended? {
             AgentEnd::Stopped => return Ok(GateEnd::Stop),
             AgentEnd::Done(reply) => reply,
         };

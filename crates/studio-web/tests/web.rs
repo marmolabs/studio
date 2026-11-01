@@ -4,6 +4,8 @@
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use studio_web::{AppConfig, router};
 use studiod::api::{FileKind, Request, Response};
 
@@ -11,6 +13,10 @@ use studiod::api::{FileKind, Request, Response};
 static SAVED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+
+#[path = "../src/probe.rs"]
+mod probe;
+use probe::{by_id, find, has_id, matching, named, shows, tags, text_of, with};
 
 const TOKEN: &str = "0123abcd";
 
@@ -21,7 +27,7 @@ fn ui_now() -> u64 {
         .as_millis() as u64
 }
 
-fn reply(request: &Request) -> Value {
+fn reply(request: &Request, now: u64) -> Value {
     match request {
         Request::Status => json!({
             "asks": 1, "running": 2, "tickets": {"queued": 1, "working": 2}, "daily_usd": 10.0, "spent_24h": 0.25,
@@ -30,7 +36,7 @@ fn reply(request: &Request) -> Value {
                      {"id": "approver", "role": "approver", "model": "haiku"}],
         }),
         Request::RecentEvents { kinds, .. } => {
-            let at = |minutes_ago: u64| ui_now() - minutes_ago * 60_000;
+            let at = |minutes_ago: u64| now - minutes_ago * 60_000;
             let events = [
                 json!({"seq": 1, "ticket_id": "GAME-4", "at_ms": at(125), "event": {"type": "landed"}}),
                 json!({"seq": 2, "ticket_id": "GAME-1", "at_ms": at(2),
@@ -86,7 +92,7 @@ fn reply(request: &Request) -> Value {
         Request::Events {
             ticket: Some(_), ..
         } => {
-            let at = |minutes_ago: u64| ui_now() - minutes_ago * 60_000;
+            let at = |minutes_ago: u64| now - minutes_ago * 60_000;
             json!([
                 {"seq": 1, "ticket_id": "GAME-1", "at_ms": at(10),
                  "event": {"type": "claimed"}},
@@ -97,7 +103,7 @@ fn reply(request: &Request) -> Value {
             ])
         }
         Request::Activity { .. } => {
-            let at = |minutes_ago: u64| ui_now() - minutes_ago * 60_000;
+            let at = |minutes_ago: u64| now - minutes_ago * 60_000;
             json!([
                 {"seq": 1, "ticket_id": "GAME-1", "at_ms": at(30), "event": {"type": "claimed"}},
                 {"seq": 2, "ticket_id": "GAME-3", "at_ms": at(20), "event": {"type": "claimed"}},
@@ -137,9 +143,6 @@ fn reply(request: &Request) -> Value {
                             "usd": if i == 13 { 2.9 } else { 1.0 }}))
             .collect::<Vec<_>>())
         }
-        Request::UpdatedAt => {
-            json!({"GAME-3": ui_now() - 4 * 60_000, "GAME-5": ui_now() - 2 * 60_000})
-        }
         Request::Files {
             kind: FileKind::Hires,
         } => json!([
@@ -165,9 +168,9 @@ fn reply(request: &Request) -> Value {
             "approver": {"allowed": 5, "denied": 1, "to_owner": 2},
         }),
         Request::ApproverCalls { .. } => json!([
-            {"ticket": "GAME-1", "at": ui_now() - 60_000, "tool": "Bash",
+            {"ticket": "GAME-1", "at": now - 60_000, "tool": "Bash",
              "what": "echo <b>hi</b>", "verdict": "denied", "reason": "not <i>needed</i>"},
-            {"ticket": "GAME-2", "at": ui_now() - 120_000, "tool": "Read",
+            {"ticket": "GAME-2", "at": now - 120_000, "tool": "Read",
              "what": "src/a.rs", "verdict": "allowed", "reason": "reads"},
         ]),
         Request::TestRule { .. } => json!({
@@ -189,13 +192,33 @@ enum Mode {
     Empty,
     /// The same with one project added: still no tickets or goals.
     Fresh,
+    /// Like `Open`, with a clock that stands still, so that studiod says the
+    /// same thing every time it is asked.
+    Still,
+    /// Like `Open`, with forty-five more tickets that finished long ago.
+    Old,
 }
 
 impl Mode {
     fn bare(self) -> bool {
         matches!(self, Mode::Empty | Mode::Fresh)
     }
+
+    /// The time studiod tells.
+    fn now(self) -> u64 {
+        static STILL: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        match self {
+            Mode::Still => *STILL.get_or_init(ui_now),
+            _ => ui_now(),
+        }
+    }
 }
+
+/// The socket of each time studiod was asked for the office.
+static OFFICE_ASKED: Mutex<Vec<std::path::PathBuf>> = Mutex::new(Vec::new());
+
+/// Whether the second ticket has started work, for a `Mode::Still` studiod.
+static MOVED: AtomicBool = AtomicBool::new(false);
 
 /// The starter team's five.
 fn starter_team() -> Value {
@@ -208,10 +231,40 @@ fn starter_team() -> Value {
     ])
 }
 
+/// What `Request::Office` answers from the same sample data as the requests
+/// it stands for.
+fn office(mode: Mode) -> Value {
+    let part = |request: Request| answer(&request, mode).data;
+    let events = Request::RecentEvents {
+        since_ms: 0,
+        limit: None,
+        kinds: studiod::api::OFFICE_KINDS.map(String::from).to_vec(),
+    };
+    json!({
+        "status": part(Request::Status),
+        "tickets": part(Request::Tickets),
+        "asks": part(Request::Asks),
+        "events": part(events),
+        "spend": part(Request::TicketSpends),
+        "merged": part(Request::MergedTickets),
+        "sizes": {},
+        "today": part(Request::HiresToday),
+        "judges": {},
+        // What GAME-1's run last said, as the office's panel quotes it.
+        "runs": if mode.bare() { json!({}) } else {
+            json!({"GAME-1": {"said": "<img src=x> done"}})
+        },
+        "unreviewed": if mode.bare() { json!([]) } else { json!(["GAME-5"]) },
+        "now": mode.now(),
+    })
+}
+
 fn answer(request: &Request, mode: Mode) -> Response {
+    let now = mode.now();
     match request {
+        Request::Office => Response::ok(office(mode)),
         Request::Status if mode == Mode::Closed => {
-            let mut status = reply(request);
+            let mut status = reply(request, now);
             status["closed"] = json!(true);
             Response::ok(status)
         }
@@ -231,6 +284,24 @@ fn answer(request: &Request, mode: Mode) -> Response {
         {
             Response::ok(json!([]))
         }
+        Request::Tickets if mode == Mode::Old => {
+            let mut tickets = reply(request, now);
+            // Landed one after the other, the last of them filed last.
+            for n in 0..45 {
+                tickets.as_array_mut().unwrap().push(json!({
+                    "id": format!("GAME-{}", 100 + n), "project": "game",
+                    "title": format!("Old job {n}"), "goal": "", "hire": "dev",
+                    "state": if n % 3 == 0 { json!("cancelled") } else { json!("landed") },
+                    "attempts": 1, "base_branch": "master", "created_at": 1_000 + n,
+                }));
+            }
+            Response::ok(tickets)
+        }
+        Request::Tickets if mode == Mode::Still && MOVED.load(Ordering::SeqCst) => {
+            let mut tickets = reply(request, now);
+            tickets[1]["state"] = json!("working");
+            Response::ok(tickets)
+        }
         Request::SaveFile { text, .. } if text.contains("BROKEN") => {
             Response::err("validation error: lint rules require pattern")
         }
@@ -238,20 +309,25 @@ fn answer(request: &Request, mode: Mode) -> Response {
             SAVED.lock().unwrap().push((name.clone(), text.clone()));
             Response::ok(Value::Null)
         }
-        _ => Response::ok(reply(request)),
+        _ => Response::ok(reply(request, now)),
     }
 }
 
 /// A studiod stand-in on a Unix socket: one JSON request line, one reply.
 fn fake_studiod(socket: &Path, mode: Mode) {
     let listener = UnixListener::bind(socket).unwrap();
+    let socket = socket.to_path_buf();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
+            let socket = socket.clone();
             tokio::spawn(async move {
                 let (read, mut write) = stream.into_split();
                 let mut line = String::new();
                 BufReader::new(read).read_line(&mut line).await.unwrap();
                 let request: Request = serde_json::from_str(&line).unwrap();
+                if request == Request::Office {
+                    OFFICE_ASKED.lock().unwrap().push(socket);
+                }
                 let mut out = serde_json::to_string(&answer(&request, mode)).unwrap();
                 out.push('\n');
                 write.write_all(out.as_bytes()).await.unwrap();
@@ -263,10 +339,17 @@ fn fake_studiod(socket: &Path, mode: Mode) {
 struct Web {
     base: String,
     http: reqwest::Client,
+    socket: std::path::PathBuf,
     _dir: tempfile::TempDir,
 }
 
 impl Web {
+    /// How many times the office was asked of this studiod.
+    fn office_asked(&self) -> usize {
+        let asked = OFFICE_ASKED.lock().unwrap();
+        asked.iter().filter(|s| **s == self.socket).count()
+    }
+
     async fn start() -> Web {
         Web::start_with(Mode::Open).await
     }
@@ -296,7 +379,7 @@ impl Web {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         let config = AppConfig {
-            socket,
+            socket: socket.clone(),
             data_dir: dir.path().to_path_buf(),
             token: TOKEN.into(),
             base_url: base.clone(),
@@ -309,8 +392,14 @@ impl Web {
         Web {
             base,
             http,
+            socket,
             _dir: dir,
         }
+    }
+
+    /// A studiod whose clock stands still.
+    async fn start_still() -> Web {
+        Web::start_with(Mode::Still).await
     }
 
     async fn get(&self, path: &str, cookie: bool) -> reqwest::Response {
@@ -380,9 +469,9 @@ async fn the_theme_switch_sets_a_cookie_the_page_follows() {
             .form(&[("theme", theme), ("back", back)])
             .send()
     };
-    let light = post("light", "/goals").await.unwrap();
+    let light = post("light", "/hires").await.unwrap();
     assert_eq!(light.status(), 303);
-    assert_eq!(light.headers()["location"], "/goals");
+    assert_eq!(light.headers()["location"], "/hires");
     let cookie = light.headers()["set-cookie"].to_str().unwrap();
     assert!(
         cookie.starts_with("theme=light") && cookie.contains("Path=/"),
@@ -396,116 +485,79 @@ async fn the_theme_switch_sets_a_cookie_the_page_follows() {
 
     let page = |theme: &str| {
         web.http
-            .get(format!("{}/goals", web.base))
+            .get(format!("{}/hires", web.base))
             .header("cookie", format!("studio_token={TOKEN}; theme={theme}"))
             .send()
     };
     let html = page("light").await.unwrap().text().await.unwrap();
-    assert!(
-        html.contains(r#"<html lang="en" data-theme="light">"#),
-        "{html}"
-    );
+    let root = named(&html, "html").remove(0);
+    assert!(root.attr_is("lang", "en"), "{html}");
+    assert!(root.attr_is("data-theme", "light"), "{html}");
     let html = page("purple").await.unwrap().text().await.unwrap();
-    assert!(html.contains(r#"<html lang="en">"#), "{html}");
+    let root = named(&html, "html").remove(0);
+    assert!(root.attr_is("lang", "en"), "{html}");
+    assert!(!root.has("data-theme"), "{html}");
 }
 
 #[tokio::test]
 async fn pages_render_studio_data_escaped() {
     let web = Web::start().await;
 
-    let board = web.get("/board", true).await;
-    assert_eq!(board.status(), 200);
-    let html = board.text().await.unwrap();
-    assert!(
-        html.contains("Add a &lt;b&gt;pause&lt;/b&gt; menu"),
-        "{html}"
-    );
-    assert!(html.contains("out of budget"));
-    assert!(html.contains("/board/stream"));
-    // The shell: a sidebar with the nav groups, the asks badge, the live
-    // status and the last day's spend, and a top bar naming the page.
-    assert!(html.contains("<aside"), "{html}");
-    for label in [
-        "Office", "Board", "Asks", "Goals", "Studio", "Hires", "Rules", "Budget",
-    ] {
-        assert!(html.contains(&format!("{label}<")), "{label}: {html}");
+    let hires = web.get("/hires", true).await;
+    assert_eq!(hires.status(), 200);
+    let html = hires.text().await.unwrap();
+    // The shell: a sidebar with what remains, the live status and the last
+    // day's spend, and a top bar naming the page.
+    let sidebar = named(&html, "aside").remove(0).text();
+    for label in ["Office", "Studio", "Hires", "Rules"] {
+        assert!(sidebar.contains(label), "{label}: {sidebar}");
     }
-    // The Office/Board switch, with the board picked.
-    assert!(html.contains(r#"aria-label="View""#), "{html}");
+    // The pages the office replaced have no link.
+    for gone in ["/board", "/asks", "/goals", "/budget"] {
+        assert!(
+            !html.contains(&format!(r#"href="{gone}""#)),
+            "{gone}: {html}"
+        );
+    }
+    // The spend leads to the office's Money tab.
+    let spend = with(&html, "href", "/?tab=money");
     assert!(
-        html.contains(r#"href="/board" class="inline-flex h-[26px]"#),
+        spend.iter().any(|t| t.text().contains("$0.25 of $10")),
         "{html}"
     );
-    assert!(
-        html.contains(r#"$0.25<span class="text-fg-3"> of $10</span>"#),
-        "{html}"
-    );
-    assert!(html.contains(r#"aria-label="1 waiting""#), "{html}");
-    assert!(html.contains(r##"<use href="#i-inbox">"##), "{html}");
-    assert!(html.contains(r#"<symbol id="s-attn""#), "{html}");
+    assert!(has_id(&html, "s-attn"), "{html}");
     assert!(html.contains(r#"name="theme""#), "{html}");
     assert!(html.contains("2 running"), "{html}");
     assert!(html.contains(" · 1 queued"), "{html}");
-    assert!(html.contains(">Board</h1>"), "{html}");
-    assert!(html.contains(">New ticket</span>"), "{html}");
-    assert!(html.contains(r#"popovertarget="new-goal""#), "{html}");
-    assert!(html.contains(">Let the router pick</option>"), "{html}");
-    assert!(html.contains(r#"aria-current="page""#), "{html}");
-    assert!(html.contains(r#"role="progressbar""#), "{html}");
-    assert!(!html.contains("max-w-6xl"), "{html}");
-    // The groups, in order, with their counts: two asks and one held ticket,
-    // one running, one ready and two queued.
-    let count = |title: &str, n: usize| {
-        format!(r#"{title}<span class="font-normal text-fg-3 tabular-nums">{n}<"#)
-    };
-    // A ticket held for budget waits with the queue, not on the owner.
-    let groups = [
-        count("Needs you", 2),
-        count("Running", 1),
-        count("Ready to land", 1),
-        count("Up next", 3),
-    ];
-    let at: Vec<usize> = groups
-        .iter()
-        .map(|g| {
-            html.find(g.as_str())
-                .unwrap_or_else(|| panic!("{g}: {html}"))
-        })
-        .collect();
-    assert!(at.windows(2).all(|w| w[0] < w[1]), "{html}");
-    assert!(html.contains("of $10</small>"), "{html}");
-    assert!(html.contains("Waiting for a free desk"), "{html}");
-    // A plan at work says so instead of showing the steps.
-    assert!(html.contains(">Planning</span>"), "{html}");
-    assert!(html.contains(r#"href="/tickets/GAME-3""#), "{html}");
-    // What landed in the last day is in the table.
-    assert!(html.contains("Done, last 24h"), "{html}");
-    assert!(html.contains(">2h ago<"), "{html}");
+    assert_eq!(named(&html, "h1").remove(0).text(), "Hires", "{html}");
+    assert!(!with(&html, "aria-current", "page").is_empty(), "{html}");
 
     let ticket = web.get("/tickets/GAME-1", true).await.text().await.unwrap();
     assert!(ticket.contains("&lt;img src=x&gt; done"), "{ticket}");
     assert!(ticket.contains("Resume"));
     assert!(ticket.contains("$0.0019"));
-    assert_eq!(ticket.matches("<h1").count(), 1, "{ticket}");
-    assert!(ticket.contains(r#"aria-label="Breadcrumb""#), "{ticket}");
-    assert!(!ticket.contains("← Board"), "{ticket}");
+    assert_eq!(named(&ticket, "h1").len(), 1, "{ticket}");
+    let crumbs = find(&ticket, "aria-label", "Breadcrumb");
+    let back = find(crumbs.inner_html(), "href", "/");
+    assert_eq!(back.text(), "Office", "{ticket}");
     // The rail: labelled facts, the spend against the ticket's cap, a branch
     // and a try once it has run, and its stages.
+    let shown = |text: &str| tags(&ticket).iter().any(|t| t.text() == text);
     for label in [
         "Status", "Hire", "Project", "Branch", "Try", "Spent", "Progress",
     ] {
-        assert!(ticket.contains(&format!(">{label}</")), "{label}: {ticket}");
+        assert!(shown(label), "{label}: {ticket}");
     }
-    assert!(ticket.contains(" of $2<"), "{ticket}");
-    assert!(ticket.contains(">studio/game-1<"), "{ticket}");
-    assert!(ticket.contains(">2 of 3<"), "{ticket}");
+    assert!(text_of(&ticket).contains(" of $2"), "{ticket}");
+    assert!(shown("studio/game-1"), "{ticket}");
+    assert!(shown("2 of 3"), "{ticket}");
     // The top bar exports the ticket; the menu resumes or cancels it.
     assert!(
         ticket.contains(r#"href="/tickets/GAME-1/export""#),
         "{ticket}"
     );
     assert!(ticket.contains("Cancel ticket"), "{ticket}");
-    assert!(!ticket.contains(">Pause<"), "{ticket}");
+    assert!(!shows(&ticket, "Pause"), "{ticket}");
     // The live stream starts after the log the page already shows.
     assert!(
         ticket.contains("/tickets/GAME-1/stream?from=52"),
@@ -523,66 +575,15 @@ async fn pages_render_studio_data_escaped() {
     );
     assert!(!ticket.contains("<script>boom"), "{ticket}");
 
-    let asks = web.get("/asks", true).await.text().await.unwrap();
-    assert!(asks.contains("no rule allows it"));
-    assert!(asks.contains("cargo test"));
-    // Each card names its ticket and links to it; a question is answered.
-    assert!(
-        asks.contains("GAME-1</span> · Add a &lt;b&gt;pause&lt;/b&gt; menu"),
-        "{asks}"
-    );
-    assert!(asks.contains(r#"href="/tickets/GAME-1""#), "{asks}");
-    assert!(asks.contains("Allow</button>"), "{asks}");
-    assert!(asks.contains("Deny</button>"), "{asks}");
-    assert!(asks.contains("Answer</button>"), "{asks}");
-    assert!(asks.contains("Always allow"), "{asks}");
-
-    let budget = web.get("/budget", true).await.text().await.unwrap();
-    assert!(budget.contains("<table"), "{budget}");
-    // Spent of the daily limit, what live runs hold, and the other limits.
-    assert!(
-        budget.contains("$2.90") && budget.contains("of $10"),
-        "{budget}"
-    );
-    assert!(
-        budget.contains("$0.50") && budget.contains("1 run, released when it finishes"),
-        "{budget}"
-    );
-    assert!(budget.contains("$2 a ticket · game $3"), "{budget}");
-    // The last 7 days: six of $1 and today's $2.90.
-    assert!(
-        budget.contains("$8.90") && budget.contains("$1.27 a day on average"),
-        "{budget}"
-    );
-    // Bars on a dollar axis up to the daily limit, today's last.
-    assert!(
-        budget.contains("Daily limit") && budget.contains(">$7.50<"),
-        "{budget}"
-    );
-    assert!(budget.contains("height:29.0%"), "{budget}");
-    assert!(budget.contains(">Today<"), "{budget}");
-    // Each bar is a day, by its date.
-    assert!(budget.contains(r#"title="$1.00 on Oct 18""#), "{budget}");
-    assert!(budget.contains(r#"title="$2.90 today so far""#), "{budget}");
-    assert!(budget.contains(">Oct <"), "{budget}");
-    // Runs and spend by hire and model.
-    assert!(budget.contains(">dev<"), "{budget}");
-    assert!(budget.contains(">sonnet<"), "{budget}");
-    // The costliest ticket links with its (escaped) title and its outcome: a
-    // budget hold, which reads as on hold.
-    assert!(budget.contains(">On hold<"), "{budget}");
-    assert!(budget.contains(r#"href="/tickets/GAME-1""#), "{budget}");
-    assert!(
-        budget.contains("Add a &lt;b&gt;pause&lt;/b&gt; menu"),
-        "{budget}"
-    );
-    // Money is set in the body font, not mono.
-    assert!(!budget.contains("font-mono tabular-nums"), "{budget}");
-
-    // Pages use the theme tokens, not raw palette colours.
-    for page in [&html, &ticket, &asks, &budget] {
-        assert!(!page.contains("zinc-"), "{page}");
-        assert!(!page.contains("dark:"), "{page}");
+    // The ticket's ask is answered on its page.
+    assert!(ticket.contains("no rule allows it"));
+    assert!(ticket.contains("cargo test"));
+    let buttons: Vec<String> = named(&ticket, "button").iter().map(|b| b.text()).collect();
+    for word in ["Allow", "Deny", "Always allow"] {
+        assert!(
+            buttons.iter().any(|b| b.starts_with(word)),
+            "{word}: {buttons:?}"
+        );
     }
 }
 
@@ -620,7 +621,7 @@ async fn rules_are_listed_by_origin_and_saved() {
     assert!(page.contains("guide · warn"), "{page}");
     assert!(page.contains(r#"popovertarget="delete-file""#), "{page}");
     assert!(page.contains("/rules/good/delete?open=good"), "{page}");
-    assert!(page.contains(">Save<"), "{page}");
+    assert!(shows(&page, "Save"), "{page}");
 
     let save = |text: &'static str| {
         web.http
@@ -652,7 +653,7 @@ async fn a_projects_rule_is_shown_read_only() {
     assert!(page.contains("readonly"), "{page}");
     assert!(page.contains("Lives in the game project"), "{page}");
     assert!(!page.contains("delete?open="), "{page}");
-    assert!(!page.contains(">Save<"), "{page}");
+    assert!(!shows(&page, "Save"), "{page}");
 }
 
 #[tokio::test]
@@ -683,49 +684,8 @@ async fn saving_from_another_site_is_refused() {
 }
 
 #[tokio::test]
-async fn goals_show_what_they_filed() {
+async fn a_new_goal_starts_from_the_office_and_only_from_this_site() {
     let web = Web::start().await;
-    let page = web
-        .get("/goals?open=GAME-3", true)
-        .await
-        .text()
-        .await
-        .unwrap();
-    assert!(page.contains("Ship the &lt;i&gt;menus&lt;/i&gt;"), "{page}");
-    assert!(page.contains("1 of 2"), "{page}");
-    // Spend includes the cancelled ticket; the branch is the goal's own,
-    // even before anything has landed on it.
-    assert!(page.contains("$1.75"), "{page}");
-    assert!(page.contains(">studio/goal/ship-the-i-menus-i<"), "{page}");
-    assert!(page.contains(">studio/goal/add-saves<"), "{page}");
-    // Updated is the latest change across the plan and its tickets.
-    assert!(page.contains("2m ago") && page.contains("Queued"), "{page}");
-    // The open goal nests its plan and tickets.
-    assert!(page.contains(r#"href="/tickets/GAME-3""#), "{page}");
-    assert!(
-        page.contains("Menu art") && page.contains("Menu sounds"),
-        "{page}"
-    );
-    assert!(page.contains("/goals/stream?open=GAME-3"), "{page}");
-    // A value that isn't a goal never reaches the stream's expression.
-    let page = web
-        .get("/goals?open=x%27);alert(1);(%27", true)
-        .await
-        .text()
-        .await
-        .unwrap();
-    let inits: Vec<&str> = page
-        .split("data-init=\"")
-        .skip(1)
-        .filter_map(|rest| rest.split('"').next())
-        .collect();
-    assert!(inits.iter().all(|i| !i.contains("alert")), "{inits:?}");
-    assert!(page.contains("/goals/stream?open=GAME-7"), "{page}");
-    // Without a choice, the newest goal still under way is open.
-    let page = web.get("/goals", true).await.text().await.unwrap();
-    assert!(page.contains(r#"href="/tickets/GAME-7""#), "{page}");
-    assert!(!page.contains("Menu art"), "{page}");
-
     let post = |origin: &str| {
         web.http
             .post(format!("{}/goals", web.base))
@@ -752,54 +712,93 @@ async fn the_old_addresses_lead_to_the_office() {
 }
 
 #[tokio::test]
+async fn the_pages_the_office_replaced_lead_to_its_tabs() {
+    let web = Web::start().await;
+    for (old, tab) in [
+        ("/board", "/?tab=projects"),
+        ("/goals", "/?tab=projects"),
+        ("/asks", "/?tab=needs"),
+        ("/budget", "/?tab=money"),
+    ] {
+        let reply = web.get(old, true).await;
+        assert_eq!(reply.status(), 308, "{old}");
+        assert_eq!(reply.headers()["location"], tab, "{old}");
+    }
+    // Their streams went with them.
+    for stream in ["/board/stream", "/goals/stream", "/asks/stream"] {
+        assert!(
+            !web.get(stream, true).await.status().is_success(),
+            "{stream}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_office_draws_the_floor_with_its_pins() {
     let web = Web::start().await;
     assert_eq!(web.get("/", false).await.status(), 401);
 
     let html = web.get("/", true).await.text().await.unwrap();
     // The floor is one drawing, sized by its own box, with things to pick.
-    assert!(html.contains(r#"<svg class="iso""#), "{html}");
-    assert!(html.contains(r#"id="hq-scene""#), "{html}");
-    assert!(html.contains(r#"class="scene""#), "{html}");
-    assert!(html.contains("--ar: "), "{html}");
-    assert!(html.contains(r#"data-sel="tickets/GAME-1""#), "{html}");
-    assert!(html.contains(r#"data-sel="elements/board""#), "{html}");
+    let scene = by_id(&html, "hq-scene");
+    assert!(scene.attr_has("style", "--ar: "), "{html}");
+    let drawing = named(scene.inner_html(), "svg").remove(0);
+    assert!(drawing.attr_is("role", "img"), "{html}");
+    assert!(
+        drawing
+            .attr("aria-label")
+            .is_some_and(|l| l.contains("studio floor")),
+        "{html}"
+    );
+    assert!(
+        !with(&html, "data-sel", "tickets/GAME-1").is_empty(),
+        "{html}"
+    );
+    assert!(
+        !with(&html, "data-sel", "elements/board").is_empty(),
+        "{html}"
+    );
     // One handler on the floor picks whatever has a `data-sel`.
     assert!(html.contains("closest('[data-sel]')"), "{html}");
     assert!(html.contains("@get('/office/panel')"), "{html}");
     // Held at a desk: a pin with the project's colour and an escaped title.
+    let pin = pin_for(&html, "tickets/GAME-1");
+    assert!(pin.attr_is("data-pj", "0"), "{html}");
     assert!(
-        html.contains(
-            r#"<button type="button" class="tagc held" data-sel="tickets/GAME-1" data-pj="0""#
+        pin.attr("aria-label").is_some_and(
+            |l| l.starts_with("GAME-1: Add a <b>pause</b> menu") && l.contains("on hold")
         ),
         "{html}"
     );
+    assert!(pin.text().contains("Add a <b>pause</b> menu"), "{html}");
     assert!(
-        html.contains(r#"<span class="t">Add a &lt;b&gt;pause&lt;/b&gt; menu</span>"#),
+        html.contains("Add a &lt;b&gt;pause&lt;/b&gt; menu"),
         "{html}"
     );
     assert!(!html.contains(">Add a <b>"), "{html}");
-    assert!(html.contains(r#"<span class="zz">II</span>"#), "{html}");
+    assert!(pin.text().contains("II"), "{html}");
     // Ready work lands from its pin; queued work and planning are quiet chips.
+    let land = "@post('/tickets/GAME-5/land')";
+    let ready = matching(&html, |t| {
+        t.attr_is("data-pj", "0") && t.inner_html().contains(land)
+    });
+    assert!(!ready.is_empty(), "{html}");
+    assert_eq!(find(&html, "data-on:click", land).text(), "Land", "{html}");
     assert!(
-        html.contains(r#"<div class="ready" data-pj="0">"#),
+        pin_for(&html, "elements/queue").text().contains("up next"),
         "{html}"
     );
-    assert!(html.contains("@post('/tickets/GAME-5/land')"), "{html}");
     assert!(
-        html.contains(r#"class="tagc quiet" data-sel="elements/queue""#),
-        "{html}"
-    );
-    assert!(
-        html.contains(r#"class="tagc quiet" data-sel="elements/board""#),
+        pin_for(&html, "elements/board").text().contains("Planning"),
         "{html}"
     );
     // Hints name each game element and show on hover or with "What's what".
     assert!(
-        html.contains(r#"<div class="pin hint" data-for="board""#),
+        find(&html, "data-for", "board")
+            .text()
+            .contains("Whiteboard · goals"),
         "{html}"
     );
-    assert!(html.contains("<span>Whiteboard · goals</span>"), "{html}");
     assert!(
         html.contains("What&#39;s what") || html.contains("What's what"),
         "{html}"
@@ -808,9 +807,16 @@ async fn the_office_draws_the_floor_with_its_pins() {
     assert!(html.contains("$zoom"), "{html}");
     // Only hints name what they are for.
     assert!(!html.contains(r#"data-for="""#), "{html}");
-    // Open: no sign, and nothing dims.
-    assert!(!html.contains("closed-sign"), "{html}");
-    assert!(!html.contains(r#"class="scene closed""#), "{html}");
+    // Open: no sign.
+    assert!(!has_id(&html, "closed-sign"), "{html}");
+}
+
+/// The label button on the floor that picks `sel`.
+fn pin_for<'a>(html: &'a str, sel: &str) -> probe::Tag<'a> {
+    matching(html, |t| t.name == "button" && t.attr_is("data-sel", sel))
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no pin for {sel} in {html}"))
 }
 
 #[tokio::test]
@@ -828,17 +834,23 @@ async fn the_top_bar_lists_projects_and_figures() {
     );
     // All projects, then each with its tint and its open tickets (GAME-1, 2,
     // 3, 5 and 7; the landed and cancelled are done).
-    assert!(html.contains(">All projects<"), "{html}");
+    assert!(shows(&html, "All projects"), "{html}");
     assert!(html.contains("$focus = 0"), "{html}");
-    assert!(html.contains(r#"<i class="pjd pj-0"></i>"#), "{html}");
-    assert!(html.contains(r#"<span class="n">5</span>"#), "{html}");
-    // One ask and no pause held for the owner; two at work; none shipped
-    // today (GAME-4 landed two hours ago, which is still within 24 hours).
-    assert!(html.contains(r#"class="stat needs""#), "{html}");
-    assert!(html.contains(r#"<span class="ping"></span>"#), "{html}");
-    assert!(html.contains("<b>1</b>"), "{html}");
-    assert!(
-        html.contains(r#"title="Landed in the last 24 hours""#),
+    let strip = by_id(&html, "hq-projects").inner_html();
+    let game = find(strip, "title", "game: 5 in progress or waiting");
+    assert_eq!(game.text(), "game 5", "{html}");
+    // One ask and one ticket ready to land wait for the owner; two at work;
+    // GAME-4 landed two hours ago, which is still within 24 hours.
+    let figures = by_id(&html, "hq-figures").inner_html();
+    let needs = matching(figures, |t| {
+        t.name == "button" && t.attr_has("data-on:click", "$tab = 'needs'")
+    });
+    assert_eq!(needs[0].text(), "2 need you", "{html}");
+    let working = find(figures, "title", "2 of 3 desks in use");
+    assert_eq!(working.text(), "2 at work", "{html}");
+    assert_eq!(
+        find(&html, "title", "Landed in the last 24 hours").text(),
+        "1 shipped",
         "{html}"
     );
     assert!(html.contains("2 of 3 desks in use"), "{html}");
@@ -857,10 +869,10 @@ async fn the_top_bar_lists_projects_and_figures() {
     );
     assert!(html.contains(r#"action="/theme""#), "{html}");
     // Every other page keeps its sidebar, with the office at "/".
-    let board = web.get("/board", true).await.text().await.unwrap();
-    assert!(board.contains(r#"aria-label="Studio""#), "{board}");
-    assert!(board.contains(r#"href="/""#), "{board}");
-    assert!(!board.contains(r#"id="hq-scene""#), "{board}");
+    let hires = web.get("/hires", true).await.text().await.unwrap();
+    assert!(hires.contains(r#"aria-label="Studio""#), "{hires}");
+    assert!(hires.contains(r#"href="/""#), "{hires}");
+    assert!(!hires.contains(r#"id="hq-scene""#), "{hires}");
 }
 
 #[tokio::test]
@@ -868,16 +880,19 @@ async fn the_corners_track_projects_and_tell_the_latest() {
     let web = Web::start().await;
     let html = web.get("/", true).await.text().await.unwrap();
     // GAME-3's goal has one of its two tickets landed; the other is ready.
-    assert!(html.contains(r#"id="hq-corners""#), "{html}");
-    assert!(html.contains(r#"<span class="num">1/2</span>"#), "{html}");
+    let corners = by_id(&html, "hq-corners").inner_html();
+    let row = matching(corners, |t| {
+        t.name == "button" && t.attr_has("data-on:click", "$focus = 0")
+    });
+    assert!(row[0].text().starts_with("game 1/2"), "{html}");
     assert!(
         html.contains("width: 50%; background: var(--pj-0)"),
         "{html}"
     );
-    assert!(html.contains(r#"<span class="flag needs""#), "{html}");
+    assert_eq!(find(corners, "title", "Need you").text(), "2", "{html}");
     // The live feed: the newest events in words, and a way to the Log tab.
-    assert!(html.contains(r#"<ol class="mini-feed">"#), "{html}");
-    assert!(html.contains("<b>GAME-1</b> needs your say"), "{html}");
+    let feed = named(corners, "ol").remove(0).text();
+    assert!(feed.contains("GAME-1 needs your say"), "{html}");
     assert!(html.contains("$tab = 'log'"), "{html}");
 }
 
@@ -885,41 +900,17 @@ async fn the_corners_track_projects_and_tell_the_latest() {
 async fn a_closed_office_shows_its_sign() {
     let web = Web::start_with(Mode::Closed).await;
     let html = web.get("/", true).await.text().await.unwrap();
-    assert!(html.contains(r#"class="scene closed""#), "{html}");
-    assert!(html.contains(r#"class="closed-sign""#), "{html}");
-    assert!(
-        html.contains("Office closed · nothing new starts"),
+    assert_eq!(
+        by_id(&html, "closed-sign").text(),
+        "Office closed · nothing new starts",
         "{html}"
     );
 }
 
-/// The opening tag of the element whose tag contains `needle`.
-fn tag_with<'a>(html: &'a str, open: &str, needle: &str) -> &'a str {
-    let at = html.find(needle).unwrap_or_else(|| panic!("no {needle}"));
-    let from = html[..at]
-        .rfind(open)
-        .unwrap_or_else(|| panic!("no {open} before {needle}"));
-    // The tag ends at the first `>` outside a quoted value.
-    let mut quote = None;
-    let mut to = from;
-    for (i, c) in html[from..].char_indices() {
-        match (quote, c) {
-            (None, '"' | '\'') => quote = Some(c),
-            (Some(q), c) if c == q => quote = None,
-            (None, '>') => {
-                to = from + i;
-                break;
-            }
-            _ => {}
-        }
-    }
-    &html[from..=to]
-}
-
 /// Whether the tab pane for `name` is shown when the page first arrives.
 fn pane_shown(html: &str, name: &str) -> bool {
-    let tag = tag_with(html, "<div", &format!("data-show=\"$tab == '{name}'\""));
-    !tag.contains("display: none")
+    let pane = find(html, "data-show", &format!("$tab == '{name}'"));
+    !pane.attr_has("style", "display: none")
 }
 
 #[tokio::test]
@@ -931,8 +922,8 @@ async fn a_link_can_open_the_money_tab() {
     for other in ["needs", "projects", "team", "rules", "log"] {
         assert!(!pane_shown(&html, other), "{other} is open: {html}");
     }
-    let tab = tag_with(&html, "<button", "data-on:click=\"$tab = 'money'\"");
-    assert!(tab.contains(r#"aria-selected="true""#), "{tab}");
+    let tab = find(&html, "data-on:click", "$tab = 'money'");
+    assert!(tab.attr_is("aria-selected", "true"), "{html}");
 
     // Without a link, the page opens on Needs you.
     let home = web.get("/", true).await.text().await.unwrap();
@@ -965,10 +956,8 @@ async fn a_link_can_open_the_coffee_machine() {
     assert!(html.contains("The office is open"), "{html}");
     assert!(html.contains("@post('/office/close')"), "{html}");
     // The element is marked on the floor.
-    assert!(
-        html.contains(r#"data-sel="elements/coffee" data-picked="""#),
-        "{html}"
-    );
+    let marked = with(&html, "data-sel", "elements/coffee");
+    assert!(marked.iter().any(|t| t.has("data-picked")), "{html}");
 }
 
 #[tokio::test]
@@ -999,17 +988,15 @@ async fn a_link_to_a_ticket_at_a_desk_marks_it_on_the_floor() {
         .unwrap();
     assert!(html.contains("sel: 'tickets/GAME-1'"), "{html}");
     // On the drawing, the desk's element carries the mark.
-    let drawing = &html[html.find("<svg class=\"iso\"").unwrap()..];
-    let drawing = &drawing[..drawing.find("</svg>").unwrap()];
-    assert!(
-        drawing.contains(r#"data-sel="tickets/GAME-1" data-picked="""#),
-        "{drawing}"
-    );
-    assert_eq!(drawing.matches("data-picked").count(), 1, "{drawing}");
+    let drawing = named(by_id(&html, "hq-scene").inner_html(), "svg").remove(0);
+    let drawing = drawing.inner_html();
+    let marked = matching(drawing, |t| t.has("data-picked"));
+    assert_eq!(marked.len(), 1, "{drawing}");
+    assert!(marked[0].attr_is("data-sel", "tickets/GAME-1"), "{drawing}");
     // Its label is pressed, and no other is.
-    let label = tag_with(&html, "<button", r#"data-sel="tickets/GAME-1" data-pj"#);
-    assert!(label.contains(r#"aria-pressed="true""#), "{label}");
-    assert_eq!(html.matches(r#"aria-pressed="true""#).count(), 1, "{html}");
+    let label = pin_for(&html, "tickets/GAME-1");
+    assert!(label.attr_is("aria-pressed", "true"), "{html}");
+    assert_eq!(with(&html, "aria-pressed", "true").len(), 1, "{html}");
 
     // Nothing is marked when nothing is picked.
     let home = web.get("/", true).await.text().await.unwrap();
@@ -1030,6 +1017,16 @@ async fn datastar_get_with(web: &Web, path: &str, signals: Value) -> reqwest::Re
         .header("cookie", format!("studio_token={TOKEN}"))
         .header("datastar-request", "true")
         .send()
+        .await
+        .unwrap()
+}
+
+/// The panel with `tab` open and `history` rows of History asked for.
+async fn panel_on(web: &Web, sel: &str, tab: &str, history: usize) -> String {
+    let signals = json!({"sel": sel, "tab": tab, "history": history});
+    datastar_get_with(web, "/office/panel", signals)
+        .await
+        .text()
         .await
         .unwrap()
 }
@@ -1063,6 +1060,7 @@ async fn office_panels_answer_through_the_usual_endpoints() {
 
     let ready = panel(&web, "tickets/GAME-5").await;
     assert!(ready.contains("@post('/tickets/GAME-5/land')"), "{ready}");
+    assert!(ready.contains("it is yours to review"), "{ready}");
     assert!(ready.contains("src/a.rs"), "{ready}");
     assert!(!ready.contains("<i>x</i>"), "{ready}");
 
@@ -1095,31 +1093,35 @@ async fn office_panels_answer_through_the_usual_endpoints() {
         "{hire}"
     );
     assert!(hire.contains(r#"href="/hires?file=dev""#), "{hire}");
-    assert!(!hire.contains(">Latest<"), "{hire}");
+    assert!(!shows(&hire, "Latest"), "{hire}");
 
     // The approver lists its latest calls, escaped, each linked to its
     // ticket; a denial says why.
     let approver = panel(&web, "hires/approver").await;
-    assert!(approver.contains(">Latest<"), "{approver}");
-    assert!(
-        approver.contains(">echo &lt;b&gt;hi&lt;/b&gt;<"),
-        "{approver}"
-    );
+    assert!(shows(&approver, "Latest"), "{approver}");
+    assert!(shows(&approver, "echo <b>hi</b>"), "{approver}");
     assert!(!approver.contains("><b>hi"), "{approver}");
-    assert!(approver.contains("Denied <code"), "{approver}");
+    let said = text_of(&approver);
+    assert!(said.contains("Denied"), "{approver}");
+    assert!(said.contains("not <i>needed</i>"), "{approver}");
     assert!(
-        approver.contains(": not &lt;i&gt;needed&lt;/i&gt;<"),
+        !named(&approver, "i").iter().any(|i| i.text() == "needed"),
         "{approver}"
     );
-    assert!(approver.contains("Allowed <code"), "{approver}");
-    assert!(approver.contains(r#"href="/tickets/GAME-2""#), "{approver}");
+    assert!(said.contains("Allowed"), "{approver}");
+    assert!(
+        !with(&approver, "href", "/tickets/GAME-2").is_empty(),
+        "{approver}"
+    );
 
-    // A merged goal, an unknown ticket and a forged key show the tabs.
-    for sel in [
-        "goals/GAME-8",
-        "tickets/NOPE-1",
-        "tickets/GAME-1'); alert(1)//",
-    ] {
+    // A merged goal opens like any other, from History.
+    let merged = panel(&web, "goals/GAME-8").await;
+    assert!(merged.contains("Add audio"), "{merged}");
+    assert!(merged.contains("1 of 1 landed"), "{merged}");
+    assert!(!merged.contains("Merge into"), "{merged}");
+
+    // An unknown ticket and a forged key show the tabs.
+    for sel in ["tickets/NOPE-1", "tickets/GAME-1'); alert(1)//"] {
         let html = panel(&web, sel).await;
         assert!(html.contains(r#"role="tablist""#), "{sel}: {html}");
         assert!(!html.contains("alert("), "{sel}: {html}");
@@ -1151,27 +1153,11 @@ async fn the_office_stream_keeps_the_selected_panel() {
     }
     // Ticket figures keep their ids, so a figure walks when its ticket moves.
     assert!(text.contains(r#"id="w-GAME-1""#), "{text}");
-    assert!(text.contains(r#"class="tagc held""#), "{text}");
+    assert!(
+        pin_for(&text, "tickets/GAME-1").attr_has("aria-label", "on hold"),
+        "{text}"
+    );
     assert!(text.contains("@post('/tickets/GAME-5/land')"), "{text}");
-}
-
-#[tokio::test]
-async fn the_board_shows_asks_inline_and_lands_ready_work() {
-    let web = Web::start().await;
-    let html = web.get("/board", true).await.text().await.unwrap();
-    // Each ask is a row that says what it wants and can be answered there.
-    assert!(html.contains("Wants to run <span"), "{html}");
-    assert!(html.contains(">cargo test<"), "{html}");
-    assert!(html.contains(">no rule allows it<"), "{html}");
-    assert!(html.contains("/asks/ASK-1"), "{html}");
-    assert!(html.contains(r#"value="approve""#), "{html}");
-    // A question opens its ticket to be answered.
-    assert!(html.contains(">Answer</a>"), "{html}");
-    // The held ticket says why and can be resumed.
-    assert!(html.contains(">out of budget<"), "{html}");
-    assert!(html.contains("/tickets/GAME-1/resume"), "{html}");
-    // The ready ticket has a Land button.
-    assert!(html.contains("/tickets/GAME-5/land"), "{html}");
 }
 
 #[tokio::test]
@@ -1192,7 +1178,7 @@ async fn the_ticket_page_puts_its_ask_under_the_title() {
 async fn the_ticket_page_labels_its_goal_and_shows_its_activity() {
     let web = Web::start().await;
     let html = web.get("/tickets/GAME-3", true).await.text().await.unwrap();
-    assert!(html.contains(">Goal</dt>"), "{html}");
+    assert!(shows(&html, "Goal"), "{html}");
     assert!(html.contains("Ship the &lt;i&gt;menus&lt;/i&gt;"), "{html}");
     // The full goal is only in the quoted title attribute, never as markup.
     assert!(!html.contains(">Ship the <i>"), "{html}");
@@ -1356,16 +1342,25 @@ async fn hires_show_as_a_table() {
     assert_eq!(html.matches(">Idle<").count(), 2, "{html}");
     // Opening a file brings the editor, with a confirmed Delete.
     let html = web.get("/hires?file=dev", true).await.text().await.unwrap();
-    assert!(html.contains("<textarea"), "{html}");
+    assert!(!named(&html, "textarea").is_empty(), "{html}");
     assert!(html.contains("Delete this hire?"), "{html}");
     assert!(html.contains("&lt;b&gt;Dana&lt;/b&gt;"), "{html}");
 }
 
 #[tokio::test]
-async fn a_goal_reads_as_in_progress_not_as_its_plan_ticket() {
+async fn the_office_and_the_hires_render_without_the_run_logs() {
     let web = Web::start().await;
-    let page = web.get("/goals", true).await.text().await.unwrap();
-    assert!(page.contains("Running</span>"), "{page}");
+    std::fs::remove_dir_all(web._dir.path().join("runs")).unwrap();
+
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert!(home.contains(r#"id="office""#), "{home}");
+    // The panel for a ticket with a run still quotes what the studio said.
+    let ask = panel(&web, "tickets/GAME-1").await;
+    assert!(ask.contains("Wants to run a command"), "{ask}");
+    let working = panel(&web, "tickets/GAME-3").await;
+    assert!(working.contains("Plan: ship the"), "{working}");
+    let hires = web.get("/hires", true).await.text().await.unwrap();
+    assert!(hires.contains("2 done · 1 review"), "{hires}");
 }
 
 #[tokio::test]
@@ -1378,11 +1373,6 @@ async fn ready_work_shows_its_diff_and_landed_work_can_merge() {
     let landed = web.get("/tickets/GAME-4", true).await.text().await.unwrap();
     assert!(landed.contains("Merge into master"), "{landed}");
     assert!(landed.contains("nothing is pushed"), "{landed}");
-    let goals = web.get("/goals", true).await.text().await.unwrap();
-    // Merge waits until a goal is done; a merged goal shows a quiet label.
-    assert!(!goals.contains("/tickets/GAME-4/merge"), "{goals}");
-    assert!(!goals.contains("/tickets/GAME-10/merge"), "{goals}");
-    assert_eq!(goals.matches("merged into master").count(), 1, "{goals}");
     let done = web
         .get("/tickets/GAME-10", true)
         .await
@@ -1392,7 +1382,7 @@ async fn ready_work_shows_its_diff_and_landed_work_can_merge() {
     assert!(done.contains("Merged into master."), "{done}");
     assert!(!done.contains("Merge into master"), "{done}");
     // Finished first time: the first try, not the zeroth.
-    assert!(done.contains(">1 of 3<"), "{done}");
+    assert!(shows(&done, "1 of 3"), "{done}");
     // Ready work lands from its outcome, or goes back with notes.
     assert!(ready.contains("/tickets/GAME-5/land"), "{ready}");
     assert!(ready.contains("/tickets/GAME-5/changes"), "{ready}");
@@ -1474,7 +1464,8 @@ async fn the_scene_route_draws_the_floor_for_the_turn_in_the_signals() {
     // Only the floor comes back, as the element Datastar morphs by its id.
     for floor in [&first, &third] {
         assert!(floor.contains(r#"id="hq-scene""#), "{floor}");
-        assert!(floor.contains(r#"<svg class="iso""#), "{floor}");
+        let drawing = named(by_id(floor, "hq-scene").inner_html(), "svg");
+        assert!(!drawing.is_empty(), "{floor}");
         assert!(!floor.contains(r#"id="hq-panel""#), "{floor}");
     }
     assert!(first.contains(r#"data-turn="0""#), "{first}");
@@ -1507,9 +1498,79 @@ async fn the_live_stream_draws_the_floor_from_the_turn_it_was_opened_with() {
     // The effect that opens the stream runs again when the turn changes.
     let home = web.get("/", true).await.text().await.unwrap();
     assert!(
-        home.contains("data-effect=\"$sel; $turn; @get('/office/stream')\""),
+        home.contains("data-effect=\"$sel; $turn; $history; @get('/office/stream')\""),
         "{home}"
     );
+}
+
+/// Reads a stream until an update that says `needle` is whole; everything
+/// read.
+async fn read_until(stream: &mut reqwest::Response, needle: &str) -> String {
+    let mut text = String::new();
+    while !(text.contains(needle) && text.ends_with("\n\n")) {
+        let chunk = stream.chunk().await.unwrap().unwrap();
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    text
+}
+
+#[tokio::test]
+async fn the_office_page_is_one_request_to_studiod_with_all_its_parts() {
+    let web = Web::start().await;
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert_eq!(web.office_asked(), 1);
+    // The top bar, the floor with its figures and pins, the corners and the
+    // side panel with what needs the owner.
+    for id in [
+        "hq-projects",
+        "hq-figures",
+        "hq-scene",
+        "hq-corners",
+        "hq-panel",
+    ] {
+        assert!(home.contains(&format!(r#"id="{id}""#)), "{id}: {home}");
+    }
+    assert!(home.contains(r#"id="w-GAME-1""#), "{home}");
+    assert!(home.contains(r#"id="ask-ASK-1""#), "{home}");
+}
+
+#[tokio::test]
+async fn the_office_stream_sends_again_only_when_something_changed() {
+    let web = Web::start_still().await;
+    let mut stream = datastar_get(&web, "/office/stream", "").await;
+    let first = read_until(&mut stream, r#"id="inspector""#).await;
+    assert!(!first.contains(r#"id="w-GAME-2""#), "{first}");
+
+    // Nothing moves: studiod is asked again, but nothing is sent.
+    let quiet = tokio::time::timeout(Duration::from_millis(2500), stream.chunk()).await;
+    assert!(quiet.is_err(), "{quiet:?}");
+    assert!(web.office_asked() >= 3, "{}", web.office_asked());
+
+    // A ticket starts work: the next update shows its figure.
+    MOVED.store(true, Ordering::SeqCst);
+    let next = tokio::time::timeout(
+        Duration::from_secs(5),
+        read_until(&mut stream, r#"id="inspector""#),
+    )
+    .await
+    .expect("an update after the change");
+    assert!(next.contains(r#"id="w-GAME-2""#), "{next}");
+}
+
+#[tokio::test]
+async fn open_offices_share_one_read_of_studiod() {
+    let web = Web::start_still().await;
+    let mut streams = Vec::new();
+    for _ in 0..3 {
+        streams.push(datastar_get(&web, "/office/stream", "").await);
+    }
+    for stream in &mut streams {
+        read_until(stream, r#"id="inspector""#).await;
+    }
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    // Three streams, about three ticks: one read each tick, not three.
+    let asked = web.office_asked();
+    assert!((1..=5).contains(&asked), "{asked}");
 }
 
 #[tokio::test]
@@ -1517,12 +1578,12 @@ async fn the_view_controls_turn_the_floor_by_buttons_and_keys() {
     let web = Web::start().await;
     let html = web.get("/", true).await.text().await.unwrap();
     for (label, step) in [("Turn left", "$turn + 3"), ("Turn right", "$turn + 1")] {
-        let tag = tag_with(&html, "<button", &format!(r#"aria-label="{label}""#));
+        let tag = find(&html, "aria-label", label).attributes();
         assert!(tag.contains(step), "{label}: {tag}");
         assert!(tag.contains("@get('/office/scene')"), "{label}: {tag}");
     }
     // Q and E anywhere on the page, but not while typing or with a modifier.
-    let keys = tag_with(&html, "<div", "data-on:keydown__window");
+    let keys = matching(&html, |t| t.has("data-on:keydown__window"))[0].attributes();
     for part in [
         "k === 'q'",
         "k === 'e'",
@@ -1540,7 +1601,7 @@ async fn the_view_controls_turn_the_floor_by_buttons_and_keys() {
 async fn the_floor_can_be_dragged_when_zoomed_in_without_picking_what_is_under_it() {
     let web = Web::start().await;
     let html = web.get("/", true).await.text().await.unwrap();
-    let wrap = tag_with(&html, "<div", r#"id="hq-wrap""#);
+    let wrap = by_id(&html, "hq-wrap").attributes();
     // Only the mouse drags; touch keeps scrolling.
     assert!(wrap.contains("pointerType === 'mouse'"), "{wrap}");
     assert!(wrap.contains("$zoom > 1"), "{wrap}");
@@ -1569,7 +1630,7 @@ async fn a_new_studio_starts_with_the_first_steps() {
     );
     assert!(html.contains(r#"data-sel="elements/hire""#), "{html}");
     // The Needs you tab leads with what to do first.
-    assert!(html.contains(">Start here<"), "{html}");
+    assert!(shows(&html, "Start here"), "{html}");
     assert!(html.contains("Add a project"), "{html}");
     assert!(html.contains("Pin a goal on the whiteboard"), "{html}");
     assert!(html.contains("@get('/office/panel')"), "{html}");
@@ -1583,13 +1644,13 @@ async fn a_new_studio_starts_with_the_first_steps() {
     // With a project but no work yet, only the goal step is left.
     let fresh = Web::start_fresh().await;
     let html = fresh.get("/", true).await.text().await.unwrap();
-    assert!(html.contains(">Start here<"), "{html}");
+    assert!(shows(&html, "Start here"), "{html}");
     assert!(html.contains("Pin a goal on the whiteboard"), "{html}");
     assert!(!html.contains("$sel = 'elements/add-project'"), "{html}");
     // Once there is work, the list is gone.
     let busy = Web::start().await;
     let html = busy.get("/", true).await.text().await.unwrap();
-    assert!(!html.contains(">Start here<"), "{html}");
+    assert!(!shows(&html, "Start here"), "{html}");
 }
 
 #[tokio::test]
@@ -1607,17 +1668,48 @@ async fn the_add_project_and_hire_views_hold_their_forms() {
         );
     }
     assert!(add.contains("Add project"), "{add}");
+    // What studiod found is shown to be confirmed before anything is added:
+    // Add it posts the same form with the confirmation, Cancel drops it.
+    assert!(
+        add.contains(
+            "@post('/office/projects?add=yes', {contentType: 'form', selector: '#add-project'})"
+        ),
+        "{add}"
+    );
+    for found in [
+        "_found.name",
+        "_found.path",
+        "_found.branch",
+        "_found.checks",
+    ] {
+        assert!(
+            add.contains(&format!(r#"data-text="${found}""#)),
+            "{found}: {add}"
+        );
+    }
+    let buttons: Vec<String> = named(&add, "button").iter().map(|b| b.text()).collect();
+    for word in ["Add it", "Cancel"] {
+        assert!(
+            buttons.iter().any(|b| b.starts_with(word)),
+            "{word}: {buttons:?}"
+        );
+    }
+    // Coming back to the panel starts from the form again.
+    assert!(add.contains(r#"data-init="$_found.path = ''""#), "{add}");
     assert!(add.contains("Projects now"), "{add}");
     assert!(add.contains("No projects yet."), "{add}");
     assert!(!add.contains("Coming soon"), "{add}");
 
-    // With projects, each shows with its colour dot.
+    // With projects, each is listed.
     let busy = Web::start().await;
     let add = panel(&busy, "elements/add-project").await;
-    assert!(
-        add.contains(r#"<i class="pjd pj-0"></i><b class="font-medium">game</b>"#),
-        "{add}"
-    );
+    let listed = named(&add, "section")
+        .into_iter()
+        .map(|s| s.text())
+        .find(|t| t.starts_with("Projects now"))
+        .unwrap_or_default();
+    assert!(listed.contains("game"), "{add}");
+    assert!(!listed.contains("No projects yet."), "{add}");
 
     let hire = panel(&web, "elements/hire").await;
     assert!(
@@ -1635,7 +1727,9 @@ async fn the_add_project_and_hire_views_hold_their_forms() {
         "sonnet", "opus", "haiku",
     ] {
         assert!(
-            hire.contains(&format!(r#"<option value="{option}">"#)),
+            named(&hire, "option")
+                .iter()
+                .any(|o| o.attr_is("value", option)),
             "{option}: {hire}"
         );
     }
@@ -1648,4 +1742,99 @@ async fn the_add_project_and_hire_views_hold_their_forms() {
     assert!(racks.contains("$sel = 'elements/add-project'"), "{racks}");
     let racks = panel(&busy, "elements/racks").await;
     assert!(!racks.contains("$sel = 'elements/add-project'"), "{racks}");
+}
+
+/// The rows under History in a panel, as (id, the words the row shows).
+fn history_rows(html: &str) -> Vec<(String, String)> {
+    let section = named(html, "section")
+        .into_iter()
+        .find(|s| s.text().starts_with("History"))
+        .expect("History");
+    matching(section.inner_html(), |t| {
+        t.name == "button" && t.attr_has("data-on:click", "$sel = '")
+    })
+    .iter()
+    .map(|row| {
+        let click = row.attr("data-on:click").unwrap_or_default();
+        let key = click.split('\'').nth(1).unwrap_or_default().to_string();
+        let id = key.rsplit('/').next().unwrap_or_default().to_string();
+        (id, row.text())
+    })
+    .collect()
+}
+
+/// The ids of the rows under History in a panel.
+fn history_ids(html: &str) -> Vec<String> {
+    history_rows(html).into_iter().map(|(id, _)| id).collect()
+}
+
+#[tokio::test]
+async fn history_lists_merged_goals_and_old_tickets() {
+    let web = Web::start().await;
+    let html = panel_on(&web, "", "projects", 20).await;
+    // The merged goal is a row of its own, selecting its panel; so are the
+    // old tickets the rows above leave out.
+    assert!(
+        text_of(&html).contains("History 2 · newest first"),
+        "{html}"
+    );
+    let rows = history_ids(&html);
+    assert_eq!(rows, ["GAME-8", "GAME-9"], "{html}");
+    assert!(html.contains("$sel = 'goals/GAME-8'"), "{html}");
+    assert!(html.contains("$sel = 'tickets/GAME-9'"), "{html}");
+    let words = history_rows(&html);
+    assert!(words[0].1.contains("Add audio"), "{words:?}");
+    assert!(words[0].1.ends_with("merged"), "{words:?}");
+    assert!(words[1].1.ends_with("cancelled"), "{words:?}");
+    // Nothing more to show.
+    assert!(!html.contains("Show more"), "{html}");
+    // The goal's tickets are in its row, not in rows of their own.
+    assert!(!rows.contains(&"GAME-10".to_string()), "{rows:?}");
+    // The office's other rows keep what they had: a landed ticket of an open
+    // goal, which History leaves out.
+    assert!(!rows.contains(&"GAME-4".to_string()), "{rows:?}");
+}
+
+#[tokio::test]
+async fn history_pages_with_show_more() {
+    let web = Web::start_with(Mode::Old).await;
+    let first = panel_on(&web, "", "projects", 20).await;
+    let rows = history_ids(&first);
+    assert_eq!(rows.len(), 20, "{first}");
+    // Newest first: the last ticket filed comes first.
+    assert_eq!(rows[0], "GAME-144", "{first}");
+    assert_eq!(rows[1], "GAME-143", "{first}");
+    assert!(first.contains("47 · newest first"), "{first}");
+    assert!(first.contains("Show more"), "{first}");
+    // The button asks for twenty more, through the panel route.
+    assert!(
+        first.contains("data-on:click=\"$history = 40; @get('/office/panel')\""),
+        "{first}"
+    );
+
+    let more = panel_on(&web, "", "projects", 40).await;
+    let rows = history_ids(&more);
+    assert_eq!(rows.len(), 40, "{more}");
+    assert!(more.contains("$history = 60;"), "{more}");
+
+    // The last of them: all forty-seven, the oldest filed last, and no button.
+    let all = panel_on(&web, "", "projects", 60).await;
+    let rows = history_ids(&all);
+    assert_eq!(rows.len(), 47, "{all}");
+    assert_eq!(rows[45..], ["GAME-8", "GAME-9"], "{all}");
+    assert!(!all.contains("Show more"), "{all}");
+
+    // The live stream keeps what was asked for.
+    let mut stream = datastar_get_with(
+        &web,
+        "/office/stream",
+        json!({"sel": "", "tab": "projects", "history": 40}),
+    )
+    .await;
+    let mut text = String::new();
+    while !text.contains("Show more") {
+        let chunk = stream.chunk().await.unwrap().unwrap();
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(text.contains("$history = 60;"), "{text}");
 }

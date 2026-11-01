@@ -13,8 +13,6 @@ pub struct StudioConfig {
     #[serde(default)]
     pub projects: Vec<ProjectEntry>,
     #[serde(default)]
-    pub providers: HashMap<String, ProviderConfig>,
-    #[serde(default)]
     pub rules: RulesConfig,
     #[serde(default)]
     pub packs: Vec<PackEntry>,
@@ -129,6 +127,10 @@ pub struct ModelPrice {
     pub cache_write_per_mtok: f64,
 }
 
+/// The most agents that work at once, one at each desk the office holds. A
+/// larger `max_runs` runs this many.
+pub const MAX_RUNS_LIMIT: u64 = 9;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConcurrencyConfig {
@@ -157,13 +159,6 @@ pub struct PackEntry {
     pub path: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProviderConfig {
-    /// Only `claude-code` today.
-    pub kind: String,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RulesConfig {
@@ -177,17 +172,40 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("parse error: {0}")]
     Parse(#[from] toml::de::Error),
+    /// Well-formed TOML that says something studio.toml no longer allows.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl StudioConfig {
     pub fn load(paths: &StudioPaths) -> Result<Self, ConfigError> {
         let text = fs::read_to_string(paths.config_dir.join("studio.toml"))?;
-        let mut config: StudioConfig = toml::from_str(&text)?;
+        let mut config = Self::parse(&text)?;
         for project in &mut config.projects {
             project.path = resolve_project_path(&project.path, paths);
         }
         for pack in &mut config.packs {
             pack.path = resolve_project_path(&pack.path, paths);
+        }
+        Ok(config)
+    }
+
+    /// Reads studio.toml's text as written, without resolving any path.
+    pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        let table: toml::Table = toml::from_str(text)?;
+        if table.contains_key("providers") {
+            return Err(ConfigError::Invalid(
+                "the [providers] table in studio.toml is gone: remove it, and name \
+                 `runtime: claude-code` in each hire"
+                    .into(),
+            ));
+        }
+        let config: StudioConfig = toml::from_str(text)?;
+        if config.concurrency.max_runs == 0 {
+            return Err(ConfigError::Invalid(format!(
+                "max_runs in studio.toml must be from 1 to {MAX_RUNS_LIMIT}, not 0: \
+                 to pause the studio, run `studio close`"
+            )));
         }
         Ok(config)
     }
@@ -297,6 +315,33 @@ path = "packs/acme"
         let config = StudioConfig::load(&paths).unwrap();
         assert_eq!(config.projects[0].path, tmp.path().join("../code/shop"));
         assert_eq!(config.packs[0].path, tmp.path().join("packs/acme"));
+    }
+
+    #[test]
+    fn a_providers_table_is_refused_with_a_plain_message() {
+        let tmp = TempDir::new().unwrap();
+        let paths = StudioPaths::resolve(Some(tmp.path().to_path_buf()));
+        write_config(
+            tmp.path(),
+            "[budget]\ndaily_usd = 1.0\n\n[concurrency]\nmax_runs = 1\n\n\
+             [providers.work]\nkind = \"claude-code\"\n",
+        );
+        let message = StudioConfig::load(&paths).unwrap_err().to_string();
+        assert!(message.contains("[providers] table"), "{message}");
+        assert!(message.contains("runtime: claude-code"), "{message}");
+    }
+
+    #[test]
+    fn zero_max_runs_is_refused_and_points_to_studio_close() {
+        let tmp = TempDir::new().unwrap();
+        let paths = StudioPaths::resolve(Some(tmp.path().to_path_buf()));
+        write_config(
+            tmp.path(),
+            "[budget]\ndaily_usd = 1.0\n\n[concurrency]\nmax_runs = 0\n",
+        );
+        let message = StudioConfig::load(&paths).unwrap_err().to_string();
+        assert!(message.contains("from 1 to 9"), "{message}");
+        assert!(message.contains("studio close"), "{message}");
     }
 
     #[test]

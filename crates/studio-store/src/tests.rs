@@ -3,11 +3,11 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
+use crate::Store;
 use rusqlite::Connection;
 use studio_core::event::Event;
 use studio_core::ids::{HireId, ProjectId, RunId, TicketId};
 use studio_core::ticket::{HeldReason, Ticket, TicketState};
-use studio_store::Store;
 
 fn tid(id: &str) -> TicketId {
     TicketId::new(id)

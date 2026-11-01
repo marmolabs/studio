@@ -37,12 +37,12 @@ Check the setup at any time with `studio doctor`.
 studio init
 ```
 
-This writes `studio.toml`, five hires (engineer, producer, reviewer, approver, router) and two
-rules to the studio folder: agents never `git push`, and they may read the
-source of Rust dependencies without asking. It keeps any file that
+This writes `studio.toml`, five hires (engineer, producer, reviewer, approver,
+router) and two rules to the studio folder: agents never `git push`, and they
+may read the source of Rust dependencies without asking. It keeps any file that
 already exists. The folder is `~/Library/Application Support/studio` on macOS
 and `~/.config/studio` on Linux. Use `--home <dir>` or `STUDIO_HOME` to keep a
-separate studio.
+separate studio; its data folder is `<dir>/data`.
 
 Open `studio.toml` and set the budget. The starter allows $10 a day and $2 per
 ticket. See [configuration](configuration.md).
@@ -50,7 +50,8 @@ ticket. See [configuration](configuration.md).
 ## Add a project
 
 A project is a git repository. Add it from the office (the free rack in the
-checks lab, which asks for the repository's folder) or in a terminal:
+checks lab asks for the folder and shows what it would add, with its checks,
+before you confirm) or in a terminal:
 
 ```sh
 studio project add ~/code/my-app
@@ -69,7 +70,7 @@ studio pack add ~/packs/my-pack
 studio project add ~/code/my-app --pack my-pack
 ```
 
-Start the studio:
+## Start the studio
 
 ```sh
 studio up
@@ -78,19 +79,12 @@ studio up
 This starts `studiod`, the daemon that runs the agents, in the background,
 then the web UI, and opens it in your browser. Ctrl-C stops the web UI; the
 daemon keeps working. `studio up` again reopens the UI, and `studio down`
-stops the daemon. Its log is `studiod.log` in the data folder.
+stops the daemon. Its log is `studiod.log` in the data folder. `studio status`
+says what the studio is doing.
 
-The daemon reads `studio.toml` again within a second of a change, so adding a
-project or changing a budget needs no restart. Runtimes and notifications are
-read once, at start.
-
-Each ticket works in its own git worktree, so a Rust project builds from
-scratch in every one. To share one build cache across them, start the studio
-with a shared target folder. Agents and checks inherit it:
-
-```sh
-CARGO_TARGET_DIR=~/.cache/studio-target studio up
-```
+The daemon reads `studio.toml` and the hires again within a second of a
+change, so adding a project or changing a budget needs no restart. Runtimes
+and notifications are read once, at start.
 
 ## Your first ticket
 
@@ -106,12 +100,10 @@ studio board
 
 The title is what the ticket is called. The detail is the full ask: context,
 steps, what done looks like. For a long one, write it in a file and pass
-`--detail-file brief.md`.
+`--detail-file brief.md`. `studio board` lists each ticket and its state.
 
-The board lists each ticket and its state, under a strip that counts what is
-running, what needs you and what is ready, and shows today's spend. Tickets
-that need you or are ready to land come first; empty groups are left out. When the agent wants to do
-something no rule allows, it asks:
+When the agent wants to do something no rule allows, it asks. Answer in the
+office (the Needs you tab) or in a terminal:
 
 ```sh
 studio asks
@@ -123,7 +115,7 @@ studio deny <ask> -m "use the existing helper"
 your note. `deny` alone stops the ticket.
 
 Follow what the agent did with `studio log <ticket>`. When the ticket is
-ready, read the change in the worktree, then:
+ready, read the change (`studio diff <ticket>`), then:
 
 ```sh
 studio land <ticket>        # merge into the goal branch
@@ -141,10 +133,9 @@ studio merge <ticket>
 That merges in your own checkout when the branch is checked out there, and
 only if the checkout has no uncommitted changes. A conflict is backed out, and
 the studio files a ticket on the goal that merges your branch into it and
-resolves the conflicts; merge again once that ticket lands. Nothing is pushed. Once a goal branch is in the branch it started
-from, the web UI shows "merged" in place of the merge button. Clients can ask
-the daemon with the `MergedTickets` request, which lists the landed tickets
-whose goal is merged.
+resolves the conflicts; merge again once that ticket lands. Nothing is pushed.
+Once a goal branch is in the branch it started from, the office shows
+"merged" in place of the merge button.
 
 ## Your first goal
 
@@ -161,35 +152,42 @@ the full brief with `--detail` or `--detail-file brief.md`.
 The tickets show up in the office, all landing on one goal branch. The number
 of tickets one planner may file is `goals.max_filed` (default 8).
 
-## The web UI
+## The office
 
-`studio up` opens it for you. To run it alone, `studio-web` prints a link like
-`http://127.0.0.1:4870/?token=...`. The token becomes a cookie, and the page
-redirects without it. The link stays the same across restarts;
+`studio up` opens it for you. To run the web UI alone, `studio-web` prints a
+link like `http://127.0.0.1:4870/?token=...`. The token becomes a cookie, and
+the page redirects without it. The link stays the same across restarts;
 `studio up --new-token` makes a new one and the old link stops working.
 
 `studio up --host <your LAN address>` lets a phone or another computer on
 your network open the UI. Anyone on the network with the link can act as you,
 and the link travels as plain HTTP, so use it only on a network you trust.
 
-The link opens the Office: the whole studio on one floor, with tickets at
-their desks, in checks, in review and ready to land, goals on the whiteboard,
-idle hires in the lounge, and the approver and router at the front desk. A bar
-on top shows what needs you, what is at work, what shipped today and the money
-meter; its project strip focuses the floor on one project. Pick anything on the
-floor to see it in the panel beside it and act there: allow or deny an ask,
-land, resume, cancel, or give a hire work. The coffee machine closes or
-reopens the office (nothing new starts while it is closed), the empty desk adds
-desks (how many agents work at once), and the safe sets the daily and
-per-ticket limits. The panel's tabs (Needs you, Projects, Team, Money, Rules,
-Log) hold the lists. The board, goals, asks, budget, hires and rules pages have
-the lists and the detail. Each ticket page shows the ticket's detail, any ask
-waiting on it, and one live activity feed: the studio's events, the agent's
-messages as Markdown, and its tool calls folded into groups you can open. A
-rail beside it has the status, hire and model, branch, try, spend against the
-ticket's cap, time, progress through checks, review and gates, and the changed
-files. Ready and finished tickets say how they ended and offer only the actions
-that still apply. See [security](security.md) for how access works.
+The page is the whole studio on one floor: tickets at their desks, in checks,
+in review and ready to land, goals on the whiteboard, idle hires in the lounge,
+and the approver and router at the front desk. Pick anything on the floor and
+its panel opens beside it, where you act: answer an ask, land, resume, cancel,
+merge a goal, or give a hire work. The bar on top shows what needs you, what is
+at work, what shipped today and the money meter, with a strip of projects to
+focus on one.
+
+- **The panel's tabs** hold the lists: Needs you, Projects (ending with
+  History: merged goals and tickets finished more than a day ago), Team, Money,
+  Rules and Log.
+- **The coffee machine** closes or reopens the office. While it is closed,
+  nothing new starts and work already running carries on. `studio close` and
+  `studio open` do the same in a terminal.
+- **The empty desk** adds desks, which is how many agents work at once, and
+  **the safe** sets the daily and per-ticket limits.
+- **The hires and rules pages** (`/hires`, `/rules`) edit your hires and
+  rules.
+- **A ticket's page** (`/tickets/<id>`) shows its detail, any ask waiting on
+  it, one live activity feed, and a rail with its status, hire, branch, spend
+  against its cap, progress through checks, review and gates, and changed
+  files.
+- `/?tab=money` opens a tab, and `/?sel=tickets/<id>` opens a ticket's panel.
+
+See [security](security.md) for how access works.
 
 ## Next
 

@@ -38,9 +38,9 @@ impl Default for ClaudeCode {
 }
 
 impl ClaudeCode {
-    /// Uses a different program (and leading arguments), e.g. a pinned install
-    /// or a stand-in for tests.
-    pub fn with_program(program: impl Into<PathBuf>, prefix_args: Vec<String>) -> ClaudeCode {
+    /// A stand-in program (and leading arguments) for tests.
+    #[cfg(test)]
+    fn with_program(program: impl Into<PathBuf>, prefix_args: Vec<String>) -> ClaudeCode {
         ClaudeCode {
             program: program.into(),
             prefix_args,
@@ -181,7 +181,7 @@ impl Runtime for ClaudeCode {
 
 /// One parsed line of Claude's stream-json output.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Parsed {
+enum Parsed {
     Event(RunEvent),
     /// A control request the studio doesn't handle; it gets an error reply so
     /// the CLI never waits on it.
@@ -192,7 +192,7 @@ pub enum Parsed {
 
 /// Parses one stdout line. Lines that aren't JSON, or carry nothing the studio
 /// uses, give an empty list.
-pub fn parse_line(line: &str) -> Vec<Parsed> {
+fn parse_line(line: &str) -> Vec<Parsed> {
     let Ok(msg) = serde_json::from_str::<Value>(line) else {
         return Vec::new();
     };
@@ -558,6 +558,9 @@ async fn read_limited(mut stderr: ChildStderr) -> String {
         .unwrap_or(text.len());
     text[start..].to_string()
 }
+
+#[cfg(test)]
+mod recorded;
 
 #[cfg(test)]
 mod tests {

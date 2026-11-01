@@ -1459,6 +1459,7 @@ mod tests {
         assert!(html.contains(r#"data-preserve-attr="open""#), "{html}");
         assert!(html.contains(" open"), "{html}");
         assert!(html.contains("1 step"), "{html}");
-        assert!(html.contains(r#"class="pulse""#), "{html}");
+        // A running ticket says what it is doing, next to the title.
+        assert!(html.contains("Working"), "{html}");
     }
 }

@@ -55,7 +55,7 @@ pub fn set_values(
     if before.contains("\r\n") {
         text = text.replace("\r\n", "\n").replace('\n', "\r\n");
     }
-    if let Err(e) = toml::from_str::<StudioConfig>(&text) {
+    if let Err(e) = StudioConfig::parse(&text) {
         return Err(SettingsError::Unreadable(e.to_string()));
     }
     let staging = path.with_extension("toml.tmp");

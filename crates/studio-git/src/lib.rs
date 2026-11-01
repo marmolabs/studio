@@ -5,12 +5,13 @@ mod attribution;
 mod cmd;
 mod error;
 mod repo;
+#[cfg(test)]
+mod scenarios;
 mod worktree;
 
-pub use attribution::strip_attribution;
 pub use error::{GitError, Result};
 pub use repo::{EVIDENCE_DIR, LandOutcome, MergeOutcome, Repo};
-pub use worktree::{RebaseOutcome, Worktree};
+pub use worktree::Worktree;
 
 /// Lowercase ASCII letters and digits, everything else collapsed to `-`.
 pub(crate) fn slug(text: &str) -> String {

@@ -1,6 +1,6 @@
 //! Tries a rule on the tool calls agents already made, from the run logs.
 
-use crate::api::{RuleHit, RuleTest};
+use crate::api::{RuleHit, RuleTest, WORKTREES_DIR};
 use crate::studio::{Studio, StudioError, other};
 use crate::worker::tool_verdict;
 use serde_json::Value;
@@ -13,7 +13,6 @@ use studio_core::ticket::Ticket;
 
 const MAX_HITS: usize = 200;
 const WHAT_CHARS: usize = 200;
-const WORKTREES: &str = ".studio/worktrees/";
 
 /// Replays `text` against every ticket's logged tool calls made at or after
 /// `since`.
@@ -75,7 +74,7 @@ pub(crate) fn run(
         let project = studio.project(&ticket.project).map(|p| p.path);
         let root = project
             .unwrap_or_default()
-            .join(WORKTREES)
+            .join(WORKTREES_DIR)
             .join(ticket.id.to_string().to_lowercase());
         let (scanned, hits) = replay(&rule, &ctx, &root, &ticket.id.to_string(), since, &lines);
         result.scanned += scanned;
@@ -131,9 +130,9 @@ fn worktree_in(input: &Value) -> Option<PathBuf> {
         .iter()
         .filter_map(|key| input[*key].as_str())
         .find_map(|path| {
-            let (head, rest) = path.split_once(WORKTREES)?;
+            let (head, rest) = path.split_once(WORKTREES_DIR)?;
             let folder = rest.split('/').next().filter(|s| !s.is_empty())?;
-            Some(Path::new(head).join(WORKTREES).join(folder))
+            Some(Path::new(head).join(WORKTREES_DIR).join(folder))
         })
 }
 

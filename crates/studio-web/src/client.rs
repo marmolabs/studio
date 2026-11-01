@@ -37,16 +37,32 @@ pub struct Happened {
     pub event: studio_core::event::Event,
 }
 
+impl From<studiod::api::StoredEvent> for Happened {
+    fn from(stored: studiod::api::StoredEvent) -> Happened {
+        Happened {
+            ticket_id: stored.ticket_id.to_string(),
+            at_ms: stored.at_ms,
+            event: stored.event,
+        }
+    }
+}
+
+impl From<studiod::api::JudgeView> for crate::summary::Judge {
+    fn from(judge: studiod::api::JudgeView) -> crate::summary::Judge {
+        crate::summary::Judge {
+            hire: judge.hire,
+            model: judge.model,
+            gate: judge.gate,
+            at: judge.at,
+        }
+    }
+}
+
 /// The parts of `Request::Status` the pages use.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct Status {
     #[serde(default)]
-    pub asks: u64,
-    #[serde(default)]
     pub running: u64,
-    /// Plan tickets, which the Goals page lists.
-    #[serde(default)]
-    pub goals: u64,
     /// The owner's rule files.
     #[serde(default)]
     pub rules: u64,
@@ -78,7 +94,7 @@ impl Status {
     /// Tickets at work: claimed, working, in checks or in review. A run
     /// paused on an ask holds a slot (`running`) but isn't at work.
     pub fn at_work(&self) -> u64 {
-        ["claimed", "working", "checking", "reviewing"]
+        crate::ui::AT_WORK
             .iter()
             .filter_map(|state| self.tickets.get(*state))
             .sum()

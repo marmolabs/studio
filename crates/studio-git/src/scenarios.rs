@@ -1,12 +1,13 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crate::worktree::RebaseOutcome;
+use crate::{LandOutcome, MergeOutcome, Repo};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use studio_core::ids::TicketId;
-use studio_git::{LandOutcome, MergeOutcome, RebaseOutcome, Repo};
 use tempfile::TempDir;
 
 /// Runs git for test setup with the developer's global and system config hidden.

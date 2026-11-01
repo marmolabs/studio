@@ -297,7 +297,6 @@ mod tests {
             budget: crate::config::BudgetConfig::default(),
             concurrency: crate::config::ConcurrencyConfig { max_runs: 1 },
             projects: Vec::new(),
-            providers: std::collections::HashMap::new(),
             rules: crate::config::RulesConfig::default(),
             packs: Vec::new(),
             prices: Default::default(),
