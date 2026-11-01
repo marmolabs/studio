@@ -53,11 +53,25 @@ budget limits low.
 
 ### Web UI
 
-- A local web UI behind a token link. The Office shows the whole studio on one
-  floor, with a panel to act on anything you pick; Board, Asks, Goals, Budget,
-  Hires and Rules hold the lists and the detail, and each ticket has a live
-  activity feed. Dark or light, and usable on a phone. `--host` serves it to
-  your network; read docs/security.md first.
+- A local web UI behind a token link. It opens on the Office: the whole studio
+  as one isometric floor on a single page, with tickets at desks, in checks, in
+  review and ready to land, goals on the whiteboard and idle hires in the
+  lounge. Every object on the floor is a control that opens its panel beside
+  it, where you can act on it; the panel's tabs are Needs you, Projects, Team,
+  Money, Rules and Log, and `/?tab=` and `/?sel=` links open any of them.
+  Board, Asks, Goals, Budget, Hires and Rules hold the lists and the detail,
+  and each ticket has a live activity feed. Dark or light, and usable on a
+  phone. `--host` serves it to your network; read docs/security.md first.
+- From the Office you can close or reopen the studio (nothing new starts while
+  it is closed), add or remove desks (how many agents work at once, up to
+  nine), change the daily and per-ticket limits, focus the floor on one
+  project, and see each project's checks.
+- Trophies come from the studio's history, and each hire's level grows with
+  the work it has landed.
+- The office turns to show each corner (the arrows, or Q and E) and can be
+  dragged around when zoomed in. A new studio starts as a bare room that grows
+  as you add: projects and hires can be added from the office itself, and a
+  "Start here" list leads the way.
 
 ### CLI and the rest
 

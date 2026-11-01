@@ -3191,3 +3191,384 @@ SHARED = "{repo}/cache"
         spec.env
     );
 }
+
+async fn fails(studio: &Arc<Studio>, request: Request) -> String {
+    let Response { ok, error, .. } = studio.handle(request).await;
+    assert!(!ok, "request should have failed");
+    error.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_office_starts_nothing_new_until_it_reopens() {
+    let setup = setup("");
+    let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, runtime.clone());
+    assert_eq!(ok(&studio, Request::Status).await["closed"], false);
+
+    let closed = ok(&studio, Request::SetOpen { open: false }).await;
+    assert_eq!(closed["closed"], true);
+    assert!(setup.paths.data_dir.join("closed").exists());
+    assert_eq!(ok(&studio, Request::Status).await["closed"], true);
+
+    ok(&studio, create("Anything")).await;
+    studio.schedule().unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(state_of(&studio, "GAME-1").await, "queued");
+    assert!(runtime.specs().is_empty());
+
+    // A restart finds the office still closed.
+    let again = studio_reopened(&setup);
+    assert_eq!(ok(&again, Request::Status).await["closed"], true);
+
+    // Closing twice and reopening twice are both fine.
+    ok(&studio, Request::SetOpen { open: false }).await;
+    let open = ok(&studio, Request::SetOpen { open: true }).await;
+    assert_eq!(open["closed"], false);
+    ok(&studio, Request::SetOpen { open: true }).await;
+    assert!(!setup.paths.data_dir.join("closed").exists());
+    studio.schedule().unwrap();
+    until(async || !runtime.specs().is_empty()).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_the_office_lets_running_work_carry_on() {
+    let setup = setup("");
+    let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, runtime.clone());
+    ok(&studio, create("First")).await;
+    ok(&studio, create_in("Second", "Other goal")).await;
+    studio.spawn_scheduler();
+    until(async || !runtime.specs().is_empty()).await;
+    ok(&studio, Request::SetOpen { open: false }).await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    ok(&studio, create_in("Third", "Third goal")).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(state_of(&studio, "GAME-3").await, "queued");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_number_of_desks_is_set_in_studio_toml_and_applies_at_once() {
+    let setup = setup("");
+    let config = setup.paths.config_dir.join("studio.toml");
+    let before = fs::read_to_string(&config).unwrap();
+    fs::write(&config, format!("# kept as written\n{before}")).unwrap();
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+
+    for bad in [0, 10, 1000] {
+        let err = fails(&studio, Request::SetMaxRuns { max_runs: bad }).await;
+        assert!(err.contains("from 1 to 9"), "{err}");
+    }
+    assert_eq!(ok(&studio, Request::Status).await["max_runs"], 2);
+
+    let set = ok(&studio, Request::SetMaxRuns { max_runs: 5 }).await;
+    assert_eq!(set["max_runs"], 5);
+    // No waiting for the file check: the next read already has it.
+    assert_eq!(ok(&studio, Request::Status).await["max_runs"], 5);
+    let after = fs::read_to_string(&config).unwrap();
+    assert_eq!(
+        after,
+        format!("# kept as written\n{before}").replace("max_runs = 2", "max_runs = 5")
+    );
+
+    // More than the office holds, written by hand, runs as many as it holds.
+    fs::write(&config, after.replace("max_runs = 5", "max_runs = 12")).unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(ok(&studio, Request::Status).await["max_runs"], 9);
+    ok(&studio, Request::SetMaxRuns { max_runs: 9 }).await;
+    assert_eq!(ok(&studio, Request::Status).await["max_runs"], 9);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spending_limits_are_set_in_studio_toml_and_applies_at_once() {
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let before = ok(&studio, Request::Budget).await;
+    assert_eq!(before["limits"]["daily_usd"], 5.0);
+    assert_eq!(before["limits"]["ticket_usd"], 2.0);
+
+    for (daily_usd, ticket_usd) in [
+        (Some(0.0), None),
+        (Some(-1.0), None),
+        (None, Some(f64::NAN)),
+        (Some(1.0), Some(f64::INFINITY)),
+        (None, None),
+    ] {
+        fails(
+            &studio,
+            Request::SetLimits {
+                daily_usd,
+                ticket_usd,
+            },
+        )
+        .await;
+    }
+    // A refused change writes nothing.
+    assert_eq!(
+        ok(&studio, Request::Budget).await["limits"]["daily_usd"],
+        5.0
+    );
+
+    let set = ok(
+        &studio,
+        Request::SetLimits {
+            daily_usd: Some(12.5),
+            ticket_usd: None,
+        },
+    )
+    .await;
+    assert_eq!(set["daily_usd"], 12.5);
+    assert_eq!(set["ticket_usd"], 2.0);
+    ok(
+        &studio,
+        Request::SetLimits {
+            daily_usd: None,
+            ticket_usd: Some(0.75),
+        },
+    )
+    .await;
+    let after = ok(&studio, Request::Budget).await;
+    assert_eq!(after["limits"]["daily_usd"], 12.5);
+    assert_eq!(after["limits"]["ticket_usd"], 0.75);
+    let text = fs::read_to_string(setup.paths.config_dir.join("studio.toml")).unwrap();
+    assert!(text.contains("daily_usd = 12.5"), "{text}");
+    assert!(text.contains("max_runs = 2"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn trophies_come_from_what_landed_and_what_was_merged() {
+    let setup = setup("");
+    let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, runtime.clone());
+
+    // A new studio has earned nothing, only the first milestone in view.
+    let none = ok(&studio, Request::Trophies).await;
+    assert_eq!(none.as_array().unwrap().len(), 1);
+    assert_eq!(none[0]["id"], "landed-10");
+    assert_eq!(none[0]["progress"], json!([0, 10]));
+    assert_eq!(none[0]["earned_at"], Value::Null);
+
+    ok(&studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    let before = now_ms();
+    ok(
+        &studio,
+        Request::Land {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+
+    let trophies = ok(&studio, Request::Trophies).await;
+    let ids: Vec<&str> = trophies
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["best-day", "landed-10"]);
+    assert_eq!(trophies[0]["title"], "Best day");
+    assert!(
+        trophies[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("Landed 1 ticket on ")
+    );
+    assert!(trophies[0]["earned_at"].as_u64().unwrap() >= before);
+    assert_eq!(trophies[1]["progress"], json!([1, 10]));
+
+    // Give the goal work of its own, then merge it: that is the first merge.
+    let goal = "studio/goal/first-level";
+    let tree = git(&setup.repo, &["rev-parse", &format!("{goal}^{{tree}}")]);
+    let work = git(
+        &setup.repo,
+        &["commit-tree", &tree, "-p", goal, "-m", "work"],
+    );
+    git(
+        &setup.repo,
+        &["update-ref", &format!("refs/heads/{goal}"), &work],
+    );
+    let merged_at = now_ms();
+    ok(
+        &studio,
+        Request::Merge {
+            ticket: "GAME-1".into(),
+        },
+    )
+    .await;
+    let trophies = ok(&studio, Request::Trophies).await;
+    let merge = trophies
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "first-goal-merged")
+        .unwrap();
+    assert_eq!(merge["detail"], "“First level” was merged into master.");
+    assert!(merge["earned_at"].as_u64().unwrap() >= merged_at);
+
+    // It survives a restart and is not replaced by a later merge.
+    let again = studio_reopened(&setup);
+    let kept = ok(&again, Request::Trophies).await;
+    let kept = kept
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "first-goal-merged")
+        .unwrap();
+    assert_eq!(kept["earned_at"], merge["earned_at"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_checks_list_the_commands_and_the_latest_result() {
+    let setup = setup(r#"["sh", "-c", "true"], ["cargo", "test"]"#);
+    let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, runtime.clone());
+
+    let idle = ok(&studio, Request::ProjectChecks).await;
+    assert_eq!(idle.as_array().unwrap().len(), 1);
+    assert_eq!(idle[0]["project"], "game");
+    assert_eq!(
+        idle[0]["verify"],
+        json!([["sh", "-c", "true"], ["cargo", "test"]])
+    );
+    assert_eq!(idle[0]["running"], json!([]));
+    assert_eq!(idle[0]["latest"], Value::Null);
+
+    // Checks that pass.
+    write_project(&setup, "verify = [[\"sh\", \"-c\", \"true\"]]\n");
+    ok(&studio, create("Passes")).await;
+    studio.spawn_scheduler();
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    let at = now_ms();
+    let done = ok(&studio, Request::ProjectChecks).await;
+    assert_eq!(done[0]["verify"], json!([["sh", "-c", "true"]]));
+    assert_eq!(done[0]["running"], json!([]));
+    assert_eq!(done[0]["latest"]["ticket"], "GAME-1");
+    assert_eq!(done[0]["latest"]["passed"], true);
+    assert!(done[0]["latest"]["at_ms"].as_u64().unwrap() <= at);
+
+    // A newer failing result replaces it.
+    write_project(&setup, "verify = [[\"sh\", \"-c\", \"exit 1\"]]\n");
+    ok(&studio, create_in("Fails", "Other goal")).await;
+    until(async || {
+        let checks = ok(&studio, Request::ProjectChecks).await;
+        checks[0]["latest"]["passed"] == false
+    })
+    .await;
+    let failed = ok(&studio, Request::ProjectChecks).await;
+    assert_eq!(failed[0]["latest"]["ticket"], "GAME-2");
+}
+
+/// A new git repository with one commit, on `branch`.
+fn fresh_repo(branch: &str) -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    git(repo, &["init", "-q", "-b", branch]);
+    for (k, v) in [
+        ("user.name", "Owner"),
+        ("user.email", "owner@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(repo, &["config", k, v]);
+    }
+    fs::write(repo.join("README.md"), "hello\n").unwrap();
+    git(repo, &["add", "-A"]);
+    git(repo, &["commit", "-q", "-m", "Initial"]);
+    dir
+}
+
+fn add_request(path: &Path, name: Option<&str>, branch: Option<&str>) -> Request {
+    Request::AddProject {
+        path: path.to_string_lossy().into_owned(),
+        name: name.map(str::to_string),
+        branch: branch.map(str::to_string),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn adding_a_repository_makes_it_a_project_at_once() {
+    let setup = setup("");
+    let config = setup.paths.config_dir.join("studio.toml");
+    let before = fs::read_to_string(&config).unwrap();
+    fs::write(&config, format!("# kept as written\n{before}")).unwrap();
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let repo = fresh_repo("trunk");
+
+    let added = ok(&studio, add_request(repo.path(), None, None)).await;
+    let root = repo.path().canonicalize().unwrap();
+    // The folder is named like ".tmpAbC1"; a project name has no dot.
+    let name = root.file_name().unwrap().to_str().unwrap();
+    let name = name.trim_start_matches('.');
+    assert_eq!(added["name"], name);
+    assert_eq!(added["path"], root.to_string_lossy().as_ref());
+    assert_eq!(added["branch"], "trunk");
+    assert_eq!(
+        added["checks"],
+        root.join(".studio.toml").to_string_lossy().as_ref()
+    );
+    assert!(root.join(".studio.toml").is_file());
+
+    // No waiting for the file check: the next read already lists it.
+    let projects = ok(&studio, Request::Status).await["projects"].clone();
+    assert_eq!(projects, json!(["game", name]));
+    let text = fs::read_to_string(&config).unwrap();
+    assert!(text.starts_with("# kept as written\n"), "{text}");
+    assert!(text.contains("integration_branch = \"trunk\""), "{text}");
+
+    // The same folder again is refused, and writes nothing.
+    let err = fails(&studio, add_request(repo.path(), Some("other"), None)).await;
+    assert!(err.contains("already a project"), "{err}");
+    assert_eq!(fs::read_to_string(&config).unwrap(), text);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_can_be_added_with_a_name_and_a_branch() {
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let repo = fresh_repo("main");
+    fs::write(repo.path().join(".studio.toml"), "verify = []\n").unwrap();
+
+    let added = ok(
+        &studio,
+        add_request(repo.path(), Some("side-quest"), Some("develop")),
+    )
+    .await;
+    assert_eq!(added["name"], "side-quest");
+    assert_eq!(added["branch"], "develop");
+    // It had its own checks, so none were written.
+    assert!(added["checks"].is_null(), "{added}");
+    let status = ok(&studio, Request::Status).await;
+    assert_eq!(status["projects"], json!(["game", "side-quest"]));
+
+    // A name already taken is refused, and so is one that can't be a name.
+    let other = fresh_repo("main");
+    let err = fails(&studio, add_request(other.path(), Some("game"), None)).await;
+    assert!(err.contains("already exists"), "{err}");
+    let err = fails(&studio, add_request(other.path(), Some("not a name"), None)).await;
+    assert!(err.contains("letters, digits"), "{err}");
+    assert_eq!(
+        ok(&studio, Request::Status).await["projects"],
+        json!(["game", "side-quest"])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_that_is_not_a_repository_is_refused() {
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let plain = tempfile::tempdir().unwrap();
+
+    let err = fails(&studio, add_request(plain.path(), None, None)).await;
+    assert!(err.contains("not a git repository"), "{err}");
+    let err = fails(
+        &studio,
+        add_request(&plain.path().join("missing"), None, None),
+    )
+    .await;
+    assert!(err.contains("is not a folder"), "{err}");
+    assert_eq!(
+        ok(&studio, Request::Status).await["projects"],
+        json!(["game"])
+    );
+}

@@ -61,10 +61,9 @@ struct Board {
     days: Vec<f64>,
     spent: f64,
     daily: f64,
-    /// The studio's budget can't fund another run, so nothing starts.
-    out_of_budget: bool,
-    /// How many runs may go at once; 0 pauses the studio.
-    max_runs: u64,
+    /// What decides when queued tickets start: money, desks and whether the
+    /// office is open.
+    starts: client::Status,
     projects: Vec<String>,
     hires: Vec<String>,
     /// When each held ticket was held, or each running ticket's run began.
@@ -129,8 +128,7 @@ async fn load(config: &AppConfig) -> topcoat::Result<Board> {
         days: days.iter().map(|d| d.usd).collect(),
         spent: status.spent_24h,
         daily: status.daily_usd,
-        out_of_budget: status.out_of_budget,
-        max_runs: status.max_runs,
+        starts: status.clone(),
         projects: status.projects,
         hires: status.hires,
         since,
@@ -343,8 +341,7 @@ async fn board_view(board: Board) -> topcoat::Result<impl View> {
         days,
         spent,
         daily,
-        out_of_budget,
-        max_runs,
+        starts,
         since,
         mut logs,
         diffs,
@@ -447,7 +444,7 @@ async fn board_view(board: Board) -> topcoat::Result<impl View> {
     let next_rows: Vec<_> = queued
         .into_iter()
         .map(|t| {
-            let waits = ui::Wait::of(&t, &tickets, out_of_budget, max_runs).short();
+            let waits = ui::Wait::of(&t, &tickets, &starts).short();
             (t, waits)
         })
         .collect();
@@ -801,8 +798,10 @@ mod tests {
             days: vec![1.0, 2.0],
             spent: 1.0,
             daily: 10.0,
-            out_of_budget: false,
-            max_runs: 2,
+            starts: client::Status {
+                max_runs: 2,
+                ..Default::default()
+            },
             projects: vec!["game".into()],
             hires: vec!["dev".into()],
             since: HashMap::new(),

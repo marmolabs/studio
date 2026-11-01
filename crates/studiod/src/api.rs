@@ -203,6 +203,89 @@ pub enum Request {
         #[serde(default)]
         since: u64,
     },
+    /// Closes or reopens the office. While it is closed the scheduler starts
+    /// nothing new (as `max_runs = 0` does) and work already running carries
+    /// on. The choice is the file `closed` in the data folder, so it survives
+    /// a restart. Answers `{"closed": bool}`; `Status` reports it too.
+    SetOpen {
+        open: bool,
+    },
+    /// How many agents may work at once, from 1 to `MAX_RUNS_LIMIT`. Written
+    /// to `[concurrency] max_runs` in `studio.toml`, which keeps its other
+    /// lines and comments, and applied at once. Answers `{"max_runs": n}`.
+    SetMaxRuns {
+        max_runs: u64,
+    },
+    /// The studio's daily and per-ticket spending limits in USD, written to
+    /// `[budget] daily_usd` and `ticket_usd` in `studio.toml` and applied at
+    /// once. A limit left out stays as it is; each given one must be positive
+    /// and finite. Answers `{"daily_usd": x, "ticket_usd": y}`.
+    SetLimits {
+        #[serde(default)]
+        daily_usd: Option<f64>,
+        #[serde(default)]
+        ticket_usd: Option<f64>,
+    },
+    /// What the studio has achieved, as `Trophy`s, from its own history.
+    Trophies,
+    /// Each project's checks, as `ProjectCheck`s in the order of
+    /// `studio.toml`.
+    ProjectChecks,
+    /// Adds the git repository at `path` as a project, as `studio project add`
+    /// does: `name` defaults to the folder's name and `branch`, where work
+    /// starts, to the branch checked out there. Written to `studio.toml`,
+    /// keeping its comments, and applied at once. Answers `{"name", "path",
+    /// "branch", "checks"}`, where `checks` is the `.studio.toml` this wrote
+    /// with guessed checks, or null when the project had one.
+    AddProject {
+        path: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        branch: Option<String>,
+    },
+}
+
+/// The most agents that work at once, one at each desk the office holds.
+/// `Request::SetMaxRuns` allows up to this, and a larger `max_runs` in
+/// `studio.toml` runs this many.
+pub const MAX_RUNS_LIMIT: u64 = 9;
+
+/// Something the studio has achieved. A trophy with `earned_at` is won; one
+/// with `progress` is the next milestone, `(done, needed)` of the way there.
+/// Every value comes from the studio's history; none is guessed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Trophy {
+    /// Stable, such as `streak`, `best-day`, `first-goal-merged`, `landed-25`.
+    pub id: String,
+    /// Plain words for a heading.
+    pub title: String,
+    pub detail: String,
+    /// When it was won, in epoch milliseconds.
+    pub earned_at: Option<u64>,
+    pub progress: Option<(u64, u64)>,
+}
+
+/// One project's checks.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProjectCheck {
+    pub project: String,
+    /// The commands in the project's `.studio.toml` `verify`, each a program
+    /// with its arguments. Empty when the project has none or no such file.
+    pub verify: Vec<Vec<String>>,
+    /// Tickets of the project running their checks now.
+    pub running: Vec<String>,
+    /// The newest result among the project's tickets, if any has been.
+    pub latest: Option<CheckResult>,
+}
+
+/// How a ticket's checks last ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CheckResult {
+    pub ticket: String,
+    pub passed: bool,
+    /// Epoch milliseconds.
+    pub at_ms: u64,
 }
 
 /// The two studio-level folders that can be edited through the API.

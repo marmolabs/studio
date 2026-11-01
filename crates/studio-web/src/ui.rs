@@ -5,6 +5,7 @@
 //! `-fg`, `-bg` and `-line` shades). Class strings are literals so Tailwind
 //! finds them.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use studio_config::draft::Draft;
 use studio_core::machine::MAX_ATTEMPTS;
 use studio_core::ticket::{FailureClass, HeldReason, Ticket, TicketState};
@@ -147,15 +148,21 @@ pub async fn html(cx: &Cx, view: impl View) -> topcoat::Result<String> {
     Ok(view.single().await?.render(cx))
 }
 
+/// Numbers each notice.
+static NOTICES: AtomicU64 = AtomicU64::new(0);
+
 /// Puts a short message in the page's `#notice` slot.
 pub async fn notice(cx: &Cx, message: String, error: bool) -> topcoat::Result<PatchElements> {
+    // A new id each time, so the page takes it as a new message (the office
+    // fades each one out) rather than changing the text of the last one.
+    let id = format!("notice-{}", NOTICES.fetch_add(1, Ordering::Relaxed));
     let text = html(
         cx,
         view! { cx =>
             if error {
-                <p class="whitespace-pre-wrap text-bad-fg">(message)</p>
+                <p id=(id) class="whitespace-pre-wrap text-bad-fg">(message)</p>
             } else {
-                <p class="text-fg-3">(message)</p>
+                <p id=(id) class="text-fg-3">(message)</p>
             }
         },
     )
@@ -255,6 +262,8 @@ pub fn shown(state: &TicketState) -> &'static str {
 /// What a queued ticket waits for, as studiod's scheduler sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Wait {
+    /// The owner closed the office, so nothing new starts.
+    Closed,
     /// `max_runs` is 0, so nothing new starts.
     Paused,
     /// Another ticket on its goal, which runs one at a time.
@@ -266,7 +275,8 @@ pub enum Wait {
 }
 
 impl Wait {
-    pub fn of(ticket: &Ticket, tickets: &[Ticket], out_of_budget: bool, max_runs: u64) -> Wait {
+    pub fn of(ticket: &Ticket, tickets: &[Ticket], status: &crate::client::Status) -> Wait {
+        let (out_of_budget, max_runs) = (status.out_of_budget, status.max_runs);
         let goal = |t: &Ticket| {
             if t.goal.trim().is_empty() {
                 t.id.to_string()
@@ -288,6 +298,7 @@ impl Wait {
                 .find(|t| t.state.kind() == "queued")
         });
         match blocker {
+            _ if status.closed => Wait::Closed,
             _ if max_runs == 0 => Wait::Paused,
             Some(t) => Wait::After(t.id.to_string()),
             None if out_of_budget => Wait::Budget,
@@ -298,22 +309,24 @@ impl Wait {
     /// A few words, for a row.
     pub fn short(&self) -> String {
         match self {
+            Wait::Closed => "Office closed".into(),
             Wait::Paused => "Paused".into(),
             Wait::After(id) => format!("After {id}"),
             Wait::Budget => "Waiting for budget".into(),
-            Wait::Slot => "Waiting for a slot".into(),
+            Wait::Slot => "Waiting for a free desk".into(),
         }
     }
 
     /// A sentence, for a panel.
     pub fn sentence(&self) -> String {
         match self {
+            Wait::Closed => "The office is closed: it starts when you reopen it.".into(),
             Wait::Paused => "Paused: max_runs is 0, so nothing new starts.".into(),
             Wait::After(id) => {
                 format!("Starts after {id} is done: tickets on a goal run one at a time.")
             }
             Wait::Budget => "Waits for budget: the studio can't fund another run today.".into(),
-            Wait::Slot => "Queued. It starts when a run slot frees up.".into(),
+            Wait::Slot => "Queued. It starts when a desk frees up.".into(),
         }
     }
 }
@@ -1038,15 +1051,28 @@ mod tests {
         let d = ticket("G-4", json!("queued"), "Saves");
         let e = ticket("G-5", json!("queued"), "Saves");
         let all = vec![a, b.clone(), c.clone(), d, e.clone()];
-        let wait = |t: &Ticket, broke: bool, slots: u64| Wait::of(t, &all, broke, slots).short();
+        let status = |broke: bool, slots: u64, closed: bool| crate::client::Status {
+            out_of_budget: broke,
+            max_runs: slots,
+            closed,
+            ..Default::default()
+        };
+        let wait = |t: &Ticket, broke: bool, slots: u64| {
+            Wait::of(t, &all, &status(broke, slots, false)).short()
+        };
         assert_eq!(wait(&b, false, 2), "After G-1");
-        assert_eq!(wait(&c, false, 2), "Waiting for a slot");
+        assert_eq!(wait(&c, false, 2), "Waiting for a free desk");
         assert_eq!(wait(&c, true, 2), "Waiting for budget");
         assert_eq!(wait(&e, false, 2), "After G-4");
         assert_eq!(wait(&c, false, 0), "Paused");
         assert_eq!(
-            Wait::of(&c, &all, false, 0).sentence(),
+            Wait::of(&c, &all, &status(false, 0, false)).sentence(),
             "Paused: max_runs is 0, so nothing new starts."
+        );
+        // A closed office starts nothing, whatever else the ticket waits for.
+        assert_eq!(
+            Wait::of(&b, &all, &status(false, 2, true)).short(),
+            "Office closed"
         );
     }
 

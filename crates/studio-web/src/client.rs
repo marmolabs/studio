@@ -69,6 +69,9 @@ pub struct Status {
     pub max_runs: u64,
     #[serde(default)]
     pub team: Vec<Member>,
+    /// The owner closed the office: nothing new starts.
+    #[serde(default)]
+    pub closed: bool,
 }
 
 impl Status {

@@ -49,7 +49,8 @@ ticket. See [configuration](configuration.md).
 
 ## Add a project
 
-A project is a git repository.
+A project is a git repository. Add it from the office (the free rack in the
+checks lab, which asks for the repository's folder) or in a terminal:
 
 ```sh
 studio project add ~/code/my-app
@@ -93,7 +94,7 @@ CARGO_TARGET_DIR=~/.cache/studio-target studio up
 
 ## Your first ticket
 
-From the board's New ticket form, or in a terminal:
+From the office's Ticket button, or in a terminal:
 
 ```sh
 studio ticket -p my-app --hire engineer "Add a dark mode" \
@@ -157,7 +158,7 @@ studio goal -p my-app "Add a dark mode and a settings page"
 The text names the goal and its branch, so keep it short. Give the producer
 the full brief with `--detail` or `--detail-file brief.md`.
 
-The tickets show up on the board, all landing on one goal branch. The number
+The tickets show up in the office, all landing on one goal branch. The number
 of tickets one planner may file is `goals.max_filed` (default 8).
 
 ## The web UI
@@ -172,18 +173,23 @@ your network open the UI. Anyone on the network with the link can act as you,
 and the link travels as plain HTTP, so use it only on a network you trust.
 
 The link opens the Office: the whole studio on one floor, with tickets at
-their desks, in checks, in review and ready to land, goals on the planning
-whiteboard, idle hires in the lounge, and the approver and router at the front
-desk. Pick anything to see it beside the floor and act on it there: allow or
-deny an ask, land, resume, cancel, or give a hire work. "Last hour" under the
-floor shows what each ticket did, minute by minute. The board, goals, asks,
-budget, hires and rules pages have the lists and the detail. Each ticket page shows the ticket's detail, any ask waiting on it, and one live
-activity feed: the studio's events, the agent's messages as Markdown, and its
-tool calls folded into groups you can open. A rail beside it has the status,
-hire and model, branch, try, spend against the ticket's cap, time, progress
-through checks, review and gates, and the changed files. Ready and finished
-tickets say how they ended and offer only the actions that still apply. See
-[security](security.md) for how access works.
+their desks, in checks, in review and ready to land, goals on the whiteboard,
+idle hires in the lounge, and the approver and router at the front desk. A bar
+on top shows what needs you, what is at work, what shipped today and the money
+meter; its project strip focuses the floor on one project. Pick anything on the
+floor to see it in the panel beside it and act there: allow or deny an ask,
+land, resume, cancel, or give a hire work. The coffee machine closes or
+reopens the office (nothing new starts while it is closed), the empty desk adds
+desks (how many agents work at once), and the safe sets the daily and
+per-ticket limits. The panel's tabs (Needs you, Projects, Team, Money, Rules,
+Log) hold the lists. The board, goals, asks, budget, hires and rules pages have
+the lists and the detail. Each ticket page shows the ticket's detail, any ask
+waiting on it, and one live activity feed: the studio's events, the agent's
+messages as Markdown, and its tool calls folded into groups you can open. A
+rail beside it has the status, hire and model, branch, try, spend against the
+ticket's cap, time, progress through checks, review and gates, and the changed
+files. Ready and finished tickets say how they ended and offer only the actions
+that still apply. See [security](security.md) for how access works.
 
 ## Next
 

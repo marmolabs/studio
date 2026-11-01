@@ -179,8 +179,58 @@ fn reply(request: &Request) -> Value {
     }
 }
 
-fn answer(request: &Request) -> Response {
+/// What the stand-in studiod is like.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Open,
+    /// The office is closed.
+    Closed,
+    /// A new studio: the starter team, and no projects, tickets or goals.
+    Empty,
+    /// The same with one project added: still no tickets or goals.
+    Fresh,
+}
+
+impl Mode {
+    fn bare(self) -> bool {
+        matches!(self, Mode::Empty | Mode::Fresh)
+    }
+}
+
+/// The starter team's five.
+fn starter_team() -> Value {
+    json!([
+        {"id": "engineer", "role": "engineer", "model": "sonnet"},
+        {"id": "producer", "role": "producer", "model": "sonnet"},
+        {"id": "reviewer", "role": "reviewer", "model": "opus"},
+        {"id": "approver", "role": "approver", "model": "haiku"},
+        {"id": "router", "role": "router", "model": "haiku"},
+    ])
+}
+
+fn answer(request: &Request, mode: Mode) -> Response {
     match request {
+        Request::Status if mode == Mode::Closed => {
+            let mut status = reply(request);
+            status["closed"] = json!(true);
+            Response::ok(status)
+        }
+        Request::Status if mode.bare() => Response::ok(json!({
+            "daily_usd": 10.0, "max_runs": 3, "team": starter_team(),
+            "projects": if mode == Mode::Fresh { json!(["game"]) } else { json!([]) },
+            "hires": ["engineer", "producer", "reviewer", "approver", "router"],
+        })),
+        Request::Tickets
+        | Request::Asks
+        | Request::MergedTickets
+        | Request::RecentEvents { .. }
+        | Request::Trophies
+        | Request::ProjectChecks
+        | Request::RuleFiles
+            if mode.bare() =>
+        {
+            Response::ok(json!([]))
+        }
         Request::SaveFile { text, .. } if text.contains("BROKEN") => {
             Response::err("validation error: lint rules require pattern")
         }
@@ -193,7 +243,7 @@ fn answer(request: &Request) -> Response {
 }
 
 /// A studiod stand-in on a Unix socket: one JSON request line, one reply.
-fn fake_studiod(socket: &Path) {
+fn fake_studiod(socket: &Path, mode: Mode) {
     let listener = UnixListener::bind(socket).unwrap();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
@@ -202,7 +252,7 @@ fn fake_studiod(socket: &Path) {
                 let mut line = String::new();
                 BufReader::new(read).read_line(&mut line).await.unwrap();
                 let request: Request = serde_json::from_str(&line).unwrap();
-                let mut out = serde_json::to_string(&answer(&request)).unwrap();
+                let mut out = serde_json::to_string(&answer(&request, mode)).unwrap();
                 out.push('\n');
                 write.write_all(out.as_bytes()).await.unwrap();
             });
@@ -218,9 +268,23 @@ struct Web {
 
 impl Web {
     async fn start() -> Web {
+        Web::start_with(Mode::Open).await
+    }
+
+    /// A new studio: nothing on the floor yet.
+    async fn start_empty() -> Web {
+        Web::start_with(Mode::Empty).await
+    }
+
+    /// One project and nothing else.
+    async fn start_fresh() -> Web {
+        Web::start_with(Mode::Fresh).await
+    }
+
+    async fn start_with(mode: Mode) -> Web {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("s.sock");
-        fake_studiod(&socket);
+        fake_studiod(&socket, mode);
         let runs = dir.path().join("runs");
         std::fs::create_dir_all(&runs).unwrap();
         std::fs::write(
@@ -410,7 +474,7 @@ async fn pages_render_studio_data_escaped() {
         .collect();
     assert!(at.windows(2).all(|w| w[0] < w[1]), "{html}");
     assert!(html.contains("of $10</small>"), "{html}");
-    assert!(html.contains("Waiting for a slot"), "{html}");
+    assert!(html.contains("Waiting for a free desk"), "{html}");
     // A plan at work says so instead of showing the steps.
     assert!(html.contains(">Planning</span>"), "{html}");
     assert!(html.contains(r#"href="/tickets/GAME-3""#), "{html}");
@@ -677,20 +741,8 @@ async fn goals_show_what_they_filed() {
 }
 
 #[tokio::test]
-async fn the_last_hour_draws_a_lane_per_ticket() {
+async fn the_old_addresses_lead_to_the_office() {
     let web = Web::start().await;
-    let html = web.get("/", true).await.text().await.unwrap();
-    // The held ticket worked, then waits for budget; its title is escaped.
-    assert!(html.contains("Last hour"), "{html}");
-    assert!(html.contains(r#"id="office-lanes""#), "{html}");
-    assert!(
-        html.contains("seg work") && html.contains("seg hold"),
-        "{html}"
-    );
-    assert!(html.contains("ago, on hold from "), "{html}");
-    assert!(html.contains(">Critic or review<"), "{html}");
-
-    // The Live page and the office's old address lead home.
     let live = web.get("/live", true).await;
     assert_eq!(live.status(), 308);
     assert_eq!(live.headers()["location"], "/");
@@ -700,53 +752,278 @@ async fn the_last_hour_draws_a_lane_per_ticket() {
 }
 
 #[tokio::test]
-async fn the_office_seats_tickets_by_state_and_escapes_them() {
+async fn the_office_draws_the_floor_with_its_pins() {
     let web = Web::start().await;
     assert_eq!(web.get("/", false).await.status(), 401);
 
     let html = web.get("/", true).await.text().await.unwrap();
-    // GAME-1 is held at a desk, with its ask over its head; the title is
-    // escaped and the bubble's tooltip is the exact call.
+    // The floor is one drawing, sized by its own box, with things to pick.
+    assert!(html.contains(r#"<svg class="iso""#), "{html}");
+    assert!(html.contains(r#"id="hq-scene""#), "{html}");
+    assert!(html.contains(r#"class="scene""#), "{html}");
+    assert!(html.contains("--ar: "), "{html}");
+    assert!(html.contains(r#"data-sel="tickets/GAME-1""#), "{html}");
+    assert!(html.contains(r#"data-sel="elements/board""#), "{html}");
+    // One handler on the floor picks whatever has a `data-sel`.
+    assert!(html.contains("closest('[data-sel]')"), "{html}");
+    assert!(html.contains("@get('/office/panel')"), "{html}");
+    // Held at a desk: a pin with the project's colour and an escaped title.
     assert!(
-        html.contains("Add a &lt;b&gt;pause&lt;/b&gt; menu"),
+        html.contains(
+            r#"<button type="button" class="tagc held" data-sel="tickets/GAME-1" data-pj="0""#
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<span class="t">Add a &lt;b&gt;pause&lt;/b&gt; menu</span>"#),
         "{html}"
     );
     assert!(!html.contains(">Add a <b>"), "{html}");
-    assert!(html.contains(r#"title="Bash: cargo test""#), "{html}");
-    assert!(html.contains(">Run a command<"), "{html}");
-    assert!(html.contains(">Held · budget<"), "{html}");
-    assert!(html.contains(r#"title="Held: out of budget""#), "{html}");
-    // Three run slots and two runs: one desk is free. The held GAME-1 keeps
-    // its desk without a slot; the plan GAME-3 is planned on the whiteboard,
-    // not at a desk.
-    assert_eq!(html.matches(">Free desk<").count(), 1, "{html}");
-    assert!(html.contains("producer planning GAME-3"), "{html}");
-    assert!(html.contains("$sel = 'tickets/GAME-3'"), "{html}");
-    // Ready work lands from the floor; queued work waits up next; what
-    // landed in the window is shipped.
-    assert!(html.contains("@post('/tickets/GAME-5/land')"), "{html}");
+    assert!(html.contains(r#"<span class="zz">II</span>"#), "{html}");
+    // Ready work lands from its pin; queued work and planning are quiet chips.
     assert!(
-        html.contains("GAME-2, up next: Add a title screen"),
+        html.contains(r#"<div class="ready" data-pj="0">"#),
         "{html}"
     );
-    assert!(html.contains(r#"href="/tickets/GAME-4""#), "{html}");
-    // The approver sits at the front desk; dev, with a held ticket, is not
-    // in the lounge.
-    assert!(html.contains("approver, the approver"), "{html}");
-    assert!(html.contains(">8</b> decided<"), "{html}");
-    assert!(html.contains("0 resting"), "{html}");
-    // The shell: the rail with an Office link, the switch and the figures.
-    assert!(html.contains(r#"id="office-hud""#), "{html}");
-    assert!(html.contains(r#"title="Office""#), "{html}");
-    assert!(html.contains(r#"aria-label="View""#), "{html}");
-    assert!(html.contains("@get('/office/stream')"), "{html}");
+    assert!(html.contains("@post('/tickets/GAME-5/land')"), "{html}");
+    assert!(
+        html.contains(r#"class="tagc quiet" data-sel="elements/queue""#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"class="tagc quiet" data-sel="elements/board""#),
+        "{html}"
+    );
+    // Hints name each game element and show on hover or with "What's what".
+    assert!(
+        html.contains(r#"<div class="pin hint" data-for="board""#),
+        "{html}"
+    );
+    assert!(html.contains("<span>Whiteboard · goals</span>"), "{html}");
+    assert!(
+        html.contains("What&#39;s what") || html.contains("What's what"),
+        "{html}"
+    );
+    assert!(html.contains("data-class:show-hints"), "{html}");
+    assert!(html.contains("$zoom"), "{html}");
+    // Only hints name what they are for.
+    assert!(!html.contains(r#"data-for="""#), "{html}");
+    // Open: no sign, and nothing dims.
+    assert!(!html.contains("closed-sign"), "{html}");
+    assert!(!html.contains(r#"class="scene closed""#), "{html}");
+}
+
+#[tokio::test]
+async fn the_top_bar_lists_projects_and_figures() {
+    let web = Web::start().await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    // The page has its own top bar: no sidebar, rail or title bar.
+    assert!(!html.contains(r#"aria-label="Studio""#), "{html}");
+    assert!(!html.contains(r#"id="office-hud""#), "{html}");
+    assert!(html.contains(r#"aria-label="Projects""#), "{html}");
+    // Signals: the pick, the tab, the focus, the zoom and the hints.
+    assert!(
+        html.contains("{sel: '', tab: 'needs', focus: 'all', zoom: 1, hints: false, turn: 0"),
+        "{html}"
+    );
+    // All projects, then each with its tint and its open tickets (GAME-1, 2,
+    // 3, 5 and 7; the landed and cancelled are done).
+    assert!(html.contains(">All projects<"), "{html}");
+    assert!(html.contains("$focus = 0"), "{html}");
+    assert!(html.contains(r#"<i class="pjd pj-0"></i>"#), "{html}");
+    assert!(html.contains(r#"<span class="n">5</span>"#), "{html}");
+    // One ask and no pause held for the owner; two at work; none shipped
+    // today (GAME-4 landed two hours ago, which is still within 24 hours).
+    assert!(html.contains(r#"class="stat needs""#), "{html}");
+    assert!(html.contains(r#"<span class="ping"></span>"#), "{html}");
+    assert!(html.contains("<b>1</b>"), "{html}");
+    assert!(
+        html.contains(r#"title="Landed in the last 24 hours""#),
+        "{html}"
+    );
+    assert!(html.contains("2 of 3 desks in use"), "{html}");
+    // The money meter: 24-hour spend against the daily limit.
+    assert!(html.contains("$0.25"), "{html}");
+    assert!(html.contains(" of $10"), "{html}");
+    assert!(html.contains(r#"role="progressbar""#), "{html}");
+    // The forms behind Ticket and New goal, and the theme switch.
+    assert!(
+        html.contains(r#"popovertarget="office-new-ticket""#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"popovertarget="office-new-goal""#),
+        "{html}"
+    );
+    assert!(html.contains(r#"action="/theme""#), "{html}");
+    // Every other page keeps its sidebar, with the office at "/".
     let board = web.get("/board", true).await.text().await.unwrap();
-    assert!(!board.contains(r#"id="office-hud""#), "{board}");
+    assert!(board.contains(r#"aria-label="Studio""#), "{board}");
+    assert!(board.contains(r#"href="/""#), "{board}");
+    assert!(!board.contains(r#"id="hq-scene""#), "{board}");
+}
+
+#[tokio::test]
+async fn the_corners_track_projects_and_tell_the_latest() {
+    let web = Web::start().await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    // GAME-3's goal has one of its two tickets landed; the other is ready.
+    assert!(html.contains(r#"id="hq-corners""#), "{html}");
+    assert!(html.contains(r#"<span class="num">1/2</span>"#), "{html}");
+    assert!(
+        html.contains("width: 50%; background: var(--pj-0)"),
+        "{html}"
+    );
+    assert!(html.contains(r#"<span class="flag needs""#), "{html}");
+    // The live feed: the newest events in words, and a way to the Log tab.
+    assert!(html.contains(r#"<ol class="mini-feed">"#), "{html}");
+    assert!(html.contains("<b>GAME-1</b> needs your say"), "{html}");
+    assert!(html.contains("$tab = 'log'"), "{html}");
+}
+
+#[tokio::test]
+async fn a_closed_office_shows_its_sign() {
+    let web = Web::start_with(Mode::Closed).await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    assert!(html.contains(r#"class="scene closed""#), "{html}");
+    assert!(html.contains(r#"class="closed-sign""#), "{html}");
+    assert!(
+        html.contains("Office closed · nothing new starts"),
+        "{html}"
+    );
+}
+
+/// The opening tag of the element whose tag contains `needle`.
+fn tag_with<'a>(html: &'a str, open: &str, needle: &str) -> &'a str {
+    let at = html.find(needle).unwrap_or_else(|| panic!("no {needle}"));
+    let from = html[..at]
+        .rfind(open)
+        .unwrap_or_else(|| panic!("no {open} before {needle}"));
+    // The tag ends at the first `>` outside a quoted value.
+    let mut quote = None;
+    let mut to = from;
+    for (i, c) in html[from..].char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '>') => {
+                to = from + i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    &html[from..=to]
+}
+
+/// Whether the tab pane for `name` is shown when the page first arrives.
+fn pane_shown(html: &str, name: &str) -> bool {
+    let tag = tag_with(html, "<div", &format!("data-show=\"$tab == '{name}'\""));
+    !tag.contains("display: none")
+}
+
+#[tokio::test]
+async fn a_link_can_open_the_money_tab() {
+    let web = Web::start().await;
+    let html = web.get("/?tab=money", true).await.text().await.unwrap();
+    assert!(html.contains("tab: 'money'"), "{html}");
+    assert!(pane_shown(&html, "money"), "{html}");
+    for other in ["needs", "projects", "team", "rules", "log"] {
+        assert!(!pane_shown(&html, other), "{other} is open: {html}");
+    }
+    let tab = tag_with(&html, "<button", "data-on:click=\"$tab = 'money'\"");
+    assert!(tab.contains(r#"aria-selected="true""#), "{tab}");
+
+    // Without a link, the page opens on Needs you.
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert!(home.contains("tab: 'needs'"), "{home}");
+    assert!(pane_shown(&home, "needs"), "{home}");
+    assert!(!pane_shown(&home, "money"), "{home}");
+}
+
+#[tokio::test]
+async fn an_unknown_tab_opens_needs_you() {
+    let web = Web::start().await;
+    let html = web.get("/?tab=nope", true).await.text().await.unwrap();
+    assert!(html.contains("tab: 'needs'"), "{html}");
+    assert!(!html.contains("tab: 'nope'"), "{html}");
+    assert!(pane_shown(&html, "needs"), "{html}");
+    assert!(!pane_shown(&html, "money"), "{html}");
+}
+
+#[tokio::test]
+async fn a_link_can_open_the_coffee_machine() {
+    let web = Web::start().await;
+    let html = web
+        .get("/?sel=elements/coffee", true)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("sel: 'elements/coffee'"), "{html}");
+    assert!(html.contains("Coffee machine"), "{html}");
+    assert!(html.contains("The office is open"), "{html}");
+    assert!(html.contains("@post('/office/close')"), "{html}");
+    // The element is marked on the floor.
+    assert!(
+        html.contains(r#"data-sel="elements/coffee" data-picked="""#),
+        "{html}"
+    );
+}
+
+#[tokio::test]
+async fn a_link_to_something_unknown_shows_the_tabs() {
+    let web = Web::start().await;
+    let html = web
+        .get("/?sel=elements/nope", true)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("sel: ''"), "{html}");
+    assert!(!html.contains("elements/nope"), "{html}");
+    assert!(html.contains(r#"role="tablist""#), "{html}");
+    assert!(pane_shown(&html, "needs"), "{html}");
+    assert!(!html.contains("The office is open"), "{html}");
+    assert!(!html.contains("data-picked"), "{html}");
+}
+
+#[tokio::test]
+async fn a_link_to_a_ticket_at_a_desk_marks_it_on_the_floor() {
+    let web = Web::start().await;
+    let html = web
+        .get("/?sel=tickets/GAME-1", true)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("sel: 'tickets/GAME-1'"), "{html}");
+    // On the drawing, the desk's element carries the mark.
+    let drawing = &html[html.find("<svg class=\"iso\"").unwrap()..];
+    let drawing = &drawing[..drawing.find("</svg>").unwrap()];
+    assert!(
+        drawing.contains(r#"data-sel="tickets/GAME-1" data-picked="""#),
+        "{drawing}"
+    );
+    assert_eq!(drawing.matches("data-picked").count(), 1, "{drawing}");
+    // Its label is pressed, and no other is.
+    let label = tag_with(&html, "<button", r#"data-sel="tickets/GAME-1" data-pj"#);
+    assert!(label.contains(r#"aria-pressed="true""#), "{label}");
+    assert_eq!(html.matches(r#"aria-pressed="true""#).count(), 1, "{html}");
+
+    // Nothing is marked when nothing is picked.
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert!(!home.contains("data-picked"), "{home}");
+    assert!(!home.contains(r#"aria-pressed="true""#), "{home}");
 }
 
 /// A GET as Datastar sends it, with the page's signals in the query.
 async fn datastar_get(web: &Web, path: &str, sel: &str) -> reqwest::Response {
-    let signals = serde_json::to_string(&json!({ "sel": sel })).unwrap();
+    datastar_get_with(web, path, json!({ "sel": sel })).await
+}
+
+async fn datastar_get_with(web: &Web, path: &str, signals: Value) -> reqwest::Response {
+    let signals = serde_json::to_string(&signals).unwrap();
     let query: String = url::form_urlencoded::byte_serialize(signals.as_bytes()).collect();
     web.http
         .get(format!("{}{path}?datastar={query}", web.base))
@@ -794,7 +1071,7 @@ async fn office_panels_answer_through_the_usual_endpoints() {
         queued.contains("@post('/tickets/GAME-2/cancel')"),
         "{queued}"
     );
-    assert!(queued.contains("when a run slot frees up"), "{queued}");
+    assert!(queued.contains("when a desk frees up"), "{queued}");
 
     let planning = panel(&web, "tickets/GAME-3").await;
     assert!(planning.contains(r#"href="/tickets/GAME-3""#), "{planning}");
@@ -837,19 +1114,19 @@ async fn office_panels_answer_through_the_usual_endpoints() {
     assert!(approver.contains("Allowed <code"), "{approver}");
     assert!(approver.contains(r#"href="/tickets/GAME-2""#), "{approver}");
 
-    // A merged goal, an unknown ticket and a forged key show the overview.
+    // A merged goal, an unknown ticket and a forged key show the tabs.
     for sel in [
         "goals/GAME-8",
         "tickets/NOPE-1",
         "tickets/GAME-1'); alert(1)//",
     ] {
         let html = panel(&web, sel).await;
-        assert!(html.contains(">Needs you</h2>"), "{sel}: {html}");
+        assert!(html.contains(r#"role="tablist""#), "{sel}: {html}");
         assert!(!html.contains("alert("), "{sel}: {html}");
     }
     let overview = panel(&web, "").await;
     assert!(overview.contains(r#"id="ask-ASK-1""#), "{overview}");
-    assert!(overview.contains("1 landed"), "{overview}");
+    assert!(overview.contains("$tab = 'projects'"), "{overview}");
 }
 
 #[tokio::test]
@@ -861,9 +1138,20 @@ async fn the_office_stream_keeps_the_selected_panel() {
         let chunk = stream.chunk().await.unwrap().unwrap();
         text.push_str(&String::from_utf8_lossy(&chunk));
     }
-    assert!(text.contains(r#"id="office-floor""#), "{text}");
-    assert!(text.contains(r#"id="office-hud""#), "{text}");
-    assert!(text.contains("Ready to land"), "{text}");
+    // The projects, the figures, the floor with its pins, the corners and
+    // the panel are all re-sent, each with the id Datastar morphs it by.
+    for id in [
+        "hq-projects",
+        "hq-figures",
+        "hq-scene",
+        "hq-corners",
+        "hq-panel",
+    ] {
+        assert!(text.contains(&format!(r#"id="{id}""#)), "{id}: {text}");
+    }
+    // Ticket figures keep their ids, so a figure walks when its ticket moves.
+    assert!(text.contains(r#"id="w-GAME-1""#), "{text}");
+    assert!(text.contains(r#"class="tagc held""#), "{text}");
     assert!(text.contains("@post('/tickets/GAME-5/land')"), "{text}");
 }
 
@@ -1136,4 +1424,228 @@ async fn ready_work_shows_its_diff_and_landed_work_can_merge() {
         land.contains("Landed on") && land.contains("/tickets/GAME-5/merge"),
         "{land}"
     );
+}
+
+/// The floor's element, as the page and its updates draw it.
+fn scene_of(html: &str) -> &str {
+    let from = html.find(r#"id="hq-scene""#).expect("the floor");
+    let to = html[from..]
+        .find(r#"id="hq-corners""#)
+        .map_or(html.len(), |n| from + n);
+    &html[from..to]
+}
+
+#[tokio::test]
+async fn the_page_starts_from_the_corner_the_link_names() {
+    let web = Web::start().await;
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert!(home.contains("turn: 0"), "{home}");
+    assert!(home.contains(r#"data-turn="0""#), "{home}");
+    let turned = web.get("/?turn=2", true).await.text().await.unwrap();
+    assert!(turned.contains("turn: 2"), "{turned}");
+    assert!(turned.contains(r#"data-turn="2""#), "{turned}");
+    assert_ne!(scene_of(&home), scene_of(&turned));
+    // Any whole number wraps to a corner: 5 is 1, -1 is 3.
+    for (link, corner) in [("5", 1), ("-1", 3), ("4", 0)] {
+        let html = web
+            .get(&format!("/?turn={link}"), true)
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(html.contains(&format!("turn: {corner},")), "{link}: {html}");
+    }
+}
+
+#[tokio::test]
+async fn the_scene_route_draws_the_floor_for_the_turn_in_the_signals() {
+    let web = Web::start().await;
+    let at = |turn: i64| {
+        let web = &web;
+        async move {
+            datastar_get_with(web, "/office/scene", json!({"sel": "", "turn": turn}))
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let (first, third) = (at(0).await, at(2).await);
+    // Only the floor comes back, as the element Datastar morphs by its id.
+    for floor in [&first, &third] {
+        assert!(floor.contains(r#"id="hq-scene""#), "{floor}");
+        assert!(floor.contains(r#"<svg class="iso""#), "{floor}");
+        assert!(!floor.contains(r#"id="hq-panel""#), "{floor}");
+    }
+    assert!(first.contains(r#"data-turn="0""#), "{first}");
+    assert!(third.contains(r#"data-turn="2""#), "{third}");
+    assert_ne!(first, third);
+    // The pick stays marked, and the turn wraps.
+    let picked = datastar_get_with(
+        &web,
+        "/office/scene",
+        json!({"sel": "tickets/GAME-1", "turn": 5}),
+    )
+    .await
+    .text()
+    .await
+    .unwrap();
+    assert!(picked.contains(r#"data-turn="1""#), "{picked}");
+    assert!(picked.contains("data-picked"), "{picked}");
+}
+
+#[tokio::test]
+async fn the_live_stream_draws_the_floor_from_the_turn_it_was_opened_with() {
+    let web = Web::start().await;
+    let mut stream = datastar_get_with(&web, "/office/stream", json!({"sel": "", "turn": 3})).await;
+    let mut text = String::new();
+    while !text.contains(r#"id="inspector""#) {
+        let chunk = stream.chunk().await.unwrap().unwrap();
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(text.contains(r#"data-turn="3""#), "{text}");
+    // The effect that opens the stream runs again when the turn changes.
+    let home = web.get("/", true).await.text().await.unwrap();
+    assert!(
+        home.contains("data-effect=\"$sel; $turn; @get('/office/stream')\""),
+        "{home}"
+    );
+}
+
+#[tokio::test]
+async fn the_view_controls_turn_the_floor_by_buttons_and_keys() {
+    let web = Web::start().await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    for (label, step) in [("Turn left", "$turn + 3"), ("Turn right", "$turn + 1")] {
+        let tag = tag_with(&html, "<button", &format!(r#"aria-label="{label}""#));
+        assert!(tag.contains(step), "{label}: {tag}");
+        assert!(tag.contains("@get('/office/scene')"), "{label}: {tag}");
+    }
+    // Q and E anywhere on the page, but not while typing or with a modifier.
+    let keys = tag_with(&html, "<div", "data-on:keydown__window");
+    for part in [
+        "k === 'q'",
+        "k === 'e'",
+        "ctrlKey",
+        "metaKey",
+        "altKey",
+        "input, textarea, select, [contenteditable]",
+        "@get('/office/scene')",
+    ] {
+        assert!(keys.contains(part), "{part}: {keys}");
+    }
+}
+
+#[tokio::test]
+async fn the_floor_can_be_dragged_when_zoomed_in_without_picking_what_is_under_it() {
+    let web = Web::start().await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    let wrap = tag_with(&html, "<div", r#"id="hq-wrap""#);
+    // Only the mouse drags; touch keeps scrolling.
+    assert!(wrap.contains("pointerType === 'mouse'"), "{wrap}");
+    assert!(wrap.contains("$zoom > 1"), "{wrap}");
+    assert!(wrap.contains("data-on:pointermove__window"), "{wrap}");
+    assert!(wrap.contains("scrollLeft"), "{wrap}");
+    // A drag past 4 pixels ends in a click nobody sees.
+    assert!(wrap.contains("Math.hypot(dx, dy) > 4"), "{wrap}");
+    assert!(wrap.contains("data-on:click__capture"), "{wrap}");
+    assert!(wrap.contains("stopPropagation"), "{wrap}");
+    // A grab cursor while zoomed, a grabbing one while dragging.
+    assert!(wrap.contains("cursor-grab"), "{wrap}");
+    assert!(wrap.contains("cursor-grabbing"), "{wrap}");
+    // Dragging is local to the page: signals with an underscore stay home.
+    assert!(html.contains("_dragging: false"), "{html}");
+}
+
+#[tokio::test]
+async fn a_new_studio_starts_with_the_first_steps() {
+    let web = Web::start_empty().await;
+    let html = web.get("/", true).await.text().await.unwrap();
+    // A bare floor: still the room, its things to pick and no tickets.
+    assert!(html.contains(r#"id="hq-scene""#), "{html}");
+    assert!(
+        html.contains(r#"data-sel="elements/add-project""#),
+        "{html}"
+    );
+    assert!(html.contains(r#"data-sel="elements/hire""#), "{html}");
+    // The Needs you tab leads with what to do first.
+    assert!(html.contains(">Start here<"), "{html}");
+    assert!(html.contains("Add a project"), "{html}");
+    assert!(html.contains("Pin a goal on the whiteboard"), "{html}");
+    assert!(html.contains("@get('/office/panel')"), "{html}");
+    assert!(html.contains("$sel = 'elements/add-project'"), "{html}");
+    assert!(
+        html.contains(r#"popovertarget="office-new-goal""#),
+        "{html}"
+    );
+    assert!(html.contains("No projects yet."), "{html}");
+
+    // With a project but no work yet, only the goal step is left.
+    let fresh = Web::start_fresh().await;
+    let html = fresh.get("/", true).await.text().await.unwrap();
+    assert!(html.contains(">Start here<"), "{html}");
+    assert!(html.contains("Pin a goal on the whiteboard"), "{html}");
+    assert!(!html.contains("$sel = 'elements/add-project'"), "{html}");
+    // Once there is work, the list is gone.
+    let busy = Web::start().await;
+    let html = busy.get("/", true).await.text().await.unwrap();
+    assert!(!html.contains(">Start here<"), "{html}");
+}
+
+#[tokio::test]
+async fn the_add_project_and_hire_views_hold_their_forms() {
+    let web = Web::start_empty().await;
+    let add = panel(&web, "elements/add-project").await;
+    assert!(
+        add.contains("@post('/office/projects', {contentType: 'form'})"),
+        "{add}"
+    );
+    for field in ["path", "name", "branch"] {
+        assert!(
+            add.contains(&format!(r#"name="{field}""#)),
+            "{field}: {add}"
+        );
+    }
+    assert!(add.contains("Add project"), "{add}");
+    assert!(add.contains("Projects now"), "{add}");
+    assert!(add.contains("No projects yet."), "{add}");
+    assert!(!add.contains("Coming soon"), "{add}");
+
+    // With projects, each shows with its colour dot.
+    let busy = Web::start().await;
+    let add = panel(&busy, "elements/add-project").await;
+    assert!(
+        add.contains(r#"<i class="pjd pj-0"></i><b class="font-medium">game</b>"#),
+        "{add}"
+    );
+
+    let hire = panel(&web, "elements/hire").await;
+    assert!(
+        hire.contains("@post('/office/hires', {contentType: 'form'})"),
+        "{hire}"
+    );
+    for field in ["name", "role", "model", "about"] {
+        assert!(
+            hire.contains(&format!(r#"name="{field}""#)),
+            "{field}: {hire}"
+        );
+    }
+    for option in [
+        "engineer", "designer", "writer", "producer", "reviewer", "critic", "approver", "router",
+        "sonnet", "opus", "haiku",
+    ] {
+        assert!(
+            hire.contains(&format!(r#"<option value="{option}">"#)),
+            "{option}: {hire}"
+        );
+    }
+    assert!(hire.contains(r#"href="/hires?new""#), "{hire}");
+    assert!(!hire.contains("Coming soon"), "{hire}");
+
+    // Checks with no projects say so, and offer to add one.
+    let racks = panel(&web, "elements/racks").await;
+    assert!(racks.contains("No projects yet."), "{racks}");
+    assert!(racks.contains("$sel = 'elements/add-project'"), "{racks}");
+    let racks = panel(&busy, "elements/racks").await;
+    assert!(!racks.contains("$sel = 'elements/add-project'"), "{racks}");
 }

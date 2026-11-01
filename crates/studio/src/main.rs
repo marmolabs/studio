@@ -882,7 +882,7 @@ fn add_project(
     if let Some(checks) = added.created_checks {
         println!("wrote {}: check its verify commands", checks.display());
     }
-    println!("next: `studio up`, then give it a ticket from the board");
+    println!("next: `studio up`, then give it a goal or a ticket in the office");
     Ok(())
 }
 

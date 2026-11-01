@@ -66,6 +66,26 @@ pub struct SpendTotals {
     pub runs_by_hire: std::collections::BTreeMap<String, u64>,
 }
 
+/// A work ticket's landing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Landing {
+    pub ticket_id: TicketId,
+    /// When it first landed, in epoch milliseconds.
+    pub at_ms: u64,
+    /// The local calendar day of that moment, as `YYYY-MM-DD`.
+    pub date: String,
+}
+
+/// How a project's checks last ended, on one of its tickets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChecksResult {
+    pub project: String,
+    pub ticket_id: TicketId,
+    pub passed: bool,
+    /// Epoch milliseconds.
+    pub at_ms: u64,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -484,6 +504,60 @@ impl Store {
                 ))
             },
         )?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The calendar day (`YYYY-MM-DD`) holding `ms`, in the time zone of this
+    /// process, as `spend_by_local_day` counts days.
+    pub fn local_date(&self, ms: u64) -> Result<String> {
+        Ok(self.conn.query_row(
+            "SELECT date(?1, 'unixepoch', 'localtime')",
+            [(ms / 1000) as i64],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Every work ticket that landed (plan tickets are left out), each with
+    /// the time of its first landing and the local day of it, oldest first.
+    pub fn landings(&self) -> Result<Vec<Landing>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.ticket_id, MIN(e.at_ms),
+                    date(MIN(e.at_ms) / 1000, 'unixepoch', 'localtime')
+             FROM events e JOIN tickets t ON t.id = e.ticket_id
+             WHERE json_extract(e.event, '$.type') = 'landed'
+               AND COALESCE(json_extract(t.ticket, '$.kind'), 'work') <> 'plan'
+             GROUP BY e.ticket_id ORDER BY MIN(e.at_ms), e.ticket_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Landing {
+                ticket_id: TicketId::new(row.get::<_, String>(0)?),
+                at_ms: row.get::<_, i64>(1)?.max(0) as u64,
+                date: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The latest checks result among each project's tickets, by project: its
+    /// newest `checks_passed` or `checks_failed` event.
+    pub fn latest_checks(&self) -> Result<Vec<ChecksResult>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.project, e.ticket_id, e.at_ms, json_extract(e.event, '$.type')
+             FROM events e JOIN tickets t ON t.id = e.ticket_id
+             WHERE e.seq IN (
+                 SELECT MAX(e2.seq) FROM events e2 JOIN tickets t2 ON t2.id = e2.ticket_id
+                 WHERE json_extract(e2.event, '$.type') IN ('checks_passed', 'checks_failed')
+                 GROUP BY t2.project
+             ) ORDER BY t.project",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ChecksResult {
+                project: row.get(0)?,
+                ticket_id: TicketId::new(row.get::<_, String>(1)?),
+                at_ms: row.get::<_, i64>(2)?.max(0) as u64,
+                passed: row.get::<_, String>(3)? == "checks_passed",
+            })
+        })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 

@@ -8,6 +8,7 @@ pub mod pack;
 pub mod paths;
 pub mod project;
 pub mod propose;
+pub mod settings;
 pub mod starter;
 pub mod writer;
 
@@ -19,5 +20,6 @@ pub use loader::{
 pub use paths::StudioPaths;
 pub use project::{Gate, ProjectConfig, ProjectConfigError, matches_any};
 pub use propose::propose_rules;
+pub use settings::{Setting, SettingsError, set_values};
 pub use starter::{AddedPack, AddedProject, NewProject, StarterError, add_pack, add_project, init};
 pub use writer::write_rule;

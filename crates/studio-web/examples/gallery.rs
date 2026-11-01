@@ -5,6 +5,8 @@
 //!
 //! Writes `<name>.png` at 1024px wide, `<name>-1440.png` and `<name>-phone.png`
 //! (390px) for every page, plus a few in the light theme at 1024px and 1440px.
+//! Four stand-in studiods serve them: a busy one, an idle one, a new studio
+//! with nothing in it yet, and the busy one with its office closed.
 //!
 //! Uses a Chromium browser (`$STUDIO_BROWSER`, Chrome, Brave, Chromium). When
 //! there is none, or it can't run (as in an agent's sandbox), macOS Quick Look
@@ -27,6 +29,25 @@ const TOKEN: &str = "0123abcd";
 const WIDTHS: [(&str, u32); 3] = [("", 1024), ("-1440", 1440), ("-phone", 390)];
 /// Pages also shown in the light theme (Quick Look only).
 const LIGHT: [&str; 3] = ["board", "ticket-asking", "office"];
+/// What stands on the office floor, by the key that selects it.
+const ELEMENTS: [&str; 16] = [
+    "board",
+    "corkboard",
+    "posters",
+    "racks",
+    "add-desk",
+    "lounge",
+    "coffee",
+    "trophies",
+    "review",
+    "crates",
+    "returns",
+    "counter",
+    "queue",
+    "safe",
+    "add-project",
+    "hire",
+];
 const PAGE_LIMIT: Duration = Duration::from_secs(30);
 const DIFFSTAT: &str = " src/landing.rs | 6 +++++-\n src/main.rs    | 1 +\n 2 files changed, 6 insertions(+), 1 deletion(-)\n";
 
@@ -312,7 +333,7 @@ fn spend_by_day(days: u32, today: f64) -> Value {
     json!(all[all.len() - days..])
 }
 
-/// The last hour or so of the busy studio, for the office's lanes: each busy
+/// The last hour or so of the busy studio: each busy
 /// or recently busy ticket's history, in an order the state machine accepts.
 fn activity() -> Vec<Value> {
     let histories: [(&str, &[(u64, Value)]); 12] = [
@@ -510,8 +531,26 @@ fn idle_reply(request: &Request) -> Value {
             "asks": 0, "running": 0, "tickets": {}, "goals": 0, "rules": 3, "daily_usd": 10.0,
             "spent_24h": 0.0, "projects": ["shop", "editor"],
             "hires": ["dev", "designer", "producer", "writer", "design-critic", "reviewer", "approver", "router"],
-            "max_runs": 6, "team": team(),
+            "max_runs": 6, "closed": false, "team": team(),
         }),
+        Request::Budget => {
+            let mut idle = budget();
+            idle["spent_24h"] = json!({"total": 0.0, "by_project": {}, "by_hire": {}, "by_model": {},
+                                       "by_ticket": {}, "runs_by_hire": {}});
+            idle["runs_24h"] = json!(0);
+            idle["reserved"] = json!({});
+            idle
+        }
+        // Nothing has landed yet, so there is nothing to win.
+        Request::Trophies => json!([]),
+        Request::ProjectChecks => {
+            let mut checks = project_checks();
+            for check in checks.as_array_mut().into_iter().flatten() {
+                check["running"] = json!([]);
+                check["latest"] = Value::Null;
+            }
+            checks
+        }
         Request::Tickets
         | Request::Asks
         | Request::Estimates
@@ -522,6 +561,40 @@ fn idle_reply(request: &Request) -> Value {
         Request::SpendByDay { days } => spend_by_day(*days, 0.0),
         _ => reply(request),
     }
+}
+
+/// A new studio: the starter team of five, and no projects, tickets, goals,
+/// rules or trophies. The floor is a bare room.
+fn empty_reply(request: &Request) -> Value {
+    let member =
+        |id: &str, role: &str, model: &str| json!({"id": id, "role": role, "model": model});
+    match request {
+        Request::Status => json!({
+            "asks": 0, "running": 0, "tickets": {}, "goals": 0, "rules": 0, "daily_usd": 10.0,
+            "spent_24h": 0.0, "projects": [],
+            "hires": ["engineer", "producer", "reviewer", "approver", "router"],
+            "max_runs": 3, "closed": false,
+            "team": [
+                member("engineer", "engineer", "sonnet"),
+                member("producer", "producer", "sonnet"),
+                member("reviewer", "reviewer", "opus"),
+                member("approver", "approver", "haiku"),
+                member("router", "router", "haiku"),
+            ],
+        }),
+        Request::ProjectChecks | Request::RuleFiles => json!([]),
+        _ => idle_reply(request),
+    }
+}
+
+/// The busy studio after the owner closed the office: the same work, and
+/// nothing new starts.
+fn closed_reply(request: &Request) -> Value {
+    let mut out = reply(request);
+    if matches!(request, Request::Status) {
+        out["closed"] = json!(true);
+    }
+    out
 }
 
 /// A ticket's history: a run sent back once, then a second run. Some
@@ -621,6 +694,152 @@ fn state_since() -> Value {
     Value::Object(since)
 }
 
+/// What each ticket spent in the last 24 hours, in USD. The totals below
+/// are all worked out from these, so the money always agrees.
+const SPENT_BY_TICKET: [(&str, f64); 11] = [
+    ("SHOP-9", 1.40),
+    ("SHOP-7", 1.20),
+    ("SHOP-6", 1.00),
+    ("SHOP-5", 0.70),
+    ("SHOP-20", 0.62),
+    ("SHOP-2", 0.38),
+    ("SHOP-12", 0.30),
+    ("SHOP-10", 0.20),
+    ("SHOP-11", 0.12),
+    ("EDIT-1", 0.30),
+    ("EDIT-2", 0.18),
+];
+
+/// The same 24 hours by hire. Adds up to `spent_24h()`.
+const SPENT_BY_HIRE: [(&str, f64); 6] = [
+    ("dev", 4.4),
+    ("designer", 0.6),
+    ("producer", 0.6),
+    ("reviewer", 0.5),
+    ("approver", 0.2),
+    ("router", 0.1),
+];
+
+/// What live runs hold: the three working, the one in review and the three
+/// paused on an ask.
+const RESERVED: [(&str, f64); 7] = [
+    ("SHOP-2", 0.50),
+    ("SHOP-15", 0.25),
+    ("EDIT-1", 0.25),
+    ("SHOP-6", 0.30),
+    ("SHOP-3", 0.50),
+    ("SHOP-4", 0.50),
+    ("SHOP-13", 0.25),
+];
+
+/// Cents, so sums print the way they were written.
+fn cents(usd: f64) -> f64 {
+    (usd * 100.0).round() / 100.0
+}
+
+/// What the studio spent in the last 24 hours: the sum over tickets.
+fn spent_24h() -> f64 {
+    cents(SPENT_BY_TICKET.iter().map(|(_, usd)| usd).sum())
+}
+
+fn pairs(list: &[(&str, f64)]) -> Value {
+    json!(
+        list.iter()
+            .copied()
+            .collect::<std::collections::BTreeMap<_, _>>()
+    )
+}
+
+/// The budget: limits, the last 24 hours split by project, hire, model and
+/// ticket (each adding up to `spent_24h()`), and what live runs hold.
+fn budget() -> Value {
+    let by_project = |editor: bool| {
+        cents(
+            SPENT_BY_TICKET
+                .iter()
+                .filter(|(id, _)| id.starts_with("EDIT") == editor)
+                .map(|(_, usd)| usd)
+                .sum(),
+        )
+    };
+    json!({
+        "limits": {"daily_usd": 10.0, "ticket_usd": 2.0, "run_usd": null, "min_run_usd": 0.05,
+                   "projects": {"shop": 6.0, "editor": 4.0}, "hires": {"dev": 8.0, "designer": 2.0}},
+        "spent_24h": {"total": spent_24h(),
+                      "by_project": {"shop": by_project(false), "editor": by_project(true)},
+                      "by_hire": pairs(&SPENT_BY_HIRE),
+                      "by_model": {"sonnet": 4.9, "haiku": 0.9, "opus": 0.6},
+                      "by_ticket": pairs(&SPENT_BY_TICKET),
+                      "runs_by_hire": {"dev": 9, "designer": 2, "producer": 1, "reviewer": 3,
+                                       "approver": 41, "router": 6}},
+        "runs_24h": 62,
+        "reserved": pairs(&RESERVED),
+    })
+}
+
+/// Epoch milliseconds as a plain date, such as `30 Oct 2026`.
+fn plain_date(ms: u64) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    // Days since 1970-01-01 to a civil date.
+    let z = (ms / 86_400_000) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_from_march = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_from_march + 2) / 5 + 1;
+    let month = if month_from_march < 10 {
+        month_from_march + 3
+    } else {
+        month_from_march - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{day} {} {year}", MONTHS[(month - 1) as usize % 12])
+}
+
+/// What the studio has won, as `Trophies` answers: a streak, a best day,
+/// the first goal merged, ten tickets landed, and the next landed milestone
+/// with its progress. The 11 landed tickets fell on four days in a row: 2, 4
+/// (the best), 2 and 3 today.
+fn trophies() -> Value {
+    let hours = |h: u64| now_ms() - h * 3_600_000;
+    json!([
+        {"id": "streak", "title": "4-day streak", "detail": "Tickets landed on 4 days in a row.",
+         "earned_at": now_ms() - 33 * 60_000, "progress": null},
+        {"id": "best-day", "title": "Best day",
+         "detail": format!("Landed 4 tickets on {}.", plain_date(hours(47))),
+         "earned_at": hours(47), "progress": null},
+        {"id": "first-goal-merged", "title": "First goal merged",
+         "detail": "Polish the navigation was merged into main.",
+         "earned_at": hours(18), "progress": null},
+        {"id": "landed-10", "title": "10 tickets landed",
+         "detail": "The studio has landed 10 tickets.", "earned_at": hours(2), "progress": null},
+        {"id": "landed-25", "title": "25 tickets landed", "detail": "14 more to land.",
+         "earned_at": null, "progress": [11, 25]},
+    ])
+}
+
+/// Each project's checks as `ProjectChecks` answers: the commands, the
+/// tickets in their checks now (as the board shows), and the newest result.
+fn project_checks() -> Value {
+    let command = |words: &[&str]| json!(words);
+    json!([
+        {"project": "shop",
+         "verify": [command(&["cargo", "fmt", "--all", "--check"]),
+                    command(&["cargo", "clippy", "--workspace", "--", "-D", "warnings"]),
+                    command(&["cargo", "test", "--workspace"])],
+         "running": ["SHOP-5"],
+         "latest": {"ticket": "SHOP-6", "passed": true, "at_ms": now_ms() - 9 * 60_000}},
+        {"project": "editor",
+         "verify": [command(&["cargo", "fmt", "--check"]), command(&["cargo", "test"])],
+         "running": [],
+         "latest": {"ticket": "EDIT-2", "passed": true, "at_ms": now_ms() - 310 * 60_000}},
+    ])
+}
+
 fn reply(request: &Request) -> Value {
     let at = |minutes_ago: u64| now_ms() - minutes_ago * 60_000;
     match request {
@@ -629,12 +848,19 @@ fn reply(request: &Request) -> Value {
             "asks": 3, "running": 8, "goals": 6, "rules": 5,
             "tickets": {"queued": 5, "working": 3, "checking": 1, "reviewing": 1, "asking": 3,
                         "held": 1, "ready": 1, "landed": 11, "failed": 2},
-            "daily_usd": 10.0, "spent_24h": 6.4, "projects": ["shop", "editor"],
+            "daily_usd": 10.0, "spent_24h": spent_24h(), "projects": ["shop", "editor"],
             "hires": ["dev", "designer", "producer", "writer", "design-critic", "reviewer", "approver", "router"],
-            "max_runs": 9, "team": team(),
+            "max_runs": 9, "closed": false, "team": team(),
         }),
         Request::RecentEvents { kinds, .. } => recent_events(kinds),
-        Request::SpendByDay { days } => spend_by_day(*days, 6.4),
+        // Adding a project and hiring answer as studiod does.
+        Request::AddProject { path, name, branch } => json!({
+            "name": name.clone().unwrap_or_else(|| "project".into()), "path": path,
+            "branch": branch.clone().unwrap_or_else(|| "main".into()),
+            "checks": format!("{path}/.studio.toml"),
+        }),
+        Request::SaveFile { name, .. } => json!({"name": name}),
+        Request::SpendByDay { days } => spend_by_day(*days, spent_24h()),
         Request::Tickets => tickets(),
         Request::Events {
             ticket: Some(id), ..
@@ -691,20 +917,9 @@ fn reply(request: &Request) -> Value {
             "input": {"command": "cargo run --bin mailer -- send --template templates/email/launch.html --to owner@example.com --subject \"Corner Shop is open\""},
             "reasons": [],
         }]),
-        Request::Budget => json!({
-            "limits": {"daily_usd": 10.0, "ticket_usd": 2.0, "run_usd": null, "min_run_usd": 0.05,
-                       "projects": {"shop": 6.0, "editor": 4.0}, "hires": {"dev": 8.0, "designer": 2.0}},
-            "spent_24h": {"total": 6.4, "by_project": {"shop": 4.2, "editor": 1.5, "assets": 0.7},
-                          "by_hire": {"dev": 4.4, "designer": 0.6, "producer": 0.6, "reviewer": 0.5,
-                                      "approver": 0.2, "router": 0.1},
-                          "by_model": {"sonnet": 4.9, "haiku": 0.9, "opus": 0.6},
-                          "by_ticket": {"SHOP-7": 2.06, "SHOP-9": 1.96, "SHOP-6": 1.24, "SHOP-20": 1.12,
-                                        "SHOP-5": 0.91},
-                          "runs_by_hire": {"dev": 9, "designer": 2, "producer": 1, "reviewer": 3,
-                                           "approver": 41, "router": 6}},
-            "runs_24h": 62,
-            "reserved": {"SHOP-2": 0.5, "SHOP-5": 0.4, "EDIT-1": 0.25},
-        }),
+        Request::Budget => budget(),
+        Request::Trophies => trophies(),
+        Request::ProjectChecks => project_checks(),
         Request::Files {
             kind: FileKind::Hires,
         } => json!([
@@ -1387,6 +1602,8 @@ async fn run(out_dir: &Path) -> Result<()> {
     write_logs(&dir.path().join("runs"))?;
     let busy = serve(dir.path(), "busy", reply).await?;
     let idle = serve(dir.path(), "idle", idle_reply).await?;
+    let empty = serve(dir.path(), "empty", empty_reply).await?;
+    let closed = serve(dir.path(), "closed", closed_reply).await?;
 
     // One profile for every page, so the login cookie carries over (cookies
     // ignore the port). Logging in also shows whether the browser works here.
@@ -1438,8 +1655,12 @@ async fn run(out_dir: &Path) -> Result<()> {
         ),
         ("hire-edit", &busy, "/hires?file=dev"),
         ("office", &busy, "/"),
-        // The Last hour drawer, opened (Quick Look only).
-        ("office-lanes", &busy, "/"),
+        ("office-closed", &closed, "/"),
+        ("office-tab-projects", &busy, "/?tab=projects"),
+        ("office-tab-team", &busy, "/?tab=team"),
+        ("office-tab-money", &busy, "/?tab=money"),
+        ("office-tab-rules", &busy, "/?tab=rules"),
+        ("office-tab-log", &busy, "/?tab=log"),
         ("office-working", &busy, "/?sel=tickets/SHOP-2"),
         ("office-asking", &busy, "/?sel=tickets/SHOP-3"),
         ("office-checks", &busy, "/?sel=tickets/SHOP-5"),
@@ -1450,8 +1671,26 @@ async fn run(out_dir: &Path) -> Result<()> {
         ("office-hire", &busy, "/?sel=hires/approver"),
         ("office-goal", &busy, "/?sel=goals/SHOP-14"),
         ("office-idle", &idle, "/"),
+        ("office-turn-1", &busy, "/?turn=1"),
+        ("office-turn-2", &busy, "/?turn=2"),
+        ("office-turn-3", &busy, "/?turn=3"),
+        ("office-empty", &empty, "/?tab=team"),
+        ("office-empty-start", &empty, "/?tab=needs"),
     ];
+    // One picture for each thing on the floor.
+    let elements = ELEMENTS.iter().map(|key| {
+        (
+            format!("office-el-{key}"),
+            &busy,
+            format!("/?sel=elements/{key}"),
+        )
+    });
+    let pages = pages
+        .into_iter()
+        .map(|(name, base, path)| (name.to_string(), base, path.to_string()))
+        .chain(elements);
     for (name, base, path) in pages {
+        let name = name.as_str();
         let url = format!("{base}{path}");
         for (suffix, width) in WIDTHS {
             let png = out_dir.join(format!("{name}{suffix}.png"));
@@ -1460,17 +1699,7 @@ async fn run(out_dir: &Path) -> Result<()> {
                     shoot(browser, &profile, &url, (width, 1024), &png).await?;
                 }
                 Renderer::QuickLook(inliner) => {
-                    let mut page = inliner.page(&url, None).await?;
-                    // Opened, with the floor left out so the lanes fit the picture.
-                    if name == "office-lanes" {
-                        page = page
-                            .replacen("<details class=\"group", "<details open class=\"group", 1)
-                            .replacen(
-                                "</head>",
-                                "<style>#office>.grid{display:none}</style></head>",
-                                1,
-                            );
-                    }
+                    let page = inliner.page(&url, None).await?;
                     quick_look(&page, width, dir.path(), &png).await?;
                 }
             }
