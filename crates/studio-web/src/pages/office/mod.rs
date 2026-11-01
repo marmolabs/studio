@@ -1,24 +1,33 @@
-//! The office: the whole studio as one floor plan, with an inspector beside
-//! it for whatever the owner picks. `floor` decides who sits where and draws
-//! the rooms; `inspector` draws what needs the owner and each thing's panel.
+//! The office: the whole studio as one isometric floor with labels pinned
+//! over it, a top bar and a side panel, on one page. `plan` decides who is
+//! where, `scene` draws the floor, `hq` draws the page's pieces and `panel`
+//! the side panel for whatever the owner picks.
 
 mod floor;
+mod hq;
 mod inspector;
-mod lanes;
+mod model;
+mod panel;
+mod plan;
+mod scene;
 
 use futures_util::Stream;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::Ticket;
-use studiod::api::{AskView, HireDay, RECENT_EVENTS, Request};
+use studiod::api::{AskView, FileKind, HireDay, MAX_RUNS_LIMIT, RECENT_EVENTS, Request};
 use topcoat::{
     context::{Cx, app_context},
     datastar::{PatchElements, Signals},
     router::{
-        content::sse::{Event, Sse},
+        content::{
+            Form,
+            sse::{Event, Sse},
+        },
         error::redirect_permanent,
         page, query_params,
         response::Response,
@@ -30,7 +39,7 @@ use topcoat::{
 use super::ticket::{log_path, log_tail, merged_ids};
 use super::timeline::relative;
 use crate::summary::{Judge, review_line};
-use crate::{AppConfig, client, diffstat, live, ui};
+use crate::{AppConfig, client, diffstat, layout, live, ui};
 
 /// How far back "recent" reaches: the same 24 hours as the spend.
 const WINDOW_MS: u64 = 24 * 3_600_000;
@@ -61,8 +70,6 @@ pub struct Office {
     pub cut_at: Option<u64>,
     /// What each ticket has cost, by id.
     pub spend: BTreeMap<String, f64>,
-    /// The run log's tail for each ticket on the floor, by id.
-    pub logs: HashMap<String, String>,
     /// Lines added and removed by each ready ticket, by id.
     pub sizes: HashMap<String, (u64, u64)>,
     /// Who is judging each ticket in review, from its whole run log.
@@ -81,10 +88,6 @@ impl Office {
 
     pub fn spent(&self, id: &str) -> f64 {
         self.spend.get(id).copied().unwrap_or(0.0)
-    }
-
-    pub fn log(&self, id: &str) -> &str {
-        self.logs.get(id).map_or("", String::as_str)
     }
 
     /// When the latest of `ticket`'s events that `pick` accepts happened.
@@ -123,17 +126,9 @@ async fn gather(config: &AppConfig) -> topcoat::Result<Office> {
     let tickets: Vec<Ticket> = client::call(socket, Request::Tickets).await?;
     let now = ui::now_ms();
     let since_ms = now.saturating_sub(WINDOW_MS);
-    let mut logs = HashMap::new();
     let mut judges = HashMap::new();
     for ticket in &tickets {
         let id = ticket.id.to_string();
-        let state = ticket.state.kind();
-        if matches!(
-            state,
-            "claimed" | "working" | "asking" | "checking" | "reviewing"
-        ) {
-            logs.insert(id.clone(), log_tail(&config.data_dir, &id).await);
-        }
         if floor::room(ticket) == floor::Room::Review
             && let Some(judge) = judge_now(&config.data_dir, &id).await
         {
@@ -171,7 +166,6 @@ async fn gather(config: &AppConfig) -> topcoat::Result<Office> {
         today: hires_today(socket, now).await,
         status,
         tickets,
-        logs,
         now,
     })
 }
@@ -277,6 +271,18 @@ pub async fn find_back<T>(
 struct Pick {
     #[serde(default)]
     sel: String,
+    /// The side panel's tab.
+    #[serde(default)]
+    tab: String,
+    /// The corner the floor is seen from, in quarter turns.
+    #[serde(default)]
+    turn: i64,
+}
+
+impl Pick {
+    fn turn(&self) -> model::Turn {
+        model::Turn::new(self.turn)
+    }
 }
 
 /// `id` kept to characters that are safe inside a quoted Datastar
@@ -296,6 +302,7 @@ pub fn key(kind: &str, id: &str) -> String {
 fn clean(sel: &str) -> String {
     match sel.split_once('/') {
         Some((kind @ ("tickets" | "hires" | "goals"), id)) => key(kind, id),
+        Some(("elements", id)) if model::Element::from_key(id).is_some() => key("elements", id),
         _ => String::new(),
     }
 }
@@ -307,51 +314,84 @@ pub fn select(key: &str) -> String {
 }
 
 const SHOW_PANEL: &str =
-    "window.innerWidth <= 1180 && document.getElementById('inspector').scrollIntoView()";
-
-/// Whether the element for `key` is the selected one, for `aria-pressed`.
-pub fn pressed_when(key: &str) -> String {
-    format!("$sel == '{key}'")
-}
+    "window.innerWidth <= 900 && document.getElementById('hq-panel').scrollIntoView()";
 
 #[query_params(error = bad_request)]
 struct Opened {
     /// Opens the page with this selected, e.g. `tickets/SHOP-3`.
     sel: Option<String>,
+    /// Opens the side panel on this tab, e.g. `money`.
+    tab: Option<String>,
+    /// Opens the floor seen from this corner, in quarter turns.
+    turn: Option<i64>,
 }
 
 #[page("/")]
 async fn office_page(cx: &Cx) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
-    let sel = clean(&query_params::<Opened>(cx)?.sel.clone().unwrap_or_default());
+    let opened = query_params::<Opened>(cx)?;
+    let sel = clean(&opened.sel.clone().unwrap_or_default());
+    let tab = panel::tab(opened.tab.as_deref().unwrap_or_default());
+    let turn = model::Turn::new(opened.turn.unwrap_or_default());
     let office = gather(config).await?;
-    let lanes = lanes::load(&config.socket, &office.tickets, office.now).await;
-    let now = office.now;
     let detail = inspector::detail(config, &office, &sel, &mut inspector::Memo::default()).await;
+    let extra = panel::Extra::gather(config).await;
+    let hq::Parts {
+        hud,
+        rows,
+        scene,
+        projects: tints,
+        closed,
+        feed,
+        ..
+    } = hq::Parts::of(&office, &extra, turn);
+    let scene_sel = sel.clone();
     let projects = office.status.projects.clone();
     let team = office.status.team.clone();
-    let signals = format!("{{sel: '{sel}', pick: ''}}");
+    let switches = layout::theme_switches(cx);
+    let signals = format!(
+        "{{sel: '{sel}', tab: '{tab}', focus: 'all', zoom: 1, hints: false, turn: {}, pick: '', _dragging: false}}",
+        turn.index()
+    );
     Ok(view! {
-        <div id="office" class="flex flex-col gap-7" data-signals=(signals)>
-            ui::top_actions(
-                <button type="button" class=(ui::BUTTON) popovertarget="office-new-goal" data-on:click=(NO_PICK)>
-                    ui::icon(name: "target")
-                    <span class=(ui::LABEL)>"New goal"</span>
-                </button>
-                <button type="button" class=(ui::PRIMARY) popovertarget="office-new-ticket" data-on:click=(NO_PICK)>
-                    ui::icon(name: "plus")
-                    <span class=(ui::LABEL)>"New ticket"</span>
-                </button>
-            )
+        <div id="office" class="grid h-dvh grid-rows-[auto_minmax(0,1fr)] max-[900px]:h-auto" data-signals=(signals)>
+            // Restarts the live stream whenever the selection or the corner the
+            // floor is seen from changes, so it keeps the picked panel up to
+            // date and draws the floor from that corner.
+            <div hidden="" data-effect="$sel; $turn; @get('/office/stream')"></div>
+            <header class="flex min-w-0 items-center gap-3 border-b border-line bg-bg-2 px-4 py-[9px] max-[900px]:flex-wrap max-[900px]:gap-y-2">
+                <a href="/" class="flex items-center gap-2.5" aria-label="studio, the office">
+                    <span class="grid size-[26px] shrink-0 place-items-center rounded-[7px] bg-primary text-on-primary">
+                        <svg class="size-4" aria-hidden="true"><use href="#logo"></use></svg>
+                    </span>
+                    <b class="text-[15px] font-semibold tracking-[-0.01em] max-[520px]:hidden">"studio"</b>
+                </a>
+                hq::projects_strip(rows: rows.clone())
+                hq::figures(hud: hud)
+                <div class="flex items-center gap-2">
+                    <button type="button" class=(ui::BUTTON) popovertarget="office-new-ticket" aria-label="New ticket" data-on:click=(NO_PICK)>
+                        ui::icon(name: "plus")
+                        <span class=(ui::LABEL)>"Ticket"</span>
+                    </button>
+                    <button type="button" class=(ui::PRIMARY) popovertarget="office-new-goal" aria-label="New goal" data-on:click=(NO_PICK)>
+                        ui::icon(name: "target")
+                        <span class=(ui::LABEL)>"New goal"</span>
+                    </button>
+                    layout::theme_form(switches: switches)
+                </div>
+            </header>
+            <main class="grid min-h-0 grid-cols-[minmax(0,1fr)_384px] max-[1100px]:grid-cols-[minmax(0,1fr)_340px] max-[900px]:grid-cols-[minmax(0,1fr)]">
+                <section class="world" aria-label="The studio floor, live">
+                    hq::view_controls()
+                    hq::wrap(
+                        hq::floor_scene(scene: scene, projects: tints, closed: closed, sel: scene_sel, turn: turn)
+                    )
+                    hq::corners(rows: rows, feed: feed)
+                </section>
+                hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab.to_string())
+            </main>
             new_ticket(projects: projects.clone(), team: team.clone())
             new_goal(projects: projects, team: team)
-            // Restarts the live stream whenever the selection changes, so it
-            // keeps the picked panel up to date.
-            <div hidden="" data-effect="$sel; @get('/office/stream')"></div>
-            <div class="grid grid-cols-[minmax(0,1fr)_360px] overflow-hidden rounded-xl border border-line bg-bg max-[1180px]:grid-cols-1">
-                (rooms(cx, office, detail, sel))
-            </div>
-            last_hour(lanes: lanes, now: now)
         </div>
     })
 }
@@ -367,14 +407,14 @@ async fn old_office(cx: &Cx) -> topcoat::Result<Response> {
     Err(redirect_permanent(&to).into())
 }
 
-/// The Live page's lanes are the office's "Last hour" now.
+/// The Live page is gone; its address leads home.
 #[route(GET "/live")]
 async fn old_live() -> topcoat::Result<Response> {
     Err(redirect_permanent("/").into())
 }
 
-/// The floor, the top bar's figures and the inspector, re-sent as they
-/// change, for the selection the stream was opened with.
+/// The top bar's figures, the floor, the corners and the panel, re-sent as
+/// they change, for the selection the stream was opened with.
 #[route(GET "/office/stream")]
 async fn office_stream(
     cx: &Cx,
@@ -382,135 +422,348 @@ async fn office_stream(
 ) -> topcoat::Result<Sse<impl Stream<Item = topcoat::Result<Event>> + Send + use<>>> {
     let config = app_context::<AppConfig>(cx).clone();
     let cx = cx.clone();
-    let sel = clean(&signals.map(|s| s.0.sel).unwrap_or_default());
-    // What the panel reads once for this selection, kept between renders.
-    let memo = Arc::new(tokio::sync::Mutex::new(inspector::Memo::default()));
+    let pick = signals.map(|s| s.0).unwrap_or_default();
+    let turn = pick.turn();
+    let (sel, tab) = (clean(&pick.sel), panel::tab(&pick.tab));
+    let kept = Arc::new(tokio::sync::Mutex::new(Kept::default()));
     Ok(live::watch(move || {
         let config = config.clone();
         let cx = cx.clone();
         let sel = sel.clone();
-        let memo = memo.clone();
-        async move { render_all(&cx, &config, &sel, &mut *memo.lock().await).await }
+        let kept = kept.clone();
+        async move { render_all(&cx, &config, &sel, tab, turn, &mut *kept.lock().await).await }
     }))
+}
+
+/// How long a stream shows the panel's extra reads before reading them
+/// again: trophies, checks, rules and the last 14 days change slowly, and
+/// some of them read the whole history.
+const EXTRA_FRESH: Duration = Duration::from_secs(15);
+
+/// What a stream keeps between renders.
+#[derive(Default)]
+struct Kept {
+    /// What the picked panel reads once.
+    memo: inspector::Memo,
+    /// The panel's extra reads, and when they were made.
+    extra: Option<(Instant, panel::Extra)>,
 }
 
 async fn render_all(
     cx: &Cx,
     config: &AppConfig,
     sel: &str,
-    memo: &mut inspector::Memo,
+    tab: &str,
+    turn: model::Turn,
+    kept: &mut Kept,
 ) -> topcoat::Result<String> {
     let office = gather(config).await?;
-    let detail = inspector::detail(config, &office, sel, memo).await;
-    let lanes = lanes::load(&config.socket, &office.tickets, office.now).await;
-    let now = office.now;
-    let figures = Hud::of(&office.status, &office.tickets);
-    let sel = sel.to_string();
-    ui::html(
-        cx,
-        view! { cx =>
-            hud_bar(hud: figures)
-            (rooms(cx, office, detail, sel))
-            lanes::hour(rows: lanes, now: now)
-        },
-    )
-    .await
+    let detail = inspector::detail(config, &office, sel, &mut kept.memo).await;
+    let extra = match &kept.extra {
+        Some((at, extra)) if at.elapsed() < EXTRA_FRESH => extra.clone(),
+        _ => {
+            let extra = panel::Extra::gather(config).await;
+            kept.extra = Some((Instant::now(), extra.clone()));
+            extra
+        }
+    };
+    let parts = hq::Parts::of(&office, &extra, turn);
+    let (sel, tab) = (sel.to_string(), tab.to_string());
+    ui::html(cx, live_parts(cx, parts, office, detail, extra, sel, tab)).await
 }
 
-/// The inspector for the current selection, right away.
-#[route(GET "/office/panel")]
-async fn office_panel(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Result<PatchElements> {
-    let config = app_context::<AppConfig>(cx);
-    let sel = clean(&signals.map(|s| s.0.sel).unwrap_or_default());
-    let office = gather(config).await?;
-    let detail = inspector::detail(config, &office, &sel, &mut inspector::Memo::default()).await;
-    let panel =
-        view! { cx => inspector::inspector(office: office, detail: detail, sel: sel) }.boxed();
-    let html = ui::html(cx, view! { cx => (panel) }).await?;
-    Ok(PatchElements::new(html))
-}
-
-/// The floor and the inspector, boxed so their futures live on the heap.
-fn rooms(cx: &Cx, office: Office, detail: inspector::Detail, sel: String) -> BoxView<'_> {
+/// Every piece of the page that changes, boxed so their futures live on the
+/// heap.
+fn live_parts(
+    cx: &Cx,
+    parts: hq::Parts,
+    office: Office,
+    detail: inspector::Detail,
+    extra: panel::Extra,
+    sel: String,
+    tab: String,
+) -> BoxView<'_> {
     view! { cx =>
-        floor::floor(office: office.clone(), sel: sel.clone())
-        inspector::inspector(office: office, detail: detail, sel: sel)
+        hq::projects_strip(rows: parts.rows.clone())
+        hq::figures(hud: parts.hud)
+        hq::floor_scene(scene: parts.scene, projects: parts.projects, closed: parts.closed, sel: sel.clone(), turn: parts.turn)
+        hq::corners(rows: parts.rows, feed: parts.feed)
+        hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab)
     }
     .boxed()
 }
 
-/// The top bar's figures on the office page.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Hud {
-    /// Open asks plus tickets held for the owner, as on the board.
-    pub needs_you: u64,
-    /// Tickets at work: not paused on an ask.
-    pub running: u64,
-    pub ready: u64,
-    pub spent: f64,
-    pub daily: f64,
+/// The panel for the current selection, right away.
+#[route(GET "/office/panel")]
+async fn office_panel(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let pick = signals.map(|s| s.0).unwrap_or_default();
+    let (sel, tab) = (clean(&pick.sel), panel::tab(&pick.tab).to_string());
+    let office = gather(config).await?;
+    let detail = inspector::detail(config, &office, &sel, &mut inspector::Memo::default()).await;
+    let extra = panel::Extra::gather(config).await;
+    let side =
+        view! { cx => hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab) }
+            .boxed();
+    let html = ui::html(cx, view! { cx => (side) }).await?;
+    Ok(PatchElements::new(html))
 }
 
-impl Hud {
-    pub fn of(status: &client::Status, tickets: &[Ticket]) -> Hud {
-        let held = tickets
-            .iter()
-            .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
-            .count();
-        Hud {
-            needs_you: status.asks + held as u64,
-            running: status.at_work(),
-            ready: status.tickets.get("ready").copied().unwrap_or(0),
-            spent: status.spent_24h,
-            daily: status.daily_usd,
+/// The floor alone, drawn from the corner the signals ask for, so a turn
+/// shows at once instead of with the next live update.
+#[route(GET "/office/scene")]
+async fn office_scene(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let pick = signals.map(|s| s.0).unwrap_or_default();
+    let sel = clean(&pick.sel);
+    let office = gather(config).await?;
+    let extra = panel::Extra::gather(config).await;
+    let hq::Parts {
+        scene,
+        projects,
+        closed,
+        turn,
+        ..
+    } = hq::Parts::of(&office, &extra, pick.turn());
+    let floor =
+        view! { cx => hq::floor_scene(scene: scene, projects: projects, closed: closed, sel: sel, turn: turn) }
+            .boxed();
+    let html = ui::html(cx, view! { cx => (floor) }).await?;
+    Ok(PatchElements::new(html))
+}
+
+/// Closes the office: agents finish the step they are on and nothing new
+/// starts.
+#[route(POST "/office/close")]
+async fn close_office(cx: &Cx) -> topcoat::Result<PatchElements> {
+    set_open(cx, false).await
+}
+
+/// Opens the office again.
+#[route(POST "/office/open")]
+async fn open_office(cx: &Cx) -> topcoat::Result<PatchElements> {
+    set_open(cx, true).await
+}
+
+async fn set_open(cx: &Cx, open: bool) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    match client::call::<serde_json::Value>(&config.socket, Request::SetOpen { open }).await {
+        Ok(_) => {
+            let text = if open {
+                "The office is open. Work starts again."
+            } else {
+                "The office is closed. Work in progress carries on; nothing new starts."
+            };
+            ui::notice(cx, text.into(), false).await
         }
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
     }
 }
 
-/// Needs you, running, ready and the last 24 hours' spend, beside the
-/// office's title. Hidden where the bar is too narrow for it.
-#[component]
-pub async fn hud_bar(hud: Hud) -> topcoat::Result<impl View> {
-    let figures = [
-        ("attn", hud.needs_you, "need you"),
-        ("run", hud.running, "running"),
-        ("ok", hud.ready, "ready"),
-    ];
-    Ok(view! {
-        <div id="office-hud" class="ml-1.5 flex min-w-0 items-center gap-4 overflow-hidden whitespace-nowrap text-[13px] text-fg-2 max-[1180px]:hidden" aria-label="The studio now">
-            for (tone, n, words) in figures {
-                <span class="inline-flex items-center gap-1.5">
-                    <span class=(format!("size-2 rounded-full {}", match tone {
-                        "attn" => "bg-attn",
-                        "run" => "bg-run",
-                        _ => "bg-ok",
-                    }))></span>
-                    <b class="font-semibold tabular-nums text-fg">(n)</b>
-                    (words)
-                </span>
-            }
-            <a href="/budget" class="inline-flex items-center gap-1.5 hover:text-fg" title="Spend over the last 24 hours, against the daily limit">
-                <b class="font-semibold tabular-nums text-fg">(ui::usd(hud.spent))</b>
-                " of " (ui::limit(hud.daily))
-                <span class="ml-0.5 inline-block w-14">ui::meter(value: hud.spent, max: hud.daily)</span>
-            </a>
-        </div>
-    })
+#[derive(Deserialize)]
+struct Desks {
+    max_runs: String,
 }
 
-/// The "Last hour" drawer under the floor.
-#[component]
-async fn last_hour(lanes: Vec<lanes::Lane>, now: u64) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <details class="group rounded-[10px] border border-line bg-bg">
-            <summary class="flex cursor-pointer list-none items-center gap-2.5 px-[18px] py-3.5 [&::-webkit-details-marker]:hidden">
-                <span class="text-fg-3 transition-transform group-open:rotate-90">ui::icon(name: "chevron-right", small: true)</span>
-                <h2 class="text-[14px] font-semibold leading-5">"Last hour"</h2>
-                <span class="text-[13px] text-fg-3">"What every ticket did, minute by minute"</span>
-            </summary>
-            lanes::hour(rows: lanes, now: now)
-        </details>
-    })
+/// Sets how many agents may work at once.
+#[route(POST "/office/desks")]
+async fn set_desks(cx: &Cx, Form(form): Form<Desks>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let max_runs = match form.max_runs.trim().parse::<u64>() {
+        Ok(n @ 1..=MAX_RUNS_LIMIT) => n,
+        _ => {
+            let words = format!("Pick between 1 and {MAX_RUNS_LIMIT} desks.");
+            return ui::notice(cx, words, true).await;
+        }
+    };
+    match client::call::<serde_json::Value>(&config.socket, Request::SetMaxRuns { max_runs }).await
+    {
+        Ok(_) => {
+            let words = if max_runs == 1 {
+                "One agent can work at a time.".to_string()
+            } else {
+                format!("{max_runs} agents can work at once.")
+            };
+            ui::notice(cx, words, false).await
+        }
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct Limits {
+    #[serde(default)]
+    daily_usd: String,
+    #[serde(default)]
+    ticket_usd: String,
+}
+
+/// A limit typed in a field: empty leaves it as it is, else a positive
+/// amount in dollars, with or without the "$".
+fn amount(text: &str) -> Result<Option<f64>, ()> {
+    let text = text.trim().trim_start_matches('$').trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<f64>() {
+        Ok(n) if n.is_finite() && n > 0.0 => Ok(Some(n)),
+        _ => Err(()),
+    }
+}
+
+/// Sets the daily and per-ticket spending limits; a field left empty keeps
+/// its limit.
+#[route(POST "/office/limits")]
+async fn set_limits(cx: &Cx, Form(form): Form<Limits>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let (Ok(daily_usd), Ok(ticket_usd)) = (amount(&form.daily_usd), amount(&form.ticket_usd))
+    else {
+        return ui::notice(cx, "A limit is an amount above $0.".into(), true).await;
+    };
+    if daily_usd.is_none() && ticket_usd.is_none() {
+        return ui::notice(cx, "Enter a limit to change.".into(), true).await;
+    }
+    let request = Request::SetLimits {
+        daily_usd,
+        ticket_usd,
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => {
+            let mut parts = Vec::new();
+            if let Some(n) = daily_usd {
+                parts.push(format!("The daily limit is {}.", ui::limit(n)));
+            }
+            if let Some(n) = ticket_usd {
+                parts.push(format!("A ticket may cost up to {}.", ui::limit(n)));
+            }
+            ui::notice(cx, parts.join(" "), false).await
+        }
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct NewProject {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    branch: String,
+}
+
+/// A field left empty is sent as absent.
+fn absent(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Adds a git repository on this computer as a project; studiod fills in
+/// what is left out.
+#[route(POST "/office/projects")]
+async fn add_project(cx: &Cx, Form(form): Form<NewProject>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let Some(path) = absent(&form.path) else {
+        let words = "Enter the folder of a git repository.";
+        return ui::notice(cx, words.into(), true).await;
+    };
+    let name = absent(&form.name);
+    let request = Request::AddProject {
+        path,
+        name: name.clone(),
+        branch: absent(&form.branch),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(added) => {
+            let name = added["name"]
+                .as_str()
+                .map(str::to_string)
+                .or(name)
+                .unwrap_or_else(|| "the project".into());
+            let words = match added["checks"].as_str() {
+                Some(checks) => format!("Added {name}. Its checks: {checks}"),
+                None => format!("Added {name}."),
+            };
+            ui::notice(cx, words, false).await
+        }
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+/// The roles the Hire form offers, and the models.
+pub const ROLES: [&str; 8] = [
+    "engineer", "designer", "writer", "producer", "reviewer", "critic", "approver", "router",
+];
+pub const MODELS: [&str; 3] = ["sonnet", "opus", "haiku"];
+/// The longest name a hire may have.
+const HIRE_NAME_MAX: usize = 40;
+
+#[derive(Deserialize)]
+struct NewHire {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    about: String,
+}
+
+/// Whether `name` can be a hire's id and file name: lowercase letters,
+/// digits and dashes, starting with a letter or digit.
+fn hire_id_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= HIRE_NAME_MAX
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// A hire's file, in the shape of the hires editor's template.
+fn hire_file(name: &str, role: &str, model: &str, about: &str) -> String {
+    let about = about.split_whitespace().collect::<Vec<_>>().join(" ");
+    let about = if about.is_empty() {
+        format!("You are a careful {role}. Describe how you work here.")
+    } else {
+        about
+    };
+    format!("---\nname: {name}\nrole: {role}\nruntime: claude-code\nmodel: {model}\n---\n{about}\n")
+}
+
+/// Hires someone: writes their file, and they join the team at once.
+#[route(POST "/office/hires")]
+async fn hire_someone(cx: &Cx, Form(form): Form<NewHire>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let (name, role, model) = (form.name.trim(), form.role.trim(), form.model.trim());
+    if !hire_id_ok(name) {
+        let words = "A name is lowercase letters, digits and dashes, like quick-dev.";
+        return ui::notice(cx, words.into(), true).await;
+    }
+    if !ROLES.contains(&role) {
+        return ui::notice(cx, "Pick a role.".into(), true).await;
+    }
+    if !MODELS.contains(&model) {
+        return ui::notice(cx, "Pick a model.".into(), true).await;
+    }
+    let status: client::Status = match client::call(&config.socket, Request::Status).await {
+        Ok(status) => status,
+        Err(err) => return ui::notice(cx, err.to_string(), true).await,
+    };
+    if status.team.iter().any(|m| m.id == name) {
+        let words = format!("{name} is already on the team. Pick another name.");
+        return ui::notice(cx, words, true).await;
+    }
+    let request = Request::SaveFile {
+        kind: FileKind::Hires,
+        name: name.to_string(),
+        text: hire_file(name, role, model, &form.about),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => ui::notice(cx, format!("Hired {name} as {role}."), false).await,
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
 }
 
 /// Opening a form from the top bar picks no hire, whatever a panel picked.
@@ -708,34 +961,55 @@ mod tests {
     }
 
     #[test]
-    fn the_hud_counts_what_needs_you_and_what_runs_as_the_board_does() {
-        use serde_json::json;
-        // Four runs hold a slot, but one of them waits on an ask.
-        let status: client::Status = serde_json::from_value(json!({
-            "asks": 2, "running": 4,
-            "tickets": {"held": 2, "ready": 4, "working": 2, "reviewing": 1, "asking": 1},
-            "daily_usd": 100.0, "spent_24h": 34.12,
-        }))
-        .unwrap();
-        let held = |id: &str, reason: &str| -> Ticket {
-            serde_json::from_value(json!({
-                "id": id, "project": "game", "title": id, "goal": "", "hire": "dev",
-                "state": {"held": {"reason": reason}}, "attempts": 0,
-                "base_branch": "main", "created_at": 0,
-            }))
-            .unwrap()
-        };
-        // A budget hold starts again by itself; a pause waits for the owner.
-        let tickets = [held("G-1", "budget"), held("G-2", "paused")];
+    fn a_limit_is_an_amount_above_zero() {
+        assert_eq!(amount(""), Ok(None));
+        assert_eq!(amount(" $12.50 "), Ok(Some(12.5)));
+        assert_eq!(amount("3"), Ok(Some(3.0)));
+        for bad in ["0", "-1", "abc", "inf", "NaN"] {
+            assert_eq!(amount(bad), Err(()), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_hire_is_named_in_lowercase_and_filed_like_the_editors_template() {
+        for good in ["dev", "quick-dev", "dev2", "9"] {
+            assert!(hire_id_ok(good), "{good}");
+        }
+        for bad in [
+            "",
+            "Dev",
+            "-dev",
+            "quick dev",
+            "dev_2",
+            "dev.md",
+            "../x",
+            &"a".repeat(41),
+        ] {
+            assert!(!hire_id_ok(bad), "{bad}");
+        }
         assert_eq!(
-            Hud::of(&status, &tickets),
-            Hud {
-                needs_you: 3,
-                running: 3,
-                ready: 4,
-                spent: 34.12,
-                daily: 100.0
-            }
+            hire_file("quick-dev", "engineer", "opus", " Careful\r\nand\tquick "),
+            "---\nname: quick-dev\nrole: engineer\nruntime: claude-code\nmodel: opus\n---\nCareful and quick\n"
         );
+        assert!(
+            hire_file("w", "writer", "haiku", "")
+                .ends_with("You are a careful writer. Describe how you work here.\n")
+        );
+    }
+
+    #[test]
+    fn a_field_left_empty_is_absent() {
+        assert_eq!(absent("  "), None);
+        assert_eq!(absent(" main "), Some("main".into()));
+    }
+
+    #[test]
+    fn game_elements_can_be_selected() {
+        for element in model::Element::ALL {
+            let sel = format!("elements/{}", element.key());
+            assert_eq!(clean(&sel), sel);
+        }
+        assert_eq!(clean("elements/nope"), "");
+        assert_eq!(clean("elements/"), "");
     }
 }

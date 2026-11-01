@@ -1,7 +1,12 @@
 use clap::Parser;
 use std::path::PathBuf;
+use std::time::Duration;
 use studio_config::StudioPaths;
 use studio_web::{AppConfig, load_token, router};
+use topcoat::router::RouterService;
+
+/// How long open requests get to finish when the server stops.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Web UI for a running studio (`studiod`). Listens on 127.0.0.1 unless told otherwise.
 #[derive(Parser)]
@@ -48,6 +53,9 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         base_url: format!("http://{}:{port}", args.host),
     };
     println!("open {}/?token={}", config.base_url, config.token);
-    topcoat::serve(listener, router(config)).await?;
+    // Live pages hold their stream open for as long as they are open, so on
+    // Ctrl-C or SIGTERM they get a moment, not the default half minute.
+    let service = RouterService::new(router(config)).shutdown_timeout(SHUTDOWN_GRACE);
+    topcoat::serve(listener, service).await?;
     Ok(())
 }

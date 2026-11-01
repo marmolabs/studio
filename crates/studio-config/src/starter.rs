@@ -205,11 +205,25 @@ pub fn add_project(
     let path = project.path.canonicalize()?;
     let name = match project.name {
         Some(name) => name.to_string(),
-        None => path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project")
-            .to_string(),
+        // A folder's name may hold characters a project name can't ("my.game",
+        // "my game"); those become dashes.
+        None => {
+            let folder = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let name: String = folder
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect();
+            match name.trim_matches('-') {
+                "" => "project".to_string(),
+                trimmed => trimmed.to_string(),
+            }
+        }
     };
     if name.is_empty()
         || !name

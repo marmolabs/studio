@@ -17,7 +17,10 @@ use topcoat::{
 use std::collections::BTreeMap;
 use studiod::api::{HireDay, Request};
 
-use crate::{AppConfig, client, pages, statics, ui};
+use crate::{AppConfig, client, statics, ui};
+
+/// The studio's mark on a dark tile, inline so no request is made for it.
+const FAVICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2318181b'/%3E%3Crect x='3.5' y='5.8' width='6.7' height='6.7' rx='1.6' fill='none' stroke='%23f4f4f5' stroke-width='1.5'/%3E%3Cpath d='M6.2 3.3h5a1.5 1.5 0 0 1 1.5 1.5v5' fill='none' stroke='%23f4f4f5' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
 /// Sidebar links: (href, label, icon), the owner's work first.
 const WORK: [(&str, &str, &str); 4] = [
@@ -155,14 +158,54 @@ fn theme_switch(
     (icon, value, format!("Switch to the {other} theme"))
 }
 
+/// The two theme buttons, one for each system preference; CSS shows the one
+/// that applies.
+pub fn theme_switches(cx: &Cx) -> [Switch; 2] {
+    let theme = chosen_theme(cx);
+    [
+        (
+            theme_switch(theme, "dark"),
+            "[@media(prefers-color-scheme:light)]:hidden",
+        ),
+        (
+            theme_switch(theme, "light"),
+            "[@media(prefers-color-scheme:dark)]:hidden",
+        ),
+    ]
+}
+
+/// A theme button's (icon, value, label) and the class that hides it.
+pub type Switch = ((&'static str, &'static str, String), &'static str);
+
+/// The theme switch for a page's own top bar; it comes back to the page.
+#[component]
+pub async fn theme_form(switches: [Switch; 2]) -> topcoat::Result<impl View> {
+    Ok(view! {
+        <form method="post" action="/theme" class="flex">
+            <input type="hidden" name="back" value="/">
+            for ((icon, value, label), hide) in switches {
+                <button type="submit" name="theme" value=(value) class=(format!("{} {hide}", ui::ICON_BUTTON_SM)) aria-label=(label.clone()) title=(label)>
+                    ui::icon(name: icon)
+                </button>
+            }
+        </form>
+    })
+}
+
 #[layout("/")]
 pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
-    // The shell still renders when studiod is down; the page says why.
-    let status: client::Status = client::call(&config.socket, Request::Status)
-        .await
-        .unwrap_or_default();
     let path = uri(cx).path().to_owned();
+    // The office has its own top bar, so it needs none of the sidebar's.
+    let home = path == OFFICE.0;
+    // The shell still renders when studiod is down; the page says why.
+    let status: client::Status = if home {
+        client::Status::default()
+    } else {
+        client::call(&config.socket, Request::Status)
+            .await
+            .unwrap_or_default()
+    };
     let here = uri(cx)
         .path_and_query()
         .map_or("/", |p| p.as_str())
@@ -180,19 +223,10 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
         _ => note(&path).map(str::to_string),
     };
     let queued = status.tickets.get("queued").copied().unwrap_or(0);
+    let running = status.at_work();
     let (spent, daily) = (status.spent_24h, status.daily_usd);
     let theme = chosen_theme(cx);
-    // One button for each system preference; CSS shows the one that applies.
-    let switches = [
-        (
-            theme_switch(theme, "dark"),
-            "[@media(prefers-color-scheme:light)]:hidden",
-        ),
-        (
-            theme_switch(theme, "light"),
-            "[@media(prefers-color-scheme:dark)]:hidden",
-        ),
-    ];
+    let switches = theme_switches(cx);
     let link = |(href, label, icon): (&'static str, &'static str, &'static str)| NavLink {
         href,
         label,
@@ -202,30 +236,8 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
     };
     let work: Vec<NavLink> = WORK.into_iter().map(link).collect();
     let studio: Vec<NavLink> = STUDIO.into_iter().map(link).collect();
-    // The office collapses the sidebar to an icon rail on a wide screen.
-    let rail = path == OFFICE.0;
-    let side = if rail {
-        "contents min-[761px]:hidden"
-    } else {
-        "contents"
-    };
-    let switch: Vec<NavLink> = if rail || path == BOARD.0 {
+    let switch: Vec<NavLink> = if path == BOARD.0 {
         [OFFICE, BOARD].into_iter().map(link).collect()
-    } else {
-        Vec::new()
-    };
-    // The office's figures count held tickets by why they are held.
-    let tickets: Vec<studio_core::ticket::Ticket> = if rail {
-        client::call(&config.socket, Request::Tickets)
-            .await
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let figures = pages::office::Hud::of(&status, &tickets);
-    let running = status.at_work();
-    let rail_links: Vec<NavLink> = if rail {
-        WORK.into_iter().chain(STUDIO).map(link).collect()
     } else {
         Vec::new()
     };
@@ -237,6 +249,7 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>"studio"</title>
+                <link rel="icon" href=(FAVICON)>
                 <link rel="preload" href=(statics::SANS) as="font" type="font/woff2" crossorigin="">
                 <link rel="stylesheet" href=(statics::STYLESHEET)>
                 <script type="module" src=(statics::DATASTAR)></script>
@@ -244,11 +257,14 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
             <body>
                 (Unescaped::new_unchecked(statics::ICONS))
                 (Unescaped::new_unchecked(ui::GLYPHS))
+                if home {
+                    // The office draws its own top bar and side panel; a
+                    // reply to an action shows over the floor.
+                    <div id="notice" class="toast fixed bottom-4 left-1/2 z-20 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 text-[13px] empty:hidden" aria-live="polite"></div>
+                    (slot)
+                } else {
                 <div class="flex min-h-screen max-[760px]:flex-col">
-                    if rail {
-                        icon_rail(links: rail_links, running: running, queued: queued, here: here.clone(), switches: switches.clone())
-                    }
-                    <div class=(side)>
+                    <div class="contents">
                     <aside class="sticky top-0 flex h-screen w-58 shrink-0 flex-col gap-1 border-r border-line bg-bg px-3 pb-3 pt-3.5 max-[760px]:z-[6] max-[760px]:h-auto max-[760px]:w-full max-[760px]:gap-0 max-[760px]:border-b max-[760px]:border-r-0 max-[760px]:px-4 max-[760px]:pb-2 max-[760px]:pt-2.5" aria-label="Studio">
                         <div class="mb-2.5 flex h-8 items-center gap-2.5 px-1.5 max-[760px]:mb-1.5 max-[760px]:px-0">
                             <a href="/" class="flex items-center gap-2.5">
@@ -334,9 +350,6 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                                     }
                                 </nav>
                             }
-                            if rail {
-                                pages::office::hud_bar(hud: figures)
-                            }
                         </header>
                         <main class="mx-auto flex w-full max-w-[1200px] flex-col has-[#office]:max-w-[1480px] gap-7 px-8 pb-18 pt-7 max-[760px]:gap-6 max-[760px]:px-4 max-[760px]:pb-14 max-[760px]:pt-5">
                             <div id="notice" class="empty:hidden"></div>
@@ -344,6 +357,7 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                         </main>
                     </div>
                 </div>
+                }
             </body>
         </html>
     })
@@ -379,86 +393,6 @@ async fn nav_link(link: NavLink) -> topcoat::Result<impl View> {
                 } else {
                     <span class="ml-auto text-[12px] font-medium leading-none tabular-nums text-fg-3">(n)</span>
                 }
-            }
-        </a>
-    })
-}
-
-/// A theme button's (icon, value, label) and the class that hides it.
-type Switch = ((&'static str, &'static str, String), &'static str);
-
-/// The office's sidebar on a wide screen: a 64px rail of icons, the asks
-/// badge, and the running pulse and theme switch at its foot.
-#[component]
-async fn icon_rail(
-    links: Vec<NavLink>,
-    running: u64,
-    queued: u64,
-    here: String,
-    switches: [Switch; 2],
-) -> topcoat::Result<impl View> {
-    // The work links, then a rule, then the studio's own.
-    let split = links.len().saturating_sub(STUDIO.len());
-    let mut work = links;
-    let studio = work.split_off(split);
-    let live = format!("{running} running, {queued} queued");
-    Ok(view! {
-        <aside class="sticky top-0 flex h-screen w-16 shrink-0 flex-col items-center gap-1 border-r border-line bg-bg px-2.5 pb-3 pt-3.5 max-[760px]:hidden" aria-label="Studio">
-            <a href="/" class="mb-3.5 grid h-8 place-items-center" aria-label="studio" title="studio">
-                <span class="grid size-[22px] place-items-center rounded-md bg-primary text-on-primary">
-                    <svg class="size-3.5" aria-hidden="true"><use href="#logo"></use></svg>
-                </span>
-            </a>
-            <nav class="flex flex-col gap-0.5" aria-label="Work">
-                for link in work { rail_link(link: link) }
-            </nav>
-            <div class="my-2.5 h-px w-6 bg-line" role="presentation"></div>
-            <nav class="flex flex-col gap-0.5" aria-label="Studio">
-                for link in studio { rail_link(link: link) }
-            </nav>
-            <div class="mt-auto flex flex-col items-center gap-2.5 border-t border-line pb-1 pt-3">
-                if running > 0 {
-                    <span class="grid size-7 place-items-center" title=(live.clone()) role="img" aria-label=(live)>
-                        <span class="pulse"></span>
-                    </span>
-                } else {
-                    <span class="grid size-7 place-items-center" title="Idle" role="img" aria-label="Idle">
-                        <span class="size-2 rounded-full bg-fg-3"></span>
-                    </span>
-                }
-                <form method="post" action="/theme">
-                    <input type="hidden" name="back" value=(here)>
-                    for ((icon, value, label), hide) in switches {
-                        <button type="submit" name="theme" value=(value) class=(format!("{} {hide}", ui::ICON_BUTTON_SM)) aria-label=(label.clone()) title=(label)>
-                            ui::icon(name: icon)
-                        </button>
-                    }
-                </form>
-            </div>
-        </aside>
-    })
-}
-
-/// An icon in the rail, named by its title; only the asks count shows.
-#[component]
-async fn rail_link(link: NavLink) -> topcoat::Result<impl View> {
-    let NavLink {
-        href,
-        label,
-        icon,
-        current,
-        count,
-    } = link;
-    let asks = count.filter(|_| label == "Asks");
-    let name = match asks {
-        Some(n) => format!("{label}, {n} waiting"),
-        None => label.to_string(),
-    };
-    Ok(view! {
-        <a href=(href) title=(label) aria-label=(name) class="relative flex h-8 w-10 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-bg-3 hover:text-fg aria-[current=page]:bg-bg-3 aria-[current=page]:text-fg" aria-current=(current.then_some("page"))>
-            ui::icon(name: icon)
-            if let Some(n) = asks {
-                <span class="absolute -right-0.5 top-px rounded-full bg-attn px-[5px] py-0.5 text-[10px] font-medium leading-none tabular-nums text-[#1d1400]" aria-hidden="true">(n)</span>
             }
         </a>
     })

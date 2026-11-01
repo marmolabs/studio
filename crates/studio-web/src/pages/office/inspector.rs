@@ -58,7 +58,6 @@ pub struct Memo {
 
 const SAID_SHOWN: usize = 280;
 const STEPS_SHOWN: usize = 3;
-const RECENT_SHOWN: usize = 5;
 const ARG_SHOWN: usize = 120;
 /// The approver's calls its panel lists. studiod reads every fresh run log
 /// for them, so they are read again at most every `CALLS_EVERY` ms.
@@ -185,69 +184,71 @@ async fn ready_detail(config: &AppConfig, id: &str) -> (Files, bool) {
 
 /// What the inspector shows for a selection.
 enum Panel {
-    Overview,
     Ticket(Box<Ticket>),
     Hire(client::Member),
     Goal(Box<Goal>),
 }
 
-fn panel(office: &Office, sel: &str) -> Panel {
-    match sel.split_once('/') {
-        Some(("tickets", id)) => office
-            .ticket(id)
-            .map_or(Panel::Overview, |t| Panel::Ticket(Box::new(t.clone()))),
-        Some(("hires", id)) => office
-            .member(id)
-            .map_or(Panel::Overview, |m| Panel::Hire(m.clone())),
-        Some(("goals", id)) => floor::goals(office)
+/// The selected ticket, hire or open goal, if the office still has it.
+fn panel(office: &Office, sel: &str) -> Option<Panel> {
+    match sel.split_once('/')? {
+        ("tickets", id) => Some(Panel::Ticket(Box::new(office.ticket(id)?.clone()))),
+        ("hires", id) => Some(Panel::Hire(office.member(id)?.clone())),
+        ("goals", id) => floor::goals(office)
             .into_iter()
             .find(|g| g.plan.id.to_string() == id)
-            .map_or(Panel::Overview, |g| Panel::Goal(Box::new(g))),
-        _ => Panel::Overview,
+            .map(|g| Panel::Goal(Box::new(g))),
+        _ => None,
     }
 }
 
-/// As tall as it needs: beside the floor, the floor's row grows to match.
-const INSPECTOR: &str = "flex min-w-0 flex-col border-l border-line bg-bg max-[1180px]:border-l-0 max-[1180px]:border-t";
-const HEAD: &str = "sticky top-0 z-[1] flex min-h-[52px] items-center gap-2 border-b border-line bg-bg px-4 py-2.5";
-const BODY: &str = "flex flex-col gap-[18px] p-4";
-const SECTION_LABEL: &str = "mb-2 text-[12px] font-medium leading-4 text-fg-3";
-const KV: &str = "m-0 grid grid-cols-[84px_minmax(0,1fr)] gap-x-2.5 gap-y-2 text-[13px] [&_dd]:m-0 [&_dd]:min-w-0 [&_dt]:text-fg-3";
-const ACTIONS: &str = "flex flex-wrap gap-2";
+/// Whether `sel` is a ticket, hire or open goal the office has: one that
+/// merged, was cancelled or never was falls back to the tabs.
+pub(super) fn finds(office: &Office, sel: &str) -> bool {
+    panel(office, sel).is_some()
+}
+
+/// The panel's content, filling the side panel's frame.
+pub(super) const INSPECTOR: &str = "flex min-h-0 min-w-0 flex-1 flex-col";
+pub(super) const HEAD: &str = "sticky top-0 z-[1] flex min-h-[52px] items-center gap-2 border-b border-line bg-bg px-4 py-2.5";
+pub(super) const BODY: &str = "flex flex-col gap-[18px] p-4";
+pub(super) const SECTION_LABEL: &str = "mb-2 text-[12px] font-medium leading-4 text-fg-3";
+pub(super) const KV: &str = "m-0 grid grid-cols-[84px_minmax(0,1fr)] gap-x-2.5 gap-y-2 text-[13px] [&_dd]:m-0 [&_dd]:min-w-0 [&_dt]:text-fg-3";
+pub(super) const ACTIONS: &str = "flex flex-wrap gap-2";
 const SUBTITLE: &str = "block truncate font-mono text-[12px] text-fg-3";
-const PANEL_TITLE: &str =
+pub(super) const PANEL_TITLE: &str =
     "text-[16px] font-semibold leading-[22px] tracking-[-0.01em] [text-wrap:balance]";
 const DOING: &str = "flex min-w-0 items-center gap-2 rounded-[7px] border border-line bg-bg-2 px-2.5 py-[7px] text-[13px] leading-[18px] text-fg-2 [&>.i]:size-3.5 [&>.i]:text-fg-3";
 const TOOL_ROW: &str = "grid grid-cols-[16px_auto_minmax(0,1fr)_auto] items-center gap-2.5 border-t border-line px-3 py-[7px] text-[12.5px] first:border-t-0 [&>.i]:size-3.5 [&>.i]:text-fg-3";
-const TICKET_LINK: &str = "font-medium text-fg hover:underline";
-const EVENT_ROW: &str = "grid grid-cols-[36px_16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5 text-[13px] leading-5 first:border-t-0 first:pt-0.5 [&>.st]:mt-0.5 [&>.prog]:mt-0.5";
+pub(super) const TICKET_LINK: &str = "font-medium text-fg hover:underline";
+pub(super) const EVENT_ROW: &str = "grid grid-cols-[36px_16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5 text-[13px] leading-5 first:border-t-0 first:pt-0.5 [&>.st]:mt-0.5 [&>.prog]:mt-0.5";
 /// A ticket in a list: its id, glyph and title.
 const TICKET_ROW: &str = "grid grid-cols-[64px_16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5 text-[13px] leading-5 first:border-t-0 first:pt-0.5 hover:bg-bg-2 [&>.st]:mt-0.5 [&>.prog]:mt-0.5";
 const BACK: &str = "$sel = ''; @get('/office/panel')";
 /// A command or path on one line, for a small ask card.
-const CMD_LINE: &str = "truncate rounded-lg border border-line bg-bg-2 px-2.5 py-[7px] font-mono text-[12px] leading-5 text-fg";
+pub(super) const CMD_LINE: &str = "truncate rounded-lg border border-line bg-bg-2 px-2.5 py-[7px] font-mono text-[12px] leading-5 text-fg";
 
 #[component]
 pub async fn inspector(office: Office, detail: Detail, sel: String) -> topcoat::Result<impl View> {
     // Boxed, so the panels' futures live on the heap, not the stack.
     let body: BoxView = match panel(&office, &sel) {
-        Panel::Overview => view! { overview(office: office) }.boxed(),
-        Panel::Ticket(ticket) => ticket_panel(__cx, *ticket, office, detail),
-        Panel::Hire(member) => {
+        None => view! {}.boxed(),
+        Some(Panel::Ticket(ticket)) => ticket_panel(__cx, *ticket, office, detail),
+        Some(Panel::Hire(member)) => {
             view! { hire_panel(member: member, office: office, detail: detail) }.boxed()
         }
-        Panel::Goal(goal) => view! { goal_panel(goal: *goal, office: office) }.boxed(),
+        Some(Panel::Goal(goal)) => view! { goal_panel(goal: *goal, office: office) }.boxed(),
     };
     Ok(view! {
-        <aside id="inspector" class=(INSPECTOR) aria-label="Inspector" aria-live="polite">
+        <div id="inspector" class=(INSPECTOR) aria-live="polite">
             (body)
-        </aside>
+        </div>
     })
 }
 
 /// The panel's header: a way back, then `child`.
 #[component]
-async fn head(child: Child<'_>) -> topcoat::Result<impl View> {
+pub(super) async fn head(child: Child<'_>) -> topcoat::Result<impl View> {
     Ok(view! {
         <div class=(HEAD)>
             <button type="button" class=(ui::ICON_BUTTON_SM) aria-label="Back to what needs you" data-on:click=(BACK)>
@@ -333,7 +334,7 @@ async fn open_ticket(#[into] id: String) -> topcoat::Result<impl View> {
 }
 
 #[component]
-async fn cancel(#[into] id: String) -> topcoat::Result<impl View> {
+pub(super) async fn cancel(#[into] id: String) -> topcoat::Result<impl View> {
     let post = format!("confirm('Cancel {id}?') && @post('/tickets/{id}/cancel')");
     Ok(view! {
         <button type="button" class=(ui::DANGER) data-on:click=(post)>"Cancel"</button>
@@ -1025,13 +1026,7 @@ async fn ready_panel(ticket: Ticket, detail: Detail) -> topcoat::Result<impl Vie
 #[component]
 async fn queued_panel(ticket: Ticket, office: Office) -> topcoat::Result<impl View> {
     let id = ticket.id.to_string();
-    let why = ui::Wait::of(
-        &ticket,
-        &office.tickets,
-        office.status.out_of_budget,
-        office.status.max_runs,
-    )
-    .sentence();
+    let why = ui::Wait::of(&ticket, &office.tickets, &office.status).sentence();
     Ok(view! {
         head(
             ui::state_icon(state: "queued")
@@ -1315,9 +1310,10 @@ async fn call_row(call: ApproverCall, now: u64) -> topcoat::Result<impl View> {
     })
 }
 
-/// What needs the owner, what is ready, the last day, and the latest events.
+/// What needs the owner: asks, tickets held for them, what is ready to land
+/// and goals ready to merge, then budget and quota holds.
 #[component]
-async fn overview(office: Office) -> topcoat::Result<impl View> {
+pub(super) async fn needs_you(office: Office) -> topcoat::Result<impl View> {
     // Budget and quota holds start again by themselves, so they wait apart.
     let (held, on_hold): (Vec<Ticket>, Vec<Ticket>) = office
         .tickets
@@ -1332,67 +1328,38 @@ async fn overview(office: Office) -> topcoat::Result<impl View> {
         .filter(|t| room(t) == Room::Ready)
         .cloned()
         .collect();
-    let shipped = floor::shipped(&office);
-    let count = |state: &str| {
-        shipped
-            .iter()
-            .filter(|(t, _)| t.state.kind() == state)
-            .count()
-    };
-    let mut done: Vec<String> = Vec::new();
-    for (state, words) in [
-        ("landed", "landed"),
-        ("failed", "failed"),
-        ("cancelled", "cancelled"),
-    ] {
-        let n = count(state);
-        if n > 0 {
-            done.push(format!("{n} {words}"));
-        }
-    }
-    let recent: Vec<(client::Happened, &str, String)> = office
-        .recent
-        .iter()
-        .rev()
-        .filter(|e| !matches!(e.event, TicketEvent::RunStarted { .. }))
-        .take(RECENT_SHOWN)
-        .map(|e| {
-            let (state, said) = event_words(&e.event, &office.asks);
-            (e.clone(), state, said)
+    // Goals whose tickets have all landed wait for the owner to merge them.
+    let done_goals: Vec<(String, String, String, String)> = floor::goals(&office)
+        .into_iter()
+        .filter(|g| g.state() == "done")
+        .filter_map(|g| {
+            let landed = g.filed.iter().find(|t| t.state.kind() == "landed")?;
+            Some((
+                key("goals", &g.plan.id.to_string()),
+                g.name(),
+                format!("@post('/tickets/{}/merge')", landed.id),
+                landed.base_branch.clone(),
+            ))
         })
         .collect();
-    // Spend always covers the 24 hours; the counts say so when studiod cut
-    // their window shorter.
-    let mut done = done.join(", ");
-    if office.cut_at.is_some() && !done.is_empty() {
-        done = format!("{done} in {}", office.window());
-    }
-    // The approver's calls, from whichever hire holds the role.
-    let approver = office
-        .status
-        .team
-        .iter()
-        .filter(|m| m.role == "approver")
-        .find_map(|m| office.today.get(&m.id))
-        .map(|d| (d.allowed + d.denied + d.to_owner, d.to_owner))
-        .filter(|(calls, _)| *calls > 0)
-        .map(|(calls, sent)| format!("{calls} calls, {sent} sent to you"));
     let asks = office.asks.clone();
     let now = office.now;
-    let (spent, daily) = (office.status.spent_24h, office.status.daily_usd);
+    // A new studio starts bare: the first steps come before anything else.
+    let no_projects = office.status.projects.is_empty();
+    let start = no_projects || office.tickets.is_empty();
     Ok(view! {
-        <div class=(HEAD)>
-            <h2 class="text-[14px] font-semibold leading-5">"Needs you"</h2>
-            <span class="text-fg-3 tabular-nums">(needs)</span>
-            <span class="flex-1"></span>
-            <a href="/asks" class=(ui::GHOST_SM)>"All asks"</a>
-        </div>
-        <div class=(BODY)>
+            if start {
+                start_here(no_projects: no_projects)
+            }
             if needs == 0 {
                 <p class="text-[13px] text-fg-3">"Nothing needs you right now."</p>
             }
             for ask in asks {
-                mini_ask(waited: opened(&ask).map(|at| now.saturating_sub(at)), ask: ask)
+                mini_ask(
+                    waited: opened(&ask).map(|at| now.saturating_sub(at)),
+                    project: office.ticket(&ask.ticket).map(|t| t.project.to_string()).unwrap_or_default(),
+                    ask: ask,
+                )
             }
             for ticket in held {
                 held_row(ticket: ticket)
@@ -1407,6 +1374,26 @@ async fn overview(office: Office) -> topcoat::Result<impl View> {
                     </div>
                 </section>
             }
+            if !done_goals.is_empty() {
+                <section>
+                    <h3 class=(SECTION_LABEL)>"Goals done"</h3>
+                    <div class="flex flex-col gap-2">
+                        for (pick, name, post, base) in done_goals {
+                            <div class="grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] border border-line px-3 py-2">
+                                ui::state_icon(state: "done")
+                                <button type="button" class="flex min-w-0 cursor-pointer flex-col text-left" data-on:click=(select(&pick))>
+                                    <span class="truncate font-medium" title=(name.clone())>(name.clone())</span>
+                                    <span class="truncate text-[12.5px] text-fg-3">"Every ticket landed"</span>
+                                </button>
+                                <button type="button" class=(ui::BUTTON_SM) data-on:click=(post)>
+                                    ui::icon(name: "git-merge", small: true)
+                                    "Merge into " (base)
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
             if !on_hold.is_empty() {
                 <section>
                     <h3 class=(SECTION_LABEL)>"On hold, starts by itself"</h3>
@@ -1417,42 +1404,46 @@ async fn overview(office: Office) -> topcoat::Result<impl View> {
                     </div>
                 </section>
             }
-            <section>
-                <h3 class=(SECTION_LABEL)>"Last 24 hours"</h3>
-                <dl class=(KV)>
-                    <dt>"Spent"</dt>
-                    <dd class="flex flex-col gap-1.5">
-                        <span class="tabular-nums">(ui::usd(spent)) <span class="text-fg-3">" of " (ui::limit(daily))</span></span>
-                        ui::meter(value: spent, max: daily)
-                    </dd>
-                    if !done.is_empty() {
-                        <dt>"Shipped"</dt>
-                        <dd>(done)</dd>
-                    }
-                    if let Some(calls) = approver {
-                        <dt>"Approver"</dt>
-                        <dd>(calls)</dd>
-                    }
-                </dl>
-            </section>
-            if !recent.is_empty() {
-                <section>
-                    <h3 class=(SECTION_LABEL)>"Recent"</h3>
-                    <div class="flex flex-col">
-                        for (e, state, said) in recent {
-                            event_row(happened: e, state: state, said: said, now: now)
-                        }
-                    </div>
-                </section>
-            }
             <p class="text-[12.5px] text-fg-3">"Pick anyone on the floor to see their work."</p>
-        </div>
     })
 }
 
-/// A compact ask: what it wants, and Allow, Deny or Details.
+/// The first steps of a new studio: add a project, then pin a goal.
 #[component]
-async fn mini_ask(ask: AskView, waited: Option<u64>) -> topcoat::Result<impl View> {
+async fn start_here(no_projects: bool) -> topcoat::Result<impl View> {
+    let add = select("elements/add-project");
+    Ok(view! {
+        <section>
+            <h3 class=(SECTION_LABEL)>"Start here"</h3>
+            <div class="flex flex-col gap-2">
+                if no_projects {
+                    <button type="button" class=(ui::PRIMARY) data-on:click=(add)>
+                        ui::icon(name: "plus")
+                        "Add a project"
+                    </button>
+                }
+                <button type="button" class=(if no_projects { ui::BUTTON } else { ui::PRIMARY })
+                    popovertarget="office-new-goal" disabled=(no_projects.then_some("")) data-on:click=(super::NO_PICK)>
+                    ui::icon(name: "target")
+                    "Pin a goal on the whiteboard"
+                </button>
+            </div>
+            if no_projects {
+                <p class="mt-2 text-[12.5px] text-fg-3">"Goals need a project to work on, so add one first."</p>
+            }
+        </section>
+    })
+}
+
+/// A compact ask: what it wants, a note for the agent, and Allow, Deny,
+/// Always allow or Details.
+#[component]
+async fn mini_ask(
+    ask: AskView,
+    waited: Option<u64>,
+    project: String,
+) -> topcoat::Result<impl View> {
+    let always = always_prefix(&ask);
     let summary = summarise(&ask);
     let why = sentences(&reasons(&ask, &summary));
     let question = ask.kind == "question";
@@ -1472,11 +1463,17 @@ async fn mini_ask(ask: AskView, waited: Option<u64>) -> topcoat::Result<impl Vie
                 ask_target(ask: ask.clone(), small: true)
                 if !question {
                     <p class="text-[12.5px] leading-[18px] text-fg-3">(why)</p>
+                    <input name=(MESSAGE) placeholder="Note for the agent (optional)" title="A deny with a note lets the agent carry on another way." class=(format!("{} text-[13px]", ui::INPUT))>
                 }
                 <div class="flex flex-wrap items-center gap-2">
                     if !question {
                         <button type="submit" name=(DECISION) value="approve" class=(ui::PRIMARY_SM)>"Allow"</button>
                         <button type="submit" name=(DECISION) value="deny" class=(ui::BUTTON_SM)>"Deny"</button>
+                        if let Some(prefix) = always {
+                            <button type="submit" name=(DECISION) value=(ALWAYS) class=(ui::GHOST_SM) title=(format!("Allow and save a rule for {prefix} in {project}"))>
+                                "Always allow " <span class=(ui::CODE)>(prefix)</span>
+                            </button>
+                        }
                     }
                     <button type="button" class=(if question { ui::BUTTON_SM } else { ui::GHOST_SM }) data-on:click=(details)>
                         (if question { "Answer" } else { "Details" })
@@ -1499,7 +1496,10 @@ async fn held_row(ticket: Ticket) -> topcoat::Result<impl View> {
                 <span class="truncate font-medium">(ticket.title.clone())</span>
                 <span class="truncate text-[12.5px] text-fg-3">(id.clone()) " · " (why)</span>
             </div>
-            <button type="button" class=(ui::GHOST_SM) data-on:click=(select(&key("tickets", &id)))>"Details"</button>
+            <div class="flex items-center gap-1.5">
+                <button type="button" class=(ui::BUTTON_SM) data-on:click=(format!("@post('/tickets/{id}/resume')")) aria-label=(format!("Resume {id}"))>"Resume"</button>
+                <button type="button" class=(ui::GHOST_SM) data-on:click=(select(&key("tickets", &id)))>"Details"</button>
+            </div>
         </div>
     })
 }
@@ -1527,7 +1527,7 @@ async fn ready_row(ticket: Ticket, size: Option<(u64, u64)>) -> topcoat::Result<
 
 /// How an event reads in the Recent list: the glyph's state, then the words
 /// after the ticket's id. An ask still open says what it wants.
-fn event_words(event: &TicketEvent, asks: &[AskView]) -> (&'static str, String) {
+pub(super) fn event_words(event: &TicketEvent, asks: &[AskView]) -> (&'static str, String) {
     let words = |state, text: &str| (state, text.to_string());
     match event {
         TicketEvent::Created { .. } => words("queued", "was filed"),
@@ -1609,7 +1609,7 @@ mod tests {
         let cx = Cx::default();
         let html = ui::html(
             &cx,
-            view! { cx => mini_ask(ask: ask, waited: Some(120_000)) },
+            view! { cx => mini_ask(ask: ask, waited: Some(120_000), project: "game".to_string()) },
         )
         .await
         .unwrap();

@@ -1,13 +1,13 @@
 # Web UI design
 
-`prototype.html` is the reference for every page: open it in a browser (sidebar
-links switch pages, the Office first; picking on the floor opens its panel; the
-moon button switches theme) or render it with Quick Look (below), which shows
-the Office. Like the app, it has no script of its own: links and `:target` pick
-the page and the panel, popovers open the dialogs, and a checkbox flips the
-theme. Build the app to look and behave like it. Its CSS is the design system:
-take the values, spacing and structure from it. Its data is sample data; the
-app shows only real data from studiod.
+`prototype.html` is the reference for every page except the Office: open it in
+a browser (sidebar links switch pages; the moon button switches theme) or render
+it with Quick Look (below). Like the app, it has no script of its own: links and
+`:target` pick the page and the panel, popovers open the dialogs, and a checkbox
+flips the theme. Build the app to look and behave like it. Its CSS is the design
+system: take the values, spacing and structure from it. Its data is sample data;
+the app shows only real data from studiod. The Office is the exception: its
+reference is the gallery's office screenshots (`examples/gallery.rs`, below).
 
 ## Look
 
@@ -40,62 +40,51 @@ can force either (below).
 
 ## Shell
 
-Sidebar (232px): the brand, then Office, Board, Asks (amber count when asks
-wait), Goals; a "Studio" label; Hires, Rules, Budget. At its foot: running and
-queued counts with a pulsing dot, today's spend of the daily limit with a meter,
-and the theme switch. On the Office it folds to a 64px icon rail (icons with
-their names as titles, the asks count as a badge, the running dot and the theme
-switch at its foot). Top bar (56px, sticky, translucent): title or breadcrumb,
-an Office/Board switch on those two pages, then page actions on the right, at
-most one primary button. Content in a centred column up to 1200px (1480px for
-the Office). Below 760px the sidebar becomes a top bar with the brand, running
-count and spend, and a horizontally scrolling nav that starts with Office;
-rails stack under the main column; nothing scrolls the page sideways at 390px.
-Leave out the prototype's "Prototype" and "Sample data" labels.
+Sidebar (232px) on every page but the Office: the brand, then Office, Board,
+Asks (amber count when asks wait), Goals; a "Studio" label; Hires, Rules,
+Budget. At its foot: running and queued counts with a pulsing dot, today's
+spend of the daily limit with a meter, and the theme switch. The Office has no
+sidebar: it draws its own top bar (see Pages). Top bar (56px, sticky,
+translucent): title or breadcrumb, an Office/Board switch on those two pages,
+then page actions on the right, at most one primary button. Content in a
+centred column up to 1200px. Below 760px the sidebar becomes a top bar with the
+brand, running count and spend, and a horizontally scrolling nav that starts
+with Office; rails stack under the main column; nothing scrolls the page
+sideways at 390px. Leave out the prototype's "Prototype" and "Sample data"
+labels.
 
 ## Pages
 
-- **Office** (the home page, `/`): the whole studio on one floor plan, with an
-  inspector beside it; everything can be done from here. The top bar adds the
-  figures: what needs you, what is running, what is ready, and the last 24
-  hours' spend against the daily limit. The rooms, on a dotted floor:
-  - *Workspace*: one desk per run slot. A ticket at work or waiting on you sits
-    at one: the hire's face in a ring filled to the ticket's step, the desk's
-    monitor lit, the ticket's id and title, and "Working · try 2", "Needs you ·
-    2m" or "Held · budget" under it. An ask floats over the agent's head as a
-    bubble saying what it wants ("Run a command"); a desk no run holds is a
-    free desk.
-  - *Checks*: a rack with a light per check run, and the command running now
-    with how long it has run.
-  - *Review*: the reviewer or critic at a round table with the ticket, and what
-    it is reading.
-  - *Planning*: a whiteboard of the open goals, each with landed of filed and a
-    progress bar; one still being planned shows its producer.
-  - *Ready to land*: a card per ready ticket with its diff size, spend and Land.
-  - *Lounge*: idle hires on a sofa, with how long they have rested.
-  - *Front desk*: the approver (calls decided and sent to you today) and the
-    router (tickets routed), and what is up next, with a link to the rest on
-    the board.
-  - *Shipped*: what landed, failed or was cancelled in the last 24 hours.
-
-  Picking anything (a desk, a goal, a hire, an up-next chip) opens its panel in
-  the inspector; `/?sel=tickets/SHOP-3` opens the page with one picked. With
-  nothing picked the inspector shows what needs you (each ask as a small card
-  with Allow, Deny and Details; held tickets), what is ready to land, the last
-  24 hours (spend, what shipped, the approver's calls) and the latest events.
-  A ticket's panel follows its state: the full ask card with Always allow and a
-  note, what the agent is doing now and its latest steps, the project checks
-  and the one running, the judge and why the last try was sent back, a ready
-  ticket's changed files with Land, a held ticket's reason with Resume, and
-  Cancel and Open ticket. A hire's panel says what it does, what it did today,
-  its spend and what it is on, with "Give it a ticket" (or a goal, for a
-  producer) and Edit hire; a goal's panel lists what it filed with Merge once
-  it is done. Under the floor, a "Last hour" drawer holds one lane per ticket
-  that did anything in the last 60 minutes, with segments for working, checks,
-  critic or review, waiting for you, on hold, sent back and ready, drawn from
-  the ticket's event times, under a legend. The floor, the figures, the panel
-  and the lanes stay live. On a phone the rooms stack and the inspector follows
-  the floor.
+- **Office** (the home page, `/`): the whole studio as one isometric floor on
+  a page of its own, with no sidebar. Its visual reference is the gallery's
+  office screenshots (`examples/gallery.rs`), not the prototype. A top bar holds
+  the brand, a strip of projects that focuses one (the rest of the floor
+  fades), the figures (need you, at work, shipped today), the money meter, Ticket,
+  New goal and the theme switch. Under it, the floor: an SVG drawn from the
+  studio's real state, with a label pinned over each ticket at a desk (an id,
+  and its title on hover or when picked), plus view controls (zoom out, Fit,
+  zoom in, "What's what"), two corners (a Projects tracker and a Live feed) and
+  a side panel with the tabs Needs you, Projects, Team, Money, Rules and Log.
+  - Every object on the floor is a control and opens its own panel (`elements/<key>`):
+    the whiteboard (goals), the team board (hire), the posters (house rules), the
+    racks (each project's checks), the empty desk (desks: how many agents work at
+    once), the lounge (who is free), the coffee machine (close or reopen the
+    office; nothing new starts while it is closed), the trophies (from the
+    studio's history), the review room (reviewers and critics), the crates
+    (shipped today), the returns (failed work), the front desk (approver and
+    router), the queue (up next) and the safe (budget and limits).
+  - A ticket at a desk, a hire and a goal open theirs: a ticket's panel follows its
+    state (the ask with Allow and Deny, what the agent is doing, the checks and
+    review, changed files with Land, a held ticket's reason with Resume,
+    Cancel); a hire's says what it did and what it is on, with a level from
+    landed work; a goal's lists what it filed, with Merge once it is done.
+  - Links: `/?tab=money` opens a tab, `/?sel=tickets/SHOP-3`, `hires/<id>`,
+    `goals/<id>` or `elements/coffee` open a panel. An unknown tab opens Needs
+    you; an unknown element shows the tabs.
+  - Dark is the office at night, light the same office by day. The page, its
+    figures, labels and panel stay live. Below 900px the floor fills the width,
+    the corners and the panel follow it, and only the labels that need you are
+    shown on the floor.
 - **Board** (`/board`): four figures (needs you with the oldest wait; running with how
   many are working or in review; ready to land with the diff size; spend today
   with a 14-day sparkline), then one container grouped as Needs you (one row
@@ -137,7 +126,7 @@ The app stays Rust + Topcoat + Datastar + Tailwind.
   through the existing endpoints.
 - Theme: the switch is a small form that sets a `theme` cookie (`light`,
   `dark`, or none for the system); the server puts `data-theme` on `<html>`.
-- Grouped tool calls and the Last hour drawer: `<details>`.
+- Grouped tool calls: `<details>`.
 - Picking on the office floor: a Datastar `$sel` signal; the panel comes from
   `/office/panel` and the stream re-renders it with the floor.
 - Live data keeps flowing through the existing Datastar streams.
@@ -154,4 +143,6 @@ honestly, leave the element out; never show a made-up or placeholder value.
 `cargo run -q -p studio-web --example gallery -- <dir>` renders every page with
 sample data. In a sandbox it uses Quick Look, which lays pages out at 1024px;
 the gallery also writes 1440px and 390px (phone) versions. Compare them with
-the prototype rendered the same way.
+the prototype rendered the same way; the Office has no prototype, so check
+its screenshots (the floor, each panel tab, both themes, phone width) against
+the description under Pages.

@@ -18,6 +18,7 @@ pub mod runtimes;
 mod server;
 mod studio;
 mod today;
+mod trophies;
 mod watch;
 mod worker;
 

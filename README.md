@@ -64,18 +64,44 @@ what you like.
 
 ## The web UI
 
-A local web UI opens on the Office: the whole studio as one floor plan, with
-tickets at their desks, in checks, in review and ready to land, goals on the
-planning whiteboard, idle hires in the lounge, and the approver and router at
-the front desk. Pick anything to see it beside the floor and do what it needs
-there: answer an ask, land a ticket, merge a goal, resume or cancel work, or
-give a hire a ticket. A "Last hour" drawer shows what every ticket did, minute
-by minute. The board, goals, asks, budget, hires and rules pages hold the lists
-and the detail, and each ticket has a live activity feed. On a phone the
-sidebar becomes a top bar.
+A local web UI opens on the Office: the whole studio as one isometric floor on
+a single page. Tickets sit at their desks, in the checks lab, in review and
+ready to land, goals are on the whiteboard, idle hires are in the lounge, and
+the approver and router stand at the front desk. A bar on top shows what needs
+you, what is at work, what shipped in the last day and what you have spent,
+with a strip of projects to focus on one. Everything on the floor is a control: pick it to
+see it in the panel beside the floor and act there, whether that is answering
+an ask, landing a ticket, merging a goal, resuming or cancelling work, hiring,
+or giving a hire a ticket. The panel's tabs hold the lists: Needs you,
+Projects, Team, Money, Rules and Log.
+
+- **Desks** are how many agents work at once, up to nine; add or remove one.
+- **The coffee machine** closes or reopens the office. While it is closed,
+  nothing new starts.
+- **The safe** holds the budget: the daily and per-ticket limits, which you can
+  change.
+- **The racks** show each project's checks.
+- **The whiteboard** lists goals; **the team board** is where you hire;
+  **the posters** are the house rules.
+- **The trophies** come from the studio's history, and each hire's level grows
+  with the work it has landed.
+- **The lounge** shows who is free, **the front desk** the approver and router,
+  **the review room** the reviewers and critics, and **the dock** what shipped
+  in the last day and what came back failed.
+
+Turn the view with the arrows or Q and E to see the office from each corner,
+and drag to move around when zoomed in. A new studio starts as a bare room:
+add a project at the free rack in the checks lab and hire at the free seat in
+the lounge, and the floor grows with what you add, a rack for each project, a
+poster for each rule, a card for each hire and a cup for each trophy.
+
+Open `/?tab=money` for a tab, or `/?sel=tickets/<id>` for one ticket, to link
+straight to it. The board, goals, asks, budget, hires and rules pages hold the
+lists and the detail, and each ticket has a live activity feed. On a phone the
+panel follows the floor.
 
 <p align="center">
-  <img src="docs/board.png" alt="The board: what needs you, what is running, what is ready and what is up next" width="49%">
+  <img src="docs/office-light.png" alt="The office in the light theme" width="49%">
   <img src="docs/ticket.png" alt="A ticket with its activity feed, the ask waiting on it and its progress" width="49%">
 </p>
 

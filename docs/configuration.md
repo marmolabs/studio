@@ -25,7 +25,7 @@ apply on the next run.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `max_runs` | none, required | Agents running at once. `0` pauses the studio. |
+| `max_runs` | none, required | Agents running at once, at most 9 (one per desk in the office). `0` pauses the studio. |
 
 ### `[[projects]]`
 

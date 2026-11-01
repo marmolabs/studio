@@ -1,6 +1,6 @@
 use crate::api::{
-    APPROVER_CALLS, AskView, Estimate, FileKind, FileView, HireDay, RECENT_EVENTS, Request,
-    Response, RuleFile,
+    APPROVER_CALLS, AskView, CheckResult, Estimate, FileKind, FileView, HireDay, MAX_RUNS_LIMIT,
+    ProjectCheck, RECENT_EVENTS, Request, Response, RuleFile,
 };
 use crate::budget::{self, DAY_MS, Reservation};
 use crate::gc;
@@ -8,6 +8,7 @@ use crate::now_ms;
 use crate::router::{self, Routed};
 use crate::ruletest;
 use crate::today;
+use crate::trophies::{self, FirstMerge};
 use crate::watch::CiWatcher;
 use crate::worker;
 use serde_json::json;
@@ -17,7 +18,8 @@ use std::time::Duration;
 use studio_config::config::ModelPrice;
 use studio_config::config::{BudgetConfig, ConcurrencyConfig, ProjectEntry};
 use studio_config::{
-    StudioConfig, StudioPaths, check_hire, check_rule, load_hires, load_pack_hires,
+    ProjectConfig, Setting, StudioConfig, StudioPaths, check_hire, check_rule, load_hires,
+    load_pack_hires, set_values,
 };
 use studio_core::budget::Allowance;
 use studio_core::event::Event;
@@ -49,6 +51,16 @@ pub enum StudioError {
 
 pub(crate) fn other(message: impl Into<String>) -> StudioError {
     StudioError::Other(message.into())
+}
+
+/// `path` with a leading `~` turned into the home folder.
+fn expand_home(path: &str) -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    match (path.strip_prefix("~/"), path, home) {
+        (Some(rest), _, Some(home)) => home.join(rest),
+        (None, "~", Some(home)) => home,
+        _ => std::path::PathBuf::from(path),
+    }
 }
 
 struct NewTicket {
@@ -175,6 +187,8 @@ pub struct Studio {
     metered: Mutex<HashMap<String, f64>>,
     /// Whether a goal tip is in a base tip, as of the last `MergedTickets`.
     merged_tips: Mutex<HashMap<(String, String), bool>>,
+    /// Held while `studio.toml` is rewritten, so two changes never mix.
+    settings: Mutex<()>,
     wake: Notify,
     notifier: crate::notify::Notifier,
 }
@@ -337,6 +351,7 @@ impl Studio {
             reservations: Mutex::new(HashMap::new()),
             metered: Mutex::new(HashMap::new()),
             merged_tips: Mutex::new(HashMap::new()),
+            settings: Mutex::new(()),
             wake: Notify::new(),
             notifier,
         }))
@@ -346,13 +361,23 @@ impl Studio {
     /// file that no longer loads keeps the last good config. Runtimes and
     /// notifications are set at start and need a restart.
     pub(crate) fn config(&self) -> Arc<StudioConfig> {
+        self.refresh_config(false)
+    }
+
+    /// Reads `studio.toml` now rather than at the next check, after the
+    /// studio itself changed it.
+    fn reload_config(&self) -> Arc<StudioConfig> {
+        self.refresh_config(true)
+    }
+
+    fn refresh_config(&self, force: bool) -> Arc<StudioConfig> {
         let mut live = lock(&self.config);
-        if live.checked.elapsed() < CONFIG_CHECK {
+        if !force && live.checked.elapsed() < CONFIG_CHECK {
             return Arc::clone(&live.config);
         }
         live.checked = std::time::Instant::now();
         let modified = config_modified(&self.paths);
-        if modified == live.modified {
+        if !force && modified == live.modified {
             return Arc::clone(&live.config);
         }
         live.modified = modified;
@@ -413,9 +438,14 @@ impl Studio {
     }
 
     /// One scheduling pass: resume orphaned work first, then claim queued
-    /// tickets. `max_runs = 0` pauses the studio: nothing new starts.
+    /// tickets. `max_runs = 0` or a closed office pauses the studio: nothing
+    /// new starts.
     pub fn schedule(self: &Arc<Self>) -> Result<(), StudioError> {
-        let capacity = self.config().concurrency.max_runs as usize;
+        let capacity = if self.is_closed() {
+            0
+        } else {
+            self.desks() as usize
+        };
         let orphans: Vec<Ticket> = {
             let store = lock(&self.store);
             let active = lock(&self.active);
@@ -1092,7 +1122,8 @@ impl Studio {
                     "asks": lock(&self.asks).len(),
                     "projects": self.config().projects.iter().map(|p| &p.name).collect::<Vec<_>>(),
                     "hires": lock(&self.hires).keys().collect::<Vec<_>>(),
-                    "max_runs": self.config().concurrency.max_runs,
+                    "max_runs": self.desks(),
+                    "closed": self.is_closed(),
                     "team": self.team(),
                 })))
             }
@@ -1303,6 +1334,15 @@ impl Studio {
                 Ok(Response::ok(ruletest::run(self, &tickets, &text, since)?))
             }
             Request::Estimates => Ok(Response::ok(self.estimates()?)),
+            Request::SetOpen { open } => self.set_open(open),
+            Request::SetMaxRuns { max_runs } => self.set_max_runs(max_runs),
+            Request::SetLimits {
+                daily_usd,
+                ticket_usd,
+            } => self.set_limits(daily_usd, ticket_usd),
+            Request::Trophies => self.trophies(),
+            Request::ProjectChecks => self.project_checks(),
+            Request::AddProject { path, name, branch } => self.add_project(&path, name, branch),
             Request::SpendByDay { days } => {
                 let store = lock(&self.store);
                 Ok(Response::ok(budget::by_day(&store, now_ms(), days)?))
@@ -1339,6 +1379,213 @@ impl Studio {
                 })))
             }
         }
+    }
+
+    /// The file whose presence means the owner closed the office.
+    fn closed_path(&self) -> std::path::PathBuf {
+        self.paths.data_dir.join("closed")
+    }
+
+    /// Whether the owner closed the office: nothing new starts.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed_path().exists()
+    }
+
+    fn set_open(&self, open: bool) -> Result<Response, StudioError> {
+        let path = self.closed_path();
+        if open {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(other(format!("could not reopen the office: {e}"))),
+            }
+            // Queued work may start now.
+            self.wake.notify_one();
+        } else {
+            std::fs::create_dir_all(&self.paths.data_dir)
+                .and_then(|()| std::fs::write(&path, "closed by the owner\n"))
+                .map_err(|e| other(format!("could not close the office: {e}")))?;
+        }
+        Ok(Response::ok(json!({ "closed": self.is_closed() })))
+    }
+
+    /// Writes studio.toml values, then reads the file back so they apply now.
+    fn change_settings(
+        &self,
+        changes: &[(&str, &str, Setting)],
+    ) -> Result<Arc<StudioConfig>, StudioError> {
+        let _writing = lock(&self.settings);
+        set_values(&self.paths, changes).map_err(|e| other(e.to_string()))?;
+        Ok(self.reload_config())
+    }
+
+    /// Adds a repository as a project, as `studio add` does, and applies it
+    /// at once.
+    fn add_project(
+        &self,
+        path: &str,
+        name: Option<String>,
+        branch: Option<String>,
+    ) -> Result<Response, StudioError> {
+        let path = expand_home(path.trim());
+        if !path.is_dir() {
+            return Err(other(format!("{} is not a folder", path.display())));
+        }
+        let repo = studio_git::Repo::open(&path)?;
+        let branch = match branch
+            .map(|b| b.trim().to_string())
+            .filter(|b| !b.is_empty())
+        {
+            Some(branch) => branch,
+            None => repo
+                .current_branch()?
+                .ok_or_else(|| other("that repository has no branch checked out; name one"))?,
+        };
+        let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        let added = {
+            let _writing = lock(&self.settings);
+            let added = studio_config::add_project(
+                &self.paths,
+                studio_config::NewProject {
+                    path: repo.root(),
+                    name: name.as_deref(),
+                    integration_branch: Some(&branch),
+                    daily_usd: None,
+                    pack: None,
+                },
+            )
+            .map_err(|e| other(e.to_string()))?;
+            self.reload_config();
+            added
+        };
+        self.wake.notify_one();
+        Ok(Response::ok(json!({
+            "name": added.name,
+            "path": added.path,
+            "branch": branch,
+            "checks": added.created_checks,
+        })))
+    }
+
+    fn set_max_runs(&self, max_runs: u64) -> Result<Response, StudioError> {
+        if !(1..=MAX_RUNS_LIMIT).contains(&max_runs) {
+            return Err(other(format!(
+                "max_runs must be from 1 to {MAX_RUNS_LIMIT}, not {max_runs}"
+            )));
+        }
+        let config =
+            self.change_settings(&[("concurrency", "max_runs", Setting::Whole(max_runs))])?;
+        // More desks may let queued work start.
+        self.wake.notify_one();
+        Ok(Response::ok(
+            json!({ "max_runs": config.concurrency.max_runs }),
+        ))
+    }
+
+    fn set_limits(
+        &self,
+        daily_usd: Option<f64>,
+        ticket_usd: Option<f64>,
+    ) -> Result<Response, StudioError> {
+        let mut changes = Vec::new();
+        for (key, value) in [("daily_usd", daily_usd), ("ticket_usd", ticket_usd)] {
+            let Some(usd) = value else {
+                continue;
+            };
+            if !usd.is_finite() || usd <= 0.0 {
+                return Err(other(format!("{key} must be more than zero, not {usd}")));
+            }
+            changes.push(("budget", key, Setting::Decimal(usd)));
+        }
+        if changes.is_empty() {
+            return Err(other("give a daily_usd or a ticket_usd to change"));
+        }
+        let config = self.change_settings(&changes)?;
+        self.wake.notify_one();
+        Ok(Response::ok(json!({
+            "daily_usd": config.budget.daily_usd,
+            "ticket_usd": config.budget.ticket_usd,
+        })))
+    }
+
+    /// How many agents work at once: `max_runs`, up to `MAX_RUNS_LIMIT`.
+    fn desks(&self) -> u64 {
+        u64::from(self.config().concurrency.max_runs).min(MAX_RUNS_LIMIT)
+    }
+
+    fn first_merge_path(&self) -> std::path::PathBuf {
+        self.paths.data_dir.join("first_merge.json")
+    }
+
+    /// Notes the first goal merged through the studio, once. The history
+    /// doesn't say when a merge happened, so this is where the date comes from;
+    /// a studio that merged goals before it kept this note never gets one.
+    fn remember_first_merge(&self, goal: &str, into: &str) {
+        let path = self.first_merge_path();
+        if path.exists() {
+            return;
+        }
+        let first = FirstMerge {
+            at_ms: now_ms(),
+            goal: goal.to_string(),
+            into: into.to_string(),
+        };
+        let written = serde_json::to_string(&first)
+            .map_err(|e| e.to_string())
+            .and_then(|text| std::fs::write(&path, text).map_err(|e| e.to_string()));
+        if let Err(err) = written {
+            eprintln!("could not note the first merge: {err}");
+        }
+    }
+
+    fn first_merge(&self) -> Option<FirstMerge> {
+        let text = std::fs::read_to_string(self.first_merge_path()).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    fn trophies(&self) -> Result<Response, StudioError> {
+        let (landings, today) = {
+            let store = lock(&self.store);
+            (store.landings()?, store.local_date(now_ms())?)
+        };
+        Ok(Response::ok(trophies::build(
+            &landings,
+            &today,
+            self.first_merge().as_ref(),
+        )))
+    }
+
+    fn project_checks(&self) -> Result<Response, StudioError> {
+        let (tickets, latest) = {
+            let store = lock(&self.store);
+            (store.tickets()?, store.latest_checks()?)
+        };
+        let checks: Vec<ProjectCheck> =
+            self.config()
+                .projects
+                .iter()
+                .map(|project| ProjectCheck {
+                    project: project.name.clone(),
+                    verify: ProjectConfig::load(&project.path)
+                        .ok()
+                        .flatten()
+                        .map(|config| config.verify)
+                        .unwrap_or_default(),
+                    running: tickets
+                        .iter()
+                        .filter(|t| t.project.0 == project.name && t.state == TicketState::Checking)
+                        .map(|t| t.id.to_string())
+                        .collect(),
+                    latest: latest.iter().find(|c| c.project == project.name).map(|c| {
+                        CheckResult {
+                            ticket: c.ticket_id.to_string(),
+                            passed: c.passed,
+                            at_ms: c.at_ms,
+                        }
+                    }),
+                })
+                .collect();
+        Ok(Response::ok(checks))
     }
 
     /// `git diff --stat` of a ticket's worktree, or `None` when it is gone.
@@ -1988,10 +2235,18 @@ impl Studio {
             .filter(|t| t.kind == TicketKind::Work)
             .map(|t| t.id.to_string())
             .collect();
+        // Only a studio with no merged goal yet can tell when its first was.
+        let first = !self.first_merge_path().exists()
+            && self.merged_tickets().is_ok_and(|merged| merged.is_empty());
         match repo.merge_goal(&branch, &into)? {
-            MergeOutcome::Merged { sha } => Ok(Response::ok(
-                json!({ "branch": branch, "into": into, "sha": sha, "open": open }),
-            )),
+            MergeOutcome::Merged { sha } => {
+                if first {
+                    self.remember_first_merge(&goal, &into);
+                }
+                Ok(Response::ok(
+                    json!({ "branch": branch, "into": into, "sha": sha, "open": open }),
+                ))
+            }
             MergeOutcome::Conflict { files } => {
                 let fix = self.merge_ticket(&ticket, &into, &files)?;
                 Err(other(format!(
