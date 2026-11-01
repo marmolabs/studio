@@ -47,6 +47,22 @@ impl RunLog {
         })
     }
 
+    /// When the provider's limit that last turned a run away resets, in
+    /// milliseconds, if the provider said.
+    pub(crate) fn quota_resets_at(&self) -> Option<u64> {
+        let text = fs::read_to_string(&self.path).ok()?;
+        text.lines().rev().find_map(|line| {
+            let value: Value = serde_json::from_str(line).ok()?;
+            let event = &value["event"];
+            let refused = event["type"] == "rate_limit"
+                && event["status"].as_str().is_some_and(|s| s != "allowed");
+            refused
+                .then(|| event["resets_at"].as_u64())
+                .flatten()
+                .map(|seconds| seconds.saturating_mul(1000))
+        })
+    }
+
     // A log line that can't be written must not stop the ticket.
     fn write(&self, value: Value) {
         if let Some(dir) = self.path.parent() {

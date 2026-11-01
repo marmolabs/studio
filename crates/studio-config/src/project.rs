@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
@@ -12,7 +13,7 @@ pub struct ProjectConfig {
     pub protected: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub integration_branch: Option<String>,
-    /// Command that plays the game and writes screenshots into `{out}`.
+    /// Command that runs the project and writes screenshots into `{out}`.
     #[serde(default)]
     pub capture: Vec<String>,
     /// Changed files (globs) that call for a capture; empty means any change.
@@ -24,6 +25,11 @@ pub struct ProjectConfig {
     /// Land a ticket on its goal branch as soon as it is ready.
     #[serde(default)]
     pub auto_land: bool,
+    /// Environment for this project's agents, checks and captures, such as a
+    /// build cache its worktrees share. `{repo}` in a value is the project's
+    /// own checkout.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +76,8 @@ pub enum ProjectConfigError {
     Glob(String, String),
     #[error("gate `{0}` has an empty measure program")]
     EmptyMeasure(String),
+    #[error("`{0}` is not an environment variable name")]
+    EnvName(String),
 }
 
 impl ProjectConfig {
@@ -98,7 +106,23 @@ impl ProjectConfig {
                 return Err(ProjectConfigError::EmptyMeasure(gate.name.clone()));
             }
         }
+        for name in config.env.keys() {
+            let valid = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name.chars().next().is_some_and(|c| !c.is_ascii_digit());
+            if !valid {
+                return Err(ProjectConfigError::EnvName(name.clone()));
+            }
+        }
         Ok(config)
+    }
+
+    /// The project's environment with `{repo}` replaced by its checkout.
+    pub fn env_for(&self, repo: &Path) -> Vec<(String, String)> {
+        let repo = repo.to_string_lossy();
+        self.env
+            .iter()
+            .map(|(name, value)| (name.clone(), value.replace("{repo}", &repo)))
+            .collect()
     }
 }
 
@@ -109,13 +133,35 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn env_names_are_checked_and_repo_is_filled_in() {
+        let config = ProjectConfig::parse(
+            "[env]\nCARGO_TARGET_DIR = \"{repo}/.studio/target\"\nMODE = \"ci\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.env_for(Path::new("/code/shop")),
+            [
+                (
+                    "CARGO_TARGET_DIR".to_string(),
+                    "/code/shop/.studio/target".to_string()
+                ),
+                ("MODE".to_string(), "ci".to_string())
+            ]
+        );
+        for bad in ["\"A B\" = \"x\"", "\"1X\" = \"x\"", "\"A=B\" = \"x\""] {
+            let err = ProjectConfig::parse(&format!("[env]\n{bad}\n")).unwrap_err();
+            assert!(matches!(err, ProjectConfigError::EnvName(_)), "{bad}");
+        }
+    }
+
+    #[test]
     fn loads_project_config() {
         let tmp = TempDir::new().unwrap();
         let mut file = fs::File::create(tmp.path().join(".studio.toml")).unwrap();
         file.write_all(
             br#"
 verify = [["cargo", "test"], ["cargo", "clippy"]]
-protected = ["delivery.toml"]
+protected = ["release.toml"]
 integration_branch = "master"
 "#,
         )
@@ -126,7 +172,7 @@ integration_branch = "master"
             config.verify,
             vec![vec!["cargo", "test"], vec!["cargo", "clippy"]]
         );
-        assert_eq!(config.protected, vec!["delivery.toml"]);
+        assert_eq!(config.protected, vec!["release.toml"]);
         assert_eq!(config.integration_branch, Some("master".to_string()));
         assert!(!config.auto_land);
     }

@@ -7,7 +7,10 @@ use crate::budget::Meter;
 use crate::checks;
 use crate::evidence;
 use crate::runlog::RunLog;
-use crate::studio::{Decision, Stop, StopReason, Studio, StudioError, goal_of, other};
+use crate::studio::{
+    Decision, Landing, MERGE_SOURCE, Stop, StopReason, Studio, StudioError, goal_of, other,
+    quota_retry_at,
+};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -66,13 +69,27 @@ async fn work_on(
         None => {
             // A goal's tickets build on each other: start from what has landed.
             let goal_branch = Repo::goal_branch_name(&goal_of(&ticket));
-            if repo.branch_exists(&goal_branch)? {
+            let worktree = if repo.branch_exists(&goal_branch)? {
                 let worktree = repo.create_worktree(id, &goal_branch)?;
                 log.note(&format!("started from {goal_branch}"));
                 worktree
             } else {
                 repo.create_worktree(id, &ticket.base_branch)?
+            };
+            // A ticket filed to merge a branch into its goal starts with that merge.
+            if let Some(rev) = ticket
+                .source
+                .as_deref()
+                .and_then(|s| s.strip_prefix(MERGE_SOURCE))
+            {
+                let files = worktree.merge_in(rev)?;
+                log.note(&if files.is_empty() {
+                    format!("merged {rev} cleanly")
+                } else {
+                    format!("merged {rev}; conflicts in: {}", files.join(", "))
+                });
             }
+            worktree
         }
     };
     let hire = studio.hire(&ticket.hire)?.clone();
@@ -94,7 +111,14 @@ async fn work_on(
                     failed: ticket.attempts,
                     read_only: ticket.kind == TicketKind::Plan,
                 };
-                match run.go(&worktree, &prompt, &mut session).await? {
+                // A merge left conflicts: the agent resolves them first.
+                let conflicted = worktree.conflicted_files()?;
+                let asked = if conflicted.is_empty() {
+                    prompt.clone()
+                } else {
+                    format!("{}\n\n{prompt}", conflict_note(&conflicted))
+                };
+                match run.go(&worktree, &asked, &mut session).await? {
                     AgentEnd::Stopped => return Ok(()),
                     AgentEnd::Done(summary) => {
                         // A run that never announced its session still counts as started.
@@ -116,7 +140,22 @@ async fn work_on(
                             let _ = repo.remove_worktree(&worktree, true);
                             return Ok(());
                         }
-                        let message = commit_message(&ticket);
+                        // Nothing is committed while conflict markers remain.
+                        let unresolved = unresolved_conflicts(&worktree)?;
+                        if !unresolved.is_empty() {
+                            let detail =
+                                format!("conflict markers are still in: {}", unresolved.join(", "));
+                            log.note(&detail);
+                            prompt =
+                                format!("Resolve every conflict and remove its markers: {detail}.");
+                            studio.append(id, Event::ChecksStarted)?;
+                            studio.append(id, Event::ChecksFailed { detail })?;
+                            continue;
+                        }
+                        let message = match worktree.merge_subject()? {
+                            Some(subject) => format!("{subject}\n\nStudio-Ticket: {}", ticket.id),
+                            None => commit_message(&ticket),
+                        };
                         match review_change(studio, &ticket, &hire, &worktree, &message, log)
                             .await?
                         {
@@ -144,11 +183,12 @@ async fn work_on(
                     .unwrap_or_default();
                 let mut commands = config.verify.clone();
                 commands.extend(policy::checks(&studio.rules(), &context(&ticket, &hire)));
+                let env = config.env_for(&project.path);
                 // One note per command, so the web can say which check runs now.
                 let mut result = Ok(());
                 for command in &commands {
                     log.note(&format!("check: {}", command.join(" ")));
-                    result = checks::run(&worktree.path, command).await;
+                    result = checks::run(&worktree.path, command, &env).await;
                     if result.is_err() {
                         break;
                     }
@@ -243,15 +283,69 @@ async fn work_on(
     }
 }
 
-/// Lands a ready ticket on its goal branch. A conflict or error leaves it
-/// ready for the owner, who is told as for any ready ticket.
+/// Lands a ready ticket on its goal branch. A conflict sends it back to its
+/// agent; an error leaves it ready for the owner, who is told as for any
+/// ready ticket.
 fn auto_land(studio: &Studio, ticket: &Ticket, log: &RunLog) {
     match studio.land(&ticket.id) {
-        Ok(_) => log.note(&format!(
-            "auto-landed on {}",
-            Repo::goal_branch_name(&goal_of(ticket))
+        Ok(Landing::Landed { branch, .. }) => log.note(&format!("auto-landed on {branch}")),
+        Ok(Landing::SentBack { branch, files }) => log.note(&format!(
+            "auto-land: {branch} has moved on and conflicts in {}; back to resolve them",
+            files.join(", ")
         )),
         Err(err) => log.note(&format!("auto-land failed, left ready: {err}")),
+    }
+}
+
+/// The environment the project's `.studio.toml` gives its agents; none when
+/// the project or that file can't be read.
+fn project_env(studio: &Studio, ticket: &Ticket) -> Vec<(String, String)> {
+    let Ok(project) = studio.project(&ticket.project) else {
+        return Vec::new();
+    };
+    ProjectConfig::load(&project.path)
+        .ok()
+        .flatten()
+        .map(|config| config.env_for(&project.path))
+        .unwrap_or_default()
+}
+
+/// What the agent hears when a merge left conflicts in its worktree.
+fn conflict_note(files: &[String]) -> String {
+    format!(
+        "Newer work was merged into this worktree and conflicts with it in: {}. \
+         Resolve each conflict with the Edit tool so both sides' changes still work, \
+         and remove the conflict markers. Don't commit, abort or redo the merge: \
+         the studio finishes it when it commits your changes.",
+        files.join(", ")
+    )
+}
+
+/// Conflicted files that still hold a conflict marker at the start of a line.
+fn unresolved_conflicts(worktree: &Worktree) -> Result<Vec<String>, StudioError> {
+    let marker = |line: &str| {
+        ["<<<<<<<", ">>>>>>>"].iter().any(|m| {
+            line.strip_prefix(m)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+        })
+    };
+    Ok(worktree
+        .conflicted_files()?
+        .into_iter()
+        .filter(|file| {
+            std::fs::read_to_string(worktree.path.join(file))
+                .is_ok_and(|text| text.lines().any(marker))
+        })
+        .collect())
+}
+
+/// A wait in words: "15 min", "2 h 5 min", "3 d 4 h".
+fn wait_words(ms: u64) -> String {
+    let minutes = ms.div_ceil(60_000);
+    match minutes {
+        0..60 => format!("{minutes} min"),
+        60..1440 => format!("{} h {} min", minutes / 60, minutes % 60),
+        _ => format!("{} d {} h", minutes / 1440, minutes % 1440 / 60),
     }
 }
 
@@ -369,6 +463,7 @@ impl AgentRun<'_> {
             max_budget_usd: Some(allowance),
             mcp_config,
             strict_mcp: !self.hire.user_mcp,
+            env: project_env(self.studio, self.ticket),
             ..RunSpec::default()
         };
         let mut run = self.runtime.start(spec)?;
@@ -753,7 +848,13 @@ impl AgentRun<'_> {
             Outcome::MaxTurns => self.fail(FailureClass::Timeout, "ran out of turns"),
             Outcome::Budget => self.hold(HeldReason::Budget),
             Outcome::Failed { kind, message } => match kind {
-                FailureKind::Quota => self.hold(HeldReason::Quota),
+                FailureKind::Quota => {
+                    let now = crate::now_ms();
+                    let wait = quota_retry_at(now, self.log.quota_resets_at()).saturating_sub(now);
+                    self.log
+                        .note(&format!("{message}; trying again in {}", wait_words(wait)));
+                    self.hold(HeldReason::Quota)
+                }
                 FailureKind::Auth => self.hold(HeldReason::Auth),
                 FailureKind::Timeout => self.fail(FailureClass::Timeout, &message),
                 FailureKind::Crash => self.fail(FailureClass::Crash, &message),
@@ -1247,10 +1348,10 @@ fn brief(ticket: &Ticket) -> String {
 
 fn screenshots(images: &[String]) -> String {
     if images.is_empty() {
-        return "The game produced no screenshots for this change.\n\n".to_string();
+        return "The capture produced no screenshots for this change.\n\n".to_string();
     }
     format!(
-        "Screenshots from running the game with this change (read them to see them):\n{}\n\n",
+        "Screenshots from running the project with this change (read them to see them):\n{}\n\n",
         images
             .iter()
             .map(|i| format!("- {i}"))
@@ -1380,8 +1481,8 @@ async fn run_gates(
     Ok(GateEnd::Pass)
 }
 
-/// Runs the project's capture command when the change calls for it. A game
-/// that crashes or hangs fails the checks.
+/// Runs the project's capture command when the change calls for it. A
+/// capture that crashes or hangs fails the checks.
 async fn capture(
     repo: &Repo,
     worktree: &Worktree,
@@ -1408,9 +1509,14 @@ async fn capture(
     let out = worktree.path.join(evidence::folder(attempt));
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).map_err(|e| format!("can't create {}: {e}", out.display()))?;
-    checks::capture(&worktree.path, &config.capture, &out)
-        .await
-        .map_err(|detail| format!("The game crashed or hung while capturing:\n{detail}"))?;
+    checks::capture(
+        &worktree.path,
+        &config.capture,
+        &out,
+        &config.env_for(repo.root()),
+    )
+    .await
+    .map_err(|detail| format!("The capture crashed or hung:\n{detail}"))?;
     let made: Vec<String> = evidence::list(&worktree.path)
         .into_iter()
         .filter(|f| f.attempt == attempt)
@@ -1453,6 +1559,8 @@ fn first_prompt(ticket: &Ticket) -> String {
          Write tools: shell commands that write files wait for the owner's approval. \
          Leave changes uncommitted; the studio commits them, then runs the project's \
          checks and, if the project has one, its screenshot capture. \
+         Builds and tests can take many minutes: give such commands a long timeout \
+         and wait for them, since nothing keeps running after you finish. \
          Finish with a short summary of what you changed.",
     );
     prompt
@@ -1486,6 +1594,14 @@ mod tests {
     use std::fs;
     use std::process::Command;
     use studio_core::ids::{HireId, ProjectId};
+
+    #[test]
+    fn waits_read_in_minutes_hours_or_days() {
+        assert_eq!(wait_words(15 * 60_000), "15 min");
+        assert_eq!(wait_words(15 * 60_000 - 1), "15 min");
+        assert_eq!(wait_words(61 * 60_000), "1 h 1 min");
+        assert_eq!(wait_words((3 * 24 + 4) * 60 * 60_000), "3 d 4 h");
+    }
 
     fn ticket() -> Ticket {
         Ticket {

@@ -48,7 +48,7 @@ model: sonnet
 effort: medium
 escalate: [opus]
 ---
-You are an engineer at a small game studio. Make the change the ticket asks
+You are an engineer at a small software studio. Make the change the ticket asks
 for, keep it small, and follow the project's own conventions. Run the
 project's checks before you finish, and end with a short summary of what you
 changed and why.
@@ -62,7 +62,7 @@ model: sonnet
 effort: medium
 tools: [file_ticket]
 ---
-You are the producer at a small game studio. Given a goal, read the project's
+You are the producer at a small software studio. Given a goal, read the project's
 code, then split the goal into tickets with file_ticket: one per independent
 change that a single agent can finish and a reviewer can read in one sitting.
 Put acceptance criteria in each ticket's detail. Don't write code yourself.
@@ -78,7 +78,7 @@ escalate: [sonnet]
 effort: medium
 budget_per_ticket_usd: 1.5
 ---
-You review changes at a small game studio. Look for bugs, missed edge cases
+You review changes at a small software studio. Look for bugs, missed edge cases
 and anything the ticket didn't ask for. Be specific and brief.
 
 Work economically: start from the diff, read only the files and lines you
@@ -317,17 +317,29 @@ pub fn add_pack(paths: &StudioPaths, dir: &Path) -> Result<AddedPack, StarterErr
 }
 
 fn project_checks(project: &Path) -> String {
-    let verify = if project.join("Cargo.toml").is_file() {
+    let cargo = project.join("Cargo.toml").is_file();
+    let verify = if cargo {
         "verify = [\n  [\"cargo\", \"build\", \"--all-targets\"],\n  [\"cargo\", \"test\"],\n]\n"
     } else {
         "verify = []\n"
+    };
+    // Every ticket works in its own worktree; one build folder for all of them
+    // saves each ticket a build from scratch.
+    let env = if cargo {
+        "\n# Environment for agents, checks and captures; {repo} is this checkout.\n\
+         # One build folder for every ticket's worktree, so none starts from scratch.\n\
+         [env]\n\
+         CARGO_TARGET_DIR = \"{repo}/.studio/target\"\n"
+    } else {
+        ""
     };
     format!(
         "# Commands that must pass before a change can land. Each runs in the\n\
          # ticket's worktree; a failure goes back to the agent with its output.\n\
          {verify}\n\
          # Paths agents may not change without asking you.\n\
-         protected = []\n"
+         protected = []\n\
+         {env}"
     )
 }
 
@@ -430,6 +442,13 @@ mod tests {
 
         let checks = ProjectConfig::load(&game_dir).unwrap().unwrap();
         assert_eq!(checks.verify[1], vec!["cargo", "test"]);
+        assert_eq!(
+            checks.env_for(&game_dir),
+            [(
+                "CARGO_TARGET_DIR".to_string(),
+                format!("{}/.studio/target", game_dir.display())
+            )]
+        );
 
         let again = |name: Option<&str>| {
             add_project(

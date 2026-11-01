@@ -729,7 +729,7 @@ fn stages(ticket: &Ticket, log: &[(u64, Logged)], since: u64) -> Vec<Stage> {
         .collect()
 }
 
-/// "Art gate" for the gate named `art`.
+/// "Design gate" for the gate named `design`.
 fn gate_stage(gate: &str) -> String {
     let mut chars = gate.chars();
     let first: String = chars
@@ -750,6 +750,10 @@ async fn head(ticket: Ticket, filer: Filer) -> topcoat::Result<impl View> {
         Filer::Studio(source) if source.starts_with("ci:") => {
             (None, "The studio filed this after a CI run failed")
         }
+        Filer::Studio(source) if source.starts_with("merge:") => (
+            None,
+            "The studio filed this when merging the goal conflicted",
+        ),
         Filer::Studio(_) => (None, "The studio filed this"),
         Filer::Owner if ticket.kind == TicketKind::Plan => (None, "You set this goal"),
         Filer::Owner => (None, "You filed this"),
@@ -1203,12 +1207,12 @@ mod tests {
         // A gate that ran on an earlier try still shows, and the one
         // running now is current.
         let log = notes(&[
-            "gate art by critic (opus)",
-            "gate art failed: too wide",
+            "gate design by critic (opus)",
+            "gate design failed: too wide",
             "review by reviewer (sonnet)",
             "review passed",
-            "gate art: measured 2 file(s)",
-            "gate art by critic (opus)",
+            "gate design: measured 2 file(s)",
+            "gate design by critic (opus)",
         ]);
         let reviewing = ticket(serde_json::json!("reviewing"), none.clone());
         assert_eq!(
@@ -1217,7 +1221,7 @@ mod tests {
                 "Work Done",
                 "Checks Done",
                 "Review Done",
-                "Art gate Now",
+                "Design gate Now",
                 "Land on Enemy waves Next"
             ]
         );

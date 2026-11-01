@@ -1,7 +1,7 @@
 <h1 align="center">studio</h1>
 
 <p align="center">
-  <b>Run a small team of AI agents on your game, on your machine, within a budget and your rules.</b>
+  <b>Run a small team of AI agents on your projects, on your machine, within a budget and your rules.</b>
 </p>
 
 <p align="center">
@@ -22,10 +22,10 @@
 
 <p align="center"><img src="docs/office.png" alt="The Office: tickets at their desks, in checks, in review and ready to land, with what needs you beside the floor" width="900"></p>
 
-studio is a local orchestrator for AI coding agents on game repos. You give it
+studio is a local orchestrator for AI coding agents on your repos. You give it
 a goal. A producer agent splits the goal into tickets; engineers work on them
 with Claude Code, each in its own git worktree; your checks run; a reviewer on
-a different model reads the diff; critics judge art and screenshots. The work
+a different model reads the diff; critics judge screenshots and design. The work
 lands on a goal branch for you to merge. Nothing is pushed, and agents never
 see your credentials.
 
@@ -58,9 +58,9 @@ what you like.
   only dangerous or irreversible ones reach you. **A router** picks the right
   hire for each ticket.
 - **Critic gates** send changes to a critic hire before review, with
-  screenshots from your game and changed images beside their shipped version.
-- **Packs** bundle hires, rules, skills and a project template, such as
-  [`packs/bevy-ios`](packs/bevy-ios).
+  screenshots from your project and changed images beside their shipped version.
+- **Packs** bundle hires, rules, skills and a project template to reuse across
+  projects. See [packs](docs/packs.md).
 
 ## The web UI
 
@@ -97,21 +97,19 @@ cargo install --locked --git https://github.com/marmolabs/studio studio studiod 
 
 ```sh
 studio init                         # studio.toml, starter hires and rules
-studio project add ~/games/my-game  # register a git repo
+studio project add ~/code/my-app    # register a git repo
 studio up                           # start the studio and open the web UI
 ```
 
 Then give it work:
 
 ```sh
-studio goal -p my-game "Add a pause menu with resume and quit"
-studio ticket -p my-game "Fix the jump buffer"   # the router picks the hire
+studio goal -p my-app "Add a dark mode with a switch in settings"
+studio ticket -p my-app "Fix the login timeout"   # the router picks the hire
 ```
 
 Answer asks from the web UI or `studio asks`, and merge a finished goal with
 `studio merge`. See [getting started](docs/getting-started.md).
-
-`examples/starter-2d` is a small Bevy game you can point the studio at to try it.
 
 ## Requirements
 

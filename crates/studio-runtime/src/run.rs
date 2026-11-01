@@ -24,6 +24,8 @@ pub struct RunSpec {
     pub strict_mcp: bool,
     pub allowed_tools: Vec<String>,
     pub disallowed_tools: Vec<String>,
+    /// Extra environment for the agent and the commands it runs.
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

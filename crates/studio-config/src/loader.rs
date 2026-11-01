@@ -313,7 +313,7 @@ mod tests {
         let paths = StudioPaths::resolve(Some(tmp.path().to_path_buf()));
         write_file(
             &tmp.path().join("rules/keep-app-name.md"),
-            "---\nkind: lint\nlevel: block\nwhen:\n  paths:\n    - delivery.toml\npattern: 'store\\.[^.]+\\.name'\n---\nNever change the App Store name.\n",
+            "---\nkind: lint\nlevel: block\nwhen:\n  paths:\n    - product.toml\npattern: '^name ='\n---\nNever change the product name.\n",
         );
         let config = empty_config();
         let loaded = load_rules(&config, &paths);
@@ -322,14 +322,14 @@ mod tests {
         let (layer, rule) = &loaded.rules[0];
         assert_eq!(layer, &Layer::Studio);
         assert_eq!(rule.id.to_string(), "studio/keep-app-name");
-        assert_eq!(rule.why, "Never change the App Store name.");
+        assert_eq!(rule.why, "Never change the product name.");
     }
 
     #[test]
     fn disable_applies_only_to_pack_rules() {
         let tmp = TempDir::new().unwrap();
         let paths = StudioPaths::resolve(Some(tmp.path().to_path_buf()));
-        let pack_dir = tmp.path().join("packs/bevy-ios");
+        let pack_dir = tmp.path().join("packs/acme");
         write_file(
             &pack_dir.join("rules/no-unwrap.md"),
             "---\nkind: lint\nlevel: warn\npattern: unwrap\n---\nAvoid unwrap.\n",
@@ -340,11 +340,11 @@ mod tests {
         );
         let config = StudioConfig {
             packs: vec![crate::config::PackEntry {
-                name: "bevy-ios".to_string(),
+                name: "acme".to_string(),
                 path: pack_dir,
             }],
             rules: crate::config::RulesConfig {
-                disable: vec!["pack/bevy-ios/no-unwrap".to_string()],
+                disable: vec!["pack/acme/no-unwrap".to_string()],
             },
             ..empty_config()
         };

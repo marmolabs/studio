@@ -287,7 +287,7 @@ pub fn safe(id: &str) -> String {
         .collect()
 }
 
-/// A selection key, such as `tickets/GAME-3`.
+/// A selection key, such as `tickets/SHOP-3`.
 pub fn key(kind: &str, id: &str) -> String {
     format!("{kind}/{}", safe(id))
 }
@@ -316,7 +316,7 @@ pub fn pressed_when(key: &str) -> String {
 
 #[query_params(error = bad_request)]
 struct Opened {
-    /// Opens the page with this selected, e.g. `tickets/GAME-3`.
+    /// Opens the page with this selected, e.g. `tickets/SHOP-3`.
     sel: Option<String>,
 }
 

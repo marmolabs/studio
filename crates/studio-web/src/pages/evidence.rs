@@ -133,7 +133,7 @@ pub async fn art_pairs(ticket: String, files: Vec<EvidenceFile>) -> topcoat::Res
     Ok(view! {
         if !rows.is_empty() {
             <section>
-                ui::section_head(title: "Art · shipped vs new", count: None, href: String::new(), label: String::new())
+                ui::section_head(title: "Images · shipped vs new", count: None, href: String::new(), label: String::new())
                 <div class="space-y-3">
                     for (key, before, after) in rows {
                         <div class=(format!("p-3 {}", ui::CARD))>
@@ -190,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn a_pair_shows_both_images_and_labels() {
         let html = render(vec![file(0, "before-hero.png"), file(0, "after-hero.png")]).await;
-        assert!(html.contains("Art · shipped vs new"), "{html}");
+        assert!(html.contains("Images · shipped vs new"), "{html}");
         assert!(
             html.contains("/tickets/STUD-1/evidence/0/before-hero.png"),
             "{html}"

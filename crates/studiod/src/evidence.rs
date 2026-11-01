@@ -1,9 +1,10 @@
 //! What a ticket's capture run left behind: images and clips under
-//! `<worktree>/.studio-evidence/<attempt>/`.
+//! `<worktree>/.studio-evidence/<attempt>/`, and a copy kept in the data
+//! folder once the ticket lands and its worktree goes.
 
 use crate::api::EvidenceFile;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) use studio_git::EVIDENCE_DIR as DIR;
 
@@ -56,8 +57,42 @@ fn valid_name(name: &str) -> bool {
 
 /// Every capture in the worktree, oldest attempt first. Paths are absolute.
 pub(crate) fn list(worktree: &Path) -> Vec<EvidenceFile> {
+    files_in(&worktree.join(DIR), false)
+}
+
+/// Every evidence file in the worktree, the gates' image pairs included.
+pub(crate) fn all(worktree: &Path) -> Vec<EvidenceFile> {
+    files_in(&worktree.join(DIR), true)
+}
+
+/// Where a landed ticket's evidence is kept.
+pub(crate) fn kept(data_dir: &Path, ticket: &str) -> PathBuf {
+    data_dir.join("evidence").join(ticket)
+}
+
+/// The evidence kept for a ticket whose worktree is gone.
+pub(crate) fn list_kept(data_dir: &Path, ticket: &str) -> Vec<EvidenceFile> {
+    files_in(&kept(data_dir, ticket), true)
+}
+
+/// Copies the worktree's evidence, image pairs included, into the data
+/// folder before the worktree is removed. Returns how many files it kept.
+pub(crate) fn keep(worktree: &Path, data_dir: &Path, ticket: &str) -> std::io::Result<usize> {
+    let files = all(worktree);
+    let to = kept(data_dir, ticket);
+    for file in &files {
+        let folder = to.join(file.attempt.to_string());
+        fs::create_dir_all(&folder)?;
+        fs::copy(&file.path, folder.join(&file.name))?;
+    }
+    Ok(files.len())
+}
+
+/// The evidence files in `<dir>/<attempt>/`, oldest attempt first, with or
+/// without the gates' image pairs. Paths are absolute.
+fn files_in(dir: &Path, pairs: bool) -> Vec<EvidenceFile> {
     let mut found = Vec::new();
-    let Ok(attempts) = fs::read_dir(worktree.join(DIR)) else {
+    let Ok(attempts) = fs::read_dir(dir) else {
         return found;
     };
     for dir in attempts.filter_map(|e| e.ok()) {
@@ -70,7 +105,10 @@ pub(crate) fn list(worktree: &Path) -> Vec<EvidenceFile> {
         for file in files.filter_map(|e| e.ok()) {
             let name = file.file_name().to_string_lossy().into_owned();
             // `file_type` doesn't follow links, so a link out of the folder is skipped.
-            if valid_name(&name) && !is_pair(&name) && file.file_type().is_ok_and(|t| t.is_file()) {
+            if valid_name(&name)
+                && (pairs || !is_pair(&name))
+                && file.file_type().is_ok_and(|t| t.is_file())
+            {
                 found.push(EvidenceFile {
                     attempt,
                     path: file.path().to_string_lossy().into_owned(),
@@ -140,5 +178,41 @@ mod tests {
             ]
         );
         assert!(list(&tmp.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn landed_evidence_is_kept_with_its_pairs_but_not_its_links() {
+        let worktree = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let one = worktree.path().join(folder(1));
+        fs::create_dir_all(&one).unwrap();
+        for name in ["shot.png", "before-a-png.png", "after-a-png.png"] {
+            fs::write(one.join(name), name).unwrap();
+        }
+        let secret = worktree.path().join("secret.png");
+        fs::write(&secret, "secret").unwrap();
+        std::os::unix::fs::symlink(&secret, one.join("link.png")).unwrap();
+        let names = |files: Vec<EvidenceFile>| -> Vec<String> {
+            files.into_iter().map(|f| f.name).collect()
+        };
+        assert_eq!(names(list(worktree.path())), ["shot.png"]);
+        assert_eq!(
+            names(all(worktree.path())),
+            ["after-a-png.png", "before-a-png.png", "shot.png"]
+        );
+
+        assert_eq!(keep(worktree.path(), data.path(), "T-1").unwrap(), 3);
+        let kept = list_kept(data.path(), "T-1");
+        assert_eq!(
+            names(kept.clone()),
+            ["after-a-png.png", "before-a-png.png", "shot.png"]
+        );
+        assert!(kept.iter().all(|f| {
+            f.attempt == 1
+                && f.path
+                    .starts_with(&data.path().to_string_lossy().into_owned())
+        }));
+        assert_eq!(fs::read_to_string(&kept[2].path).unwrap(), "shot.png");
+        assert!(list_kept(data.path(), "T-2").is_empty());
     }
 }

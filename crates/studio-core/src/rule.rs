@@ -253,16 +253,16 @@ mod tests {
             "studio/keep-app-name"
         );
         assert_eq!(
-            Layer::Pack("bevy-ios".to_string())
+            Layer::Pack("acme".to_string())
                 .rule_id("no-unwrap")
                 .to_string(),
-            "pack/bevy-ios/no-unwrap"
+            "pack/acme/no-unwrap"
         );
         assert_eq!(
-            Layer::Project("lantern".to_string())
+            Layer::Project("shop".to_string())
                 .rule_id("protect-rules-rs")
                 .to_string(),
-            "project/lantern/protect-rules-rs"
+            "project/shop/protect-rules-rs"
         );
     }
 
@@ -278,7 +278,7 @@ mod tests {
         );
         assert!(
             !Scope {
-                projects: vec!["lantern".to_string()],
+                projects: vec!["shop".to_string()],
                 ..Default::default()
             }
             .matches_everything()

@@ -18,10 +18,6 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 `cargo test` runs everything with fake runtimes. You do not need API keys, a
 `claude` login, or the `claude` binary installed.
 
-The sample game in `examples/starter-2d` is its own Cargo workspace. Run its
-checks from that folder. On Linux it needs `pkg-config`, `libudev-dev`,
-`libwayland-dev` and `libxkbcommon-dev` to compile.
-
 CI runs the same commands on Ubuntu and macOS. Please run them before you open
 a pull request.
 
@@ -90,7 +86,7 @@ A runtime turns an agent program's protocol into the studio's events.
 
 A pack is a folder with a `pack.toml` and optional `hires/`, `rules/`,
 `skills/` and `project.toml`. See [docs/packs.md](docs/packs.md). Test it by
-loading it, as `crates/studio-config/tests/bevy_ios.rs` does for `bevy-ios`.
+adding it to a test studio with `studio pack add` and running `studio doctor`.
 
 ## Commits and pull requests
 
