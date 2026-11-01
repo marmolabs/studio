@@ -1,6 +1,7 @@
-//! Everything waiting for the owner, newest first, each on its ticket.
+//! The office's actions that change something: filing a ticket, starting a
+//! goal and answering an ask.
 
-use futures_util::Stream;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use studio_config::draft::{Draft, from_denial};
 use studio_core::ticket::Ticket;
@@ -8,66 +9,68 @@ use studiod::api::{AskView, FileKind, FileView, Request};
 use topcoat::{
     context::{Cx, app_context},
     datastar::PatchElements,
-    router::{
-        content::{
-            Form,
-            sse::{Event, Sse},
-        },
-        page, path_param, route,
-    },
-    view::{Unescaped, View, component, view},
+    router::{content::Form, path_param, route},
 };
 
-use super::activity::last_words;
-use super::ask_card::{ALWAYS, DECISION, MESSAGE, always_prefix, always_rule, ask_card, ticket_of};
-use super::ticket::log_tail;
-use crate::{AppConfig, client, live, ui};
+use super::ask_card::{ALWAYS, DECISION, MESSAGE, always_prefix, always_rule, ticket_of};
+use crate::{AppConfig, client, ui};
 
 path_param!(id);
 
-#[page("/asks")]
-async fn asks(cx: &Cx) -> topcoat::Result<impl View> {
+#[derive(Deserialize)]
+struct NewTicket {
+    project: String,
+    /// Empty means the router picks.
+    #[serde(default)]
+    hire: String,
+    title: String,
+    #[serde(default)]
+    goal: String,
+    #[serde(default)]
+    detail: String,
+}
+
+#[route(POST "/tickets")]
+async fn create_ticket(cx: &Cx, Form(form): Form<NewTicket>) -> topcoat::Result<PatchElements> {
     let config = app_context::<AppConfig>(cx);
-    let html = list_html(cx, config).await?;
-    Ok(view! {
-        <div data-init="@get('/asks/stream')" class="mx-auto flex w-full max-w-[880px] flex-col">
-            (Unescaped::new_unchecked(html))
-        </div>
-    })
-}
-
-#[route(GET "/asks/stream")]
-async fn asks_stream(
-    cx: &Cx,
-) -> topcoat::Result<Sse<impl Stream<Item = topcoat::Result<Event>> + Send + use<>>> {
-    let config = app_context::<AppConfig>(cx).clone();
-    let cx = cx.clone();
-    Ok(live::watch(move || {
-        let config = config.clone();
-        let cx = cx.clone();
-        async move { list_html(&cx, &config).await }
-    }))
-}
-
-/// The asks, newest first, each with what its agent said just before.
-async fn list_html(cx: &Cx, config: &AppConfig) -> topcoat::Result<String> {
-    let mut pending: Vec<AskView> = client::call(&config.socket, Request::Asks).await?;
-    let tickets: Vec<Ticket> = client::call(&config.socket, Request::Tickets).await?;
-    pending.sort_by(|a, b| b.at_ms.cmp(&a.at_ms).then_with(|| b.id.cmp(&a.id)));
-    let mut quotes = Vec::with_capacity(pending.len());
-    for ask in &pending {
-        let quote = if matches!(ask.kind.as_str(), "permission" | "question") {
-            last_words(&log_tail(&config.data_dir, &ask.ticket).await)
-        } else {
-            None
-        };
-        quotes.push(quote);
+    let request = Request::CreateTicket {
+        project: form.project,
+        title: form.title,
+        goal: form.goal,
+        hire: form.hire,
+        base: None,
+        detail: form.detail.replace("\r\n", "\n"),
+    };
+    match client::call::<Ticket>(&config.socket, request).await {
+        Ok(ticket) => ui::notice(cx, format!("Queued {}.", ticket.id), false).await,
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
     }
-    ui::html(
-        cx,
-        view! { cx => list(pending: pending, tickets: tickets, quotes: quotes) },
-    )
-    .await
+}
+
+#[derive(Deserialize)]
+struct NewGoal {
+    project: String,
+    text: String,
+    /// The brief for the producer.
+    #[serde(default)]
+    detail: String,
+    #[serde(default)]
+    hire: String,
+}
+
+#[route(POST "/goals")]
+async fn create_goal(cx: &Cx, Form(form): Form<NewGoal>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let request = Request::CreateGoal {
+        project: form.project,
+        text: form.text,
+        hire: Some(form.hire).filter(|h| !h.is_empty()),
+        detail: form.detail.replace("\r\n", "\n"),
+    };
+    match client::call::<Ticket>(&config.socket, request).await {
+        Ok(ticket) => ui::notice(cx, format!("Started {}.", ticket.id), false).await,
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
 }
 
 /// Allow or deny an ask. The clicked button is the `decision` field;
@@ -182,28 +185,4 @@ async fn save_rule(
     };
     client::call::<serde_json::Value>(socket, request).await?;
     Ok(name)
-}
-
-#[component]
-async fn list(
-    pending: Vec<AskView>,
-    tickets: Vec<Ticket>,
-    quotes: Vec<Option<String>>,
-) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div id="asks-list" class="flex flex-col gap-7">
-            if pending.is_empty() {
-                <div class=(format!("flex flex-col items-center gap-1.5 px-6 py-12 text-center {}", ui::CARD))>
-                    <span class="mb-1 text-fg-3">ui::icon(name: "inbox")</span>
-                    <p class="font-medium">"Nothing is waiting for you"</p>
-                    <p class=(format!("text-[13px] {}", ui::MUTED))>"When an agent needs your say, its ask shows up here."</p>
-                </div>
-            }
-            #[key(ask.id.clone())]
-            for (ask, quote) in pending.into_iter().zip(quotes) {
-                let (title, project) = ticket_of(&tickets, &ask.ticket);
-                ask_card(ask: ask, title: title, project: project, quote: quote)
-            }
-        </div>
-    })
 }

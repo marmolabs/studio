@@ -17,6 +17,8 @@ mod layout;
 mod live;
 mod markdown;
 mod pages;
+#[cfg(test)]
+mod probe;
 mod statics;
 mod summary;
 mod ui;

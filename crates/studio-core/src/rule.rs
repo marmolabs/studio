@@ -34,15 +34,6 @@ pub struct Scope {
     pub roles: Vec<String>,
 }
 
-impl Scope {
-    pub fn matches_everything(&self) -> bool {
-        let lists = [&self.projects, &self.paths, &self.hires, &self.roles];
-        lists
-            .iter()
-            .all(|list| list.is_empty() || list.contains(&"*".to_string()))
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub id: RuleId,
@@ -69,7 +60,7 @@ pub enum Layer {
 }
 
 impl Layer {
-    pub fn prefix(&self) -> String {
+    fn prefix(&self) -> String {
         match self {
             Layer::Studio => "studio".to_string(),
             Layer::Pack(name) => format!("pack/{name}"),
@@ -263,25 +254,6 @@ mod tests {
                 .rule_id("protect-rules-rs")
                 .to_string(),
             "project/shop/protect-rules-rs"
-        );
-    }
-
-    #[test]
-    fn scope_matches_everything() {
-        assert!(Scope::default().matches_everything());
-        assert!(
-            Scope {
-                projects: vec!["*".to_string()],
-                ..Default::default()
-            }
-            .matches_everything()
-        );
-        assert!(
-            !Scope {
-                projects: vec!["shop".to_string()],
-                ..Default::default()
-            }
-            .matches_everything()
         );
     }
 }

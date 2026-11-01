@@ -110,12 +110,9 @@ h1, h2, h3, p { margin: 0; }
 .nav a:hover { background: var(--bg-3); color: var(--fg); }
 .nav a[aria-current="page"],
 .app:not(:has(.view:not(#office):target)) .nav a[data-nav="office"],
-.app:has(#board:target, #ticket:target) .nav a[data-nav="board"],
-.app:has(#asks:target) .nav a[data-nav="asks"],
-.app:has(#goals:target) .nav a[data-nav="goals"],
+.app:has(#ticket:target) .nav a[data-nav="office"],
 .app:has(#hires:target) .nav a[data-nav="hires"],
-.app:has(#rules:target) .nav a[data-nav="rules"],
-.app:has(#budget:target) .nav a[data-nav="budget"] { background: var(--bg-3); color: var(--fg); }
+.app:has(#rules:target) .nav a[data-nav="rules"] { background: var(--bg-3); color: var(--fg); }
 .nav .count { margin-left: auto; font: 500 12px/1 var(--sans); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .nav .count.attn { color: #1d1400; background: var(--attn); border-radius: 999px; padding: 3px 7px; }
 .nav-label { padding: 18px 8px 6px; font: 500 12px/16px var(--sans); color: var(--fg-3); }
@@ -196,22 +193,9 @@ h1, h2, h3, p { margin: 0; }
 .sec .link:hover { color: var(--fg); }
 .box { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
 
-.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
-.kpi { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--line); min-width: 0; }
-.kpi:first-child { border-left: 0; }
-.kpi .label { display: flex; align-items: center; gap: 8px; font: 500 12.5px/16px var(--sans); color: var(--fg-2); }
-.kpi .value { font: 600 24px/32px var(--sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.kpi .sub { font-size: 12.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kpi .value small { font: 500 13px var(--sans); color: var(--fg-3); letter-spacing: 0; margin-left: 4px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.attn { background: var(--attn); } .dot.run { background: var(--run); } .dot.ok { background: var(--ok); }
-.spark { display: block; width: 100%; height: 20px; margin-top: 2px; }
 
-.grp { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 16px; background: var(--bg-2); border-top: 1px solid var(--line); font: 500 13px/1 var(--sans); }
-.grp:first-child { border-top: 0; }
-.grp .n { color: var(--fg-3); font-weight: 400; }
-.grp .side-note { margin-left: auto; color: var(--fg-3); font-weight: 400; font-size: 12.5px; }
-.grp .side-note:hover { color: var(--fg); }
 .row { display: grid; grid-template-columns: 16px 64px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 56px; padding: 9px 16px; border-top: 1px solid var(--line); transition: background .1s; }
 .row:hover { background: var(--hover); }
 .row .id { font: 500 12.5px/1 var(--mono); color: var(--fg-3); }
@@ -246,16 +230,6 @@ td .cellflex { display: flex; align-items: center; gap: 8px; }
 .track > i { display: block; height: 100%; background: var(--ok); border-radius: 2px; }
 .track.run > i { background: var(--run); }
 .track.neutral > i { background: var(--fg-3); }
-.share { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
-.share .track { width: 88px; }
-.share .track > i { background: var(--fg-3); }
-.goals .track { width: 96px; }
-.gname { display: flex; align-items: center; gap: 10px; }
-.gname > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.gname b { font-weight: 500; }
-.gname .faint { font-size: 12px; }
-tr.sub td { background: var(--bg-2); padding-top: 8px; padding-bottom: 8px; padding-left: 42px; font-size: 13px; }
-tr.sub a:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-3); }
 
 /* Ticket */
 .ticket { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 56px; align-items: start; }
@@ -337,21 +311,6 @@ dl { margin: 0; }
 .file .num { margin-left: auto; white-space: nowrap; }
 .sep { height: 1px; background: var(--line); }
 
-/* Budget */
-.chart { padding: 18px 20px 14px; }
-.chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
-.chart-head h2 { font: 600 14px/20px var(--sans); }
-.plot { position: relative; height: 180px; margin-left: 40px; }
-.gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
-.gridline span { position: absolute; left: -40px; top: -8px; width: 32px; text-align: right; font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.gridline.limit { border-top: 1px dashed var(--attn-line); }
-.gridline.limit em { position: absolute; right: 0; top: 4px; font-style: normal; font-size: 11.5px; color: var(--attn-fg); }
-.bars { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 8px; align-items: end; }
-.bars i { display: block; border-radius: 3px 3px 0 0; background: var(--line-3); min-height: 2px; }
-.bars i.today { background: var(--fg); }
-.xlabels { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 8px; margin-left: 40px; margin-top: 8px; font-size: 11.5px; color: var(--fg-3); text-align: center; font-variant-numeric: tabular-nums; }
-.cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
-
 /* Rules */
 .split { display: grid; grid-template-columns: 300px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 520px; }
 .rl { border-right: 1px solid var(--line); background: var(--bg-2); display: flex; flex-direction: column; }
@@ -426,10 +385,6 @@ dl { margin: 0; }
 
 /* Office */
 .office-page { max-width: 1480px; }
-.segctl { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--bg-3); }
-.segctl a { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; font: 500 12.5px/1 var(--sans); color: var(--fg-2); }
-.segctl a:hover { color: var(--fg); }
-.segctl a[aria-current="page"] { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--line-2); }
 .hud { display: flex; align-items: center; gap: 16px; margin-left: 6px; font-size: 13px; color: var(--fg-2); white-space: nowrap; min-width: 0; overflow: hidden; }
 .hud > span { display: inline-flex; align-items: center; gap: 6px; }
 .hud b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -584,7 +539,7 @@ a.qcard { display: inline-flex; align-items: center; }
 
 /* Phone: the sidebar becomes a top bar with a scrolling nav; rails stack. */
 @media (max-width: 1180px) {
-  .cols-2, .live-grid, .office { grid-template-columns: minmax(0, 1fr); }
+  .live-grid, .office { grid-template-columns: minmax(0, 1fr); }
   .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: none; }
   .hud { display: none; }
 }
@@ -615,9 +570,6 @@ a.qcard { display: inline-flex; align-items: center; }
   .top { position: static; height: auto; min-height: 52px; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px)); flex-wrap: wrap; }
   .top .actions .label { display: none; }
   .page { padding: 20px max(16px, env(safe-area-inset-right, 0px)) 56px max(16px, env(safe-area-inset-left, 0px)); gap: 24px; }
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpi:nth-child(3) { border-left: 0; }
-  .kpi:nth-child(n+3) { border-top: 1px solid var(--line); }
   .row { grid-template-columns: 16px minmax(0, 1fr); row-gap: 8px; }
   .row .id { display: none; }
   .row .d { white-space: normal; }
@@ -669,10 +621,8 @@ a.qcard { display: inline-flex; align-items: center; }
 <symbol id="i-git-pull-request" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/> <circle cx="6" cy="6" r="3"/> <path d="M13 6h3a2 2 0 0 1 2 2v7"/> <line x1="6" x2="6" y1="9" y2="21"/></symbol>
 <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/> <path d="M3 3v5h5"/> <path d="M12 7v5l4 2"/></symbol>
 <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M5 22h14"/> <path d="M5 2h14"/> <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/> <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></symbol>
-<symbol id="i-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/> <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
 <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <path d="M12 16v-4"/> <path d="M12 8h.01"/></symbol>
 <symbol id="i-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/> <circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
-<symbol id="i-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/> <rect width="7" height="5" x="14" y="3" rx="1"/> <rect width="7" height="9" x="14" y="12" rx="1"/> <rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
 <symbol id="i-list-checks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4"/> <path d="m3 7 2 2 4-4"/> <path d="M13 6h8"/> <path d="M13 12h8"/> <path d="M13 18h8"/></symbol>
 <symbol id="i-list-filter" viewBox="0 0 24 24"><path d="M3 6h18"/> <path d="M7 12h10"/> <path d="M10 18h4"/></symbol>
 <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/> <path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
@@ -700,7 +650,6 @@ a.qcard { display: inline-flex; align-items: center; }
 <symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/> <path d="M12 9v4"/> <path d="M12 17h.01"/></symbol>
 <symbol id="i-user-round" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/> <path d="M20 21a8 8 0 0 0-16 0"/></symbol>
 <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/> <circle cx="9" cy="7" r="4"/> <path d="M22 21v-2a4 4 0 0 0-3-3.87"/> <path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
-<symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/> <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/> <path d="m6 6 12 12"/></symbol>
 <symbol id="s-queued" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 2.2"/></symbol>
 <symbol id="s-attn" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><rect x="7.1" y="3.9" width="1.8" height="5.2" rx=".9" style="fill:var(--bg)"/><circle cx="8" cy="11.4" r="1.05" style="fill:var(--bg)"/></symbol>
@@ -723,15 +672,11 @@ a.qcard { display: inline-flex; align-items: center; }
     <div class="navs">
       <nav class="nav" aria-label="Work">
         <a href="#office" data-nav="office" title="Office"><svg class="i" aria-hidden="true"><use href="#i-building-2"/></svg><span class="lbl">Office</span></a>
-        <a href="#board" data-nav="board" title="Board"><svg class="i" aria-hidden="true"><use href="#i-layout-dashboard"/></svg><span class="lbl">Board</span></a>
-        <a href="#asks" data-nav="asks" title="Asks"><svg class="i" aria-hidden="true"><use href="#i-inbox"/></svg><span class="lbl">Asks</span><span class="count attn" aria-label="2 waiting">2</span></a>
-        <a href="#goals" data-nav="goals" title="Goals"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="lbl">Goals</span><span class="count">4</span></a>
       </nav>
       <div class="nav-label">Studio</div>
       <nav class="nav" aria-label="Studio">
         <a href="#hires" data-nav="hires" title="Hires"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="lbl">Hires</span><span class="count">7</span></a>
         <a href="#rules" data-nav="rules" title="Rules"><svg class="i" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="lbl">Rules</span><span class="count">5</span></a>
-        <a href="#budget" data-nav="budget" title="Budget"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span class="lbl">Budget</span></a>
       </nav>
     </div>
     <div class="side-foot">
@@ -753,7 +698,6 @@ a.qcard { display: inline-flex; align-items: center; }
 <section class="view" id="office" data-view="office">
   <header class="top">
     <h1>Office</h1>
-    <nav class="segctl" aria-label="View"><a href="#office" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
     <div class="hud" aria-label="Today">
       <span><span class="dot attn"></span><b>2</b> need you</span>
       <span><span class="dot run"></span><b>3</b> running</span>
@@ -880,7 +824,7 @@ a.qcard { display: inline-flex; align-items: center; }
 
       <aside class="inspector" id="inspector" aria-label="Inspector">
         <div class="ins-panel ins-overview">
-        <div class="ins-h"><h2>Needs you</h2><span class="n">2</span><span class="spacer"></span><a class="btn ghost sm" href="#asks">All asks</a></div>
+        <div class="ins-h"><h2>Needs you</h2><span class="n">2</span></div>
         <div class="ins-b">
           <div class="mini-ask">
             <div class="mh"><svg class="i sm" aria-hidden="true"><use href="#i-shield-alert"/></svg><span class="mono">SHOP-14</span>Run a command<span class="t-ago">2m</span></div>
@@ -1026,7 +970,6 @@ a.qcard { display: inline-flex; align-items: center; }
               <div class="e"><span class="when mono">15</span><span class="prog" style="--p:25"></span><span class="txt"><b>Draw the logo for the store</b> · working</span></div>
               <div class="e"><span class="when mono">18</span><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="txt"><b>Keyboard support in menus</b> · up next</span></div>
             </div>
-            <div class="ins-actions"><a class="btn" href="#goals">Open goal<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
           </div>
         </div>
         <div class="ins-panel" id="sel-goal-checkout">
@@ -1034,7 +977,7 @@ a.qcard { display: inline-flex; align-items: center; }
           <div class="ins-b">
             <div><div class="ins-title">Checkout flow</div><span class="mono">shop · studio/goal/checkout-flow</span></div>
             <p class="muted" style="font-size:13px">0 of 3 landed. SHOP-14 is waiting for you to allow a command.</p>
-            <div class="ins-actions"><a class="btn primary" href="#sel-SHOP-14">See the ask</a><a class="btn" href="#goals">Open goal</a></div>
+            <div class="ins-actions"><a class="btn primary" href="#sel-SHOP-14">See the ask</a></div>
           </div>
         </div>
         <div class="ins-panel" id="sel-goal-editor">
@@ -1042,7 +985,6 @@ a.qcard { display: inline-flex; align-items: center; }
           <div class="ins-b">
             <div><div class="ins-title">Editor basics</div><span class="mono">editor · studio/goal/editor-basics</span></div>
             <p class="muted" style="font-size:13px">1 of 3 landed. EDIT-4 is queued for the next free run slot.</p>
-            <div class="ins-actions"><a class="btn" href="#goals">Open goal</a></div>
           </div>
         </div>
         <div class="ins-panel" id="sel-SHOP-18">
@@ -1095,107 +1037,10 @@ a.qcard { display: inline-flex; align-items: center; }
 
 </section>
 
-<!-- BOARD -->
-<section class="view" id="board" data-view="board">
-  <header class="top">
-    <h1>Board</h1>
-    <nav class="segctl" aria-label="View"><a href="#office"><svg class="i sm" aria-hidden="true"><use href="#i-building-2"/></svg>Office</a><a href="#board" aria-current="page"><svg class="i sm" aria-hidden="true"><use href="#i-layout-dashboard"/></svg>Board</a></nav>
-    <span class="chip"><svg class="i" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>All projects</span>
-    <div class="actions">
-      <button class="btn" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="label">New goal</span></button>
-      <button class="btn primary" type="button" popovertarget="new-ticket"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New ticket</span></button>
-    </div>
-  </header>
-  <div class="page">
-    <div class="kpis">
-      <a class="kpi" href="#asks"><span class="label"><span class="dot attn"></span>Needs you</span><span class="value">2</span><span class="sub">Oldest waiting 6 min</span></a>
-      <div class="kpi"><span class="label"><span class="dot run"></span>Running</span><span class="value">3</span><span class="sub">2 working · 1 in review</span></div>
-      <div class="kpi"><span class="label"><span class="dot ok"></span>Ready to land</span><span class="value">1</span><span class="sub">SHOP-9 · <span class="add">+184</span> <span class="del">−12</span></span></div>
-      <a class="kpi" href="#budget"><span class="label">Spend today</span><span class="value">$34.12<small>of $100</small></span>
-        <svg class="spark" viewBox="0 0 120 20" preserveAspectRatio="none" role="img" aria-label="Spend over the last 14 days"><polyline points="0,15 9,12 18,16 27,9 36,13 45,6 54,11 63,14 72,8 81,10 90,5 99,9 108,7 120,12" fill="none" stroke="var(--fg-3)" stroke-width="1.5" vector-effect="non-scaling-stroke"/><circle cx="120" cy="12" r="2.2" fill="var(--fg)"/></svg>
-      </a>
-    </div>
-
-    <div class="box">
-      <div class="grp"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you <span class="n">2</span><a class="side-note" href="#asks">Open asks</a></div>
-      <div class="row">
-        <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
-        <span class="id">SHOP-14</span>
-        <div class="main-col"><a class="t" href="#ticket">Add a cart drawer</a><span class="d">Wants to run <span class="code">cargo run --example demo</span><span class="reason">No rule covers it</span></span></div>
-        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">6m</span><button class="btn sm" type="button">Deny</button><button class="btn sm primary" type="button">Allow</button></div>
-      </div>
-      <div class="row">
-        <svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>
-        <span class="id">SHOP-17</span>
-        <div class="main-col"><a class="t" href="#ticket">Raise payment timeout to 12 s</a><span class="d">Wants to edit <span class="code">src/payments/client.rs</span><span class="reason">src/payments is protected</span></span></div>
-        <div class="right"><span class="who"><span class="av cyan">EN</span></span><span class="w faint">2m</span><button class="btn sm" type="button">Deny</button><button class="btn sm primary" type="button">Allow</button></div>
-      </div>
-
-      <div class="grp"><span class="prog" style="--p:50" aria-hidden="true"></span>Running <span class="n">3</span></div>
-      <div class="row">
-        <span class="prog" style="--p:50" aria-hidden="true"></span>
-        <span class="id">SHOP-12</span>
-        <div class="main-col"><a class="t" href="#ticket">Fix the search box dropping early keystrokes</a><span class="d">Running <span class="code">cargo test --workspace</span></span></div>
-        <div class="right"><div class="steps"><div class="bar"><i class="done"></i><i class="now"></i><i></i><i></i></div><span class="lbl"><b>Checks</b> · try 1 of 3</span></div><span class="who"><span class="av cyan">EN</span></span><span class="w">24m</span><span class="w">$0.38</span></div>
-      </div>
-      <div class="row">
-        <span class="prog" style="--p:25" aria-hidden="true"></span>
-        <span class="id">SHOP-15</span>
-        <div class="main-col"><a class="t" href="#ticket">Draw the logo for the store</a><span class="d">Writing <span class="code">static/img/logo.png</span></span></div>
-        <div class="right"><div class="steps"><div class="bar"><i class="now"></i><i></i><i></i><i></i></div><span class="lbl"><b>Working</b> · try 2 of 3</span></div><span class="who"><span class="av pink">DE</span></span><span class="w">12m</span><span class="w">$0.91</span></div>
-      </div>
-      <div class="row">
-        <span class="prog" style="--p:85" aria-hidden="true"></span>
-        <span class="id">SHOP-11</span>
-        <div class="main-col"><a class="t" href="#ticket">Account menu with order history</a><span class="d">Reviewer reading <span class="code">src/account.rs</span></span></div>
-        <div class="right"><div class="steps"><div class="bar"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><span class="lbl"><b>Review</b> · try 1 of 3</span></div><span class="who"><span class="av violet">RV</span></span><span class="w">31m</span><span class="w">$1.24</span></div>
-      </div>
-
-      <div class="grp"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Ready to land <span class="n">1</span></div>
-      <div class="row">
-        <svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>
-        <span class="id">SHOP-9</span>
-        <div class="main-col"><a class="t" href="#ticket">Landing page with sign-in</a><span class="d">Passed checks, design and review · <span class="add">+184</span> <span class="del">−12</span></span></div>
-        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the navigation</span><span class="w">$2.06</span><button class="btn sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Land</button></div>
-      </div>
-
-      <div class="grp"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Up next <span class="n">2</span></div>
-      <div class="row compact">
-        <svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>
-        <span class="id">SHOP-18</span>
-        <div class="main-col"><a class="t" href="#ticket">Keyboard support in menus</a></div>
-        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Polish the navigation</span><span class="faint">After SHOP-9</span></div>
-      </div>
-      <div class="row compact">
-        <svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>
-        <span class="id">EDIT-4</span>
-        <div class="main-col"><a class="t" href="#ticket">Drag to reorder photos in the product editor</a></div>
-        <div class="right"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Editor basics</span><span class="faint">Waiting for a slot</span></div>
-      </div>
-    </div>
-
-    <section>
-      <div class="sec"><h2>Done today</h2><span class="n">5</span><a class="link" href="#goals">All history<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-      <div class="table">
-        <table>
-          <thead><tr><th style="width:96px">Ticket</th><th>Title</th><th>Goal</th><th>Hire</th><th class="r">Cost</th><th class="r">Finished</th></tr></thead>
-          <tbody>
-            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">SHOP-10</span></span></td><td class="title">Save settings between sessions</td><td class="muted">Settings</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$1.12</td><td class="r faint num">1h ago</td></tr>
-            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">SHOP-8</span></span></td><td class="title">Email toggles for orders and offers</td><td class="muted">Settings</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.84</td><td class="r faint num">2h ago</td></tr>
-            <tr><td><span class="cellflex"><svg class="st failed" aria-hidden="true"><use href="#s-failed"/></svg><span class="mono faint">SHOP-7</span></span></td><td class="title">Move orders to the new schema <span class="pill bad" style="margin-left:6px;height:20px;font-size:11.5px">Checks failed 3 times</span></td><td class="faint">None</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$3.96</td><td class="r faint num">4h ago</td></tr>
-            <tr><td><span class="cellflex"><svg class="st landed" aria-hidden="true"><use href="#s-landed"/></svg><span class="mono faint">EDIT-3</span></span></td><td class="title">Undo for product edits</td><td class="muted">Editor basics</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.66</td><td class="r faint num">5h ago</td></tr>
-            <tr><td><span class="cellflex"><svg class="st cancelled" aria-hidden="true"><use href="#s-cancelled"/></svg><span class="mono faint">SHOP-6</span></span></td><td class="title faint">Fix the 500 error when the cart is empty</td><td class="faint">None</td><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">$0.12</td><td class="r faint num">6h ago</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </div>
-</section>
-
 <!-- TICKET -->
 <section class="view" id="ticket" data-view="ticket">
   <header class="top">
-    <nav class="crumbs" aria-label="Breadcrumb"><a href="#board">Board</a><svg class="i sm" aria-hidden="true"><use href="#i-chevron-right"/></svg><span class="mono">SHOP-14</span></nav>
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="#office">Office</a><svg class="i sm" aria-hidden="true"><use href="#i-chevron-right"/></svg><span class="mono">SHOP-14</span></nav>
     <div class="actions">
       <button class="btn ghost sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-copy"/></svg><span class="label">Copy as Markdown</span></button>
       <button class="btn ghost icon sm" type="button" aria-label="More actions" popovertarget="ticket-menu"><svg class="i" aria-hidden="true"><use href="#i-ellipsis"/></svg></button>
@@ -1262,7 +1107,7 @@ a.qcard { display: inline-flex; align-items: center; }
         <dl>
           <div class="prop"><dt>Status</dt><dd><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></dd></div>
           <div class="prop"><dt>Hire</dt><dd><span class="who"><span class="av cyan">EN</span>engineer</span><span class="model">sonnet</span></dd></div>
-          <div class="prop"><dt>Goal</dt><dd><a href="#goals" class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Checkout flow</a></dd></div>
+          <div class="prop"><dt>Goal</dt><dd><a href="#office" class="chip"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg>Checkout flow</a></dd></div>
           <div class="prop"><dt>Project</dt><dd>shop</dd></div>
           <div class="prop"><dt>Branch</dt><dd><svg class="i sm faint" aria-hidden="true"><use href="#i-git-branch"/></svg><span class="mono">studio/shop-14</span></dd></div>
           <div class="prop"><dt>Try</dt><dd>1 of 3</dd></div>
@@ -1294,106 +1139,6 @@ a.qcard { display: inline-flex; align-items: center; }
   <div popover id="ticket-menu" class="dialog" style="width:220px;padding:6px;border-radius:10px">
     <button class="btn ghost" type="button" style="width:100%;justify-content:flex-start"><svg class="i" aria-hidden="true"><use href="#i-pause"/></svg>Pause</button>
     <button class="btn ghost danger" type="button" style="width:100%;justify-content:flex-start"><svg class="i" aria-hidden="true"><use href="#i-circle-x"/></svg>Cancel ticket</button>
-  </div>
-</section>
-
-<!-- ASKS -->
-<section class="view" id="asks" data-view="asks">
-  <header class="top"><h1>Asks</h1><span class="faint" style="font-size:13px">The approver decided 96 calls today and sent you 4.</span></header>
-  <div class="page" style="max-width:880px">
-    <section class="ask" aria-label="SHOP-14 asks">
-      <div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg><span><span class="mono">SHOP-14</span> · Add a cart drawer</span><span class="t-ago">6m ago</span></div>
-      <div class="ask-b">
-        <div class="cmd">cargo run --example demo</div>
-        <div class="said"><span class="av cyan">EN</span><span>“I want to add two items to check that the three second close feels right.”</span></div>
-        <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg>No rule covers running examples in <span class="mono">shop</span>, and the approver left it to you.<a href="#rules">Add a rule</a></div>
-        <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><button class="btn ghost" type="button">Always allow <span class="code">cargo run</span> in shop</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-      </div>
-    </section>
-    <section class="ask" aria-label="SHOP-17 asks">
-      <div class="ask-h"><svg class="i" aria-hidden="true"><use href="#i-shield-alert"/></svg><span><span class="mono">SHOP-17</span> · Raise payment timeout to 12 s</span><span class="t-ago">2m ago</span></div>
-      <div class="ask-b">
-        <div class="diff"><div class="f">src/payments/client.rs</div><div class="l m">- const TIMEOUT_SECS: u64 = 8;</div><div class="l p">+ const TIMEOUT_SECS: u64 = 12;</div></div>
-        <div class="said"><span class="av cyan">EN</span><span>“The ticket asks for 12 seconds. This is the only line that changes.”</span></div>
-        <div class="why"><svg class="i sm" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="mono">src/payments</span> is protected by your rule <a href="#rules">protect-payments</a>.</div>
-        <div class="ask-actions"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Allow</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg>Deny</button><span class="spacer"></span><a class="note-toggle" href="#ticket">Open ticket<svg class="i sm" aria-hidden="true"><use href="#i-arrow-right"/></svg></a></div>
-      </div>
-    </section>
-  </div>
-</section>
-
-<!-- GOALS -->
-<section class="view" id="goals" data-view="goals">
-  <header class="top"><h1>Goals</h1><div class="actions"><button class="btn primary" type="button" popovertarget="new-goal"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New goal</span></button></div></header>
-  <div class="page">
-    <div class="table">
-      <table class="goals">
-        <thead><tr><th>Goal</th><th>Progress</th><th class="r">Spent</th><th>State</th><th class="r">Updated</th><th></th></tr></thead>
-        <tbody>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-down"/></svg><span><b>Polish the navigation</b><span class="faint">shop · studio/goal/polish-the-navigation</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:50%"></i></span><span class="faint num">3 of 6</span></span></td><td class="r num">$9.42</td><td><span class="pill run"><span class="prog" style="--p:50"></span>Running</span></td><td class="r faint">4m ago</td><td></td></tr>
-          <tr class="sub"><td colspan="6"><span class="cellflex"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg><span class="mono faint">SHOP-9</span><a href="#ticket">Landing page with sign-in</a><span class="faint">· Ready to land · $2.06</span></span></td></tr>
-          <tr class="sub"><td colspan="6"><span class="cellflex"><span class="prog" style="--p:85"></span><span class="mono faint">SHOP-11</span><a href="#ticket">Account menu with order history</a><span class="faint">· In review · $1.24</span></span></td></tr>
-          <tr class="sub"><td colspan="6"><span class="cellflex"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg><span class="mono faint">SHOP-18</span><a href="#ticket">Keyboard support in menus</a><span class="faint">· Up next</span></span></td></tr>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Checkout flow</b><span class="faint">shop · studio/goal/checkout-flow</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:3%"></i></span><span class="faint num">0 of 3</span></span></td><td class="r num">$0.42</td><td><span class="pill attn"><svg class="st attn" aria-hidden="true"><use href="#s-attn"/></svg>Needs you</span></td><td class="r faint">2m ago</td><td></td></tr>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Editor basics</b><span class="faint">editor · studio/goal/editor-basics</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:33%"></i></span><span class="faint num">1 of 3</span></span></td><td class="r num">$1.88</td><td><span class="pill neutral"><svg class="st queued" aria-hidden="true"><use href="#s-queued"/></svg>Queued</span></td><td class="r faint">5h ago</td><td></td></tr>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b>Settings</b><span class="faint">shop · studio/goal/settings</span></span></span></td><td><span class="cellflex"><span class="track"><i style="width:100%"></i></span><span class="faint num">2 of 2</span></span></td><td class="r num">$1.96</td><td><span class="pill ok"><svg class="st ready" aria-hidden="true"><use href="#s-ready"/></svg>Done</span></td><td class="r faint">1h ago</td><td class="r"><button class="btn sm" type="button"><svg class="i sm" aria-hidden="true"><use href="#i-git-merge"/></svg>Merge</button></td></tr>
-          <tr><td><span class="gname"><svg class="i sm faint" aria-hidden="true"><use href="#i-chevron-right"/></svg><span><b class="muted">Email templates</b><span class="faint">shop · merged into master</span></span></span></td><td><span class="cellflex"><span class="track neutral"><i style="width:100%"></i></span><span class="faint num">4 of 4</span></span></td><td class="r num">$6.10</td><td><span class="pill neutral"><svg class="st landed" style="color:var(--fg-3)" aria-hidden="true"><use href="#s-landed"/></svg>Merged</span></td><td class="r faint">Yesterday</td><td></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<!-- BUDGET -->
-<section class="view" id="budget" data-view="budget">
-  <header class="top"><h1>Budget</h1><span class="faint" style="font-size:13px">Spend over the last 24 hours. A run only starts if its allowance fits under every limit.</span></header>
-  <div class="page">
-    <div class="kpis">
-      <div class="kpi"><span class="label">Spent today</span><span class="value">$34.12<small>of $100</small></span><div class="meter" style="margin-top:6px"><i style="width:34%"></i></div></div>
-      <div class="kpi"><span class="label">Held for live runs</span><span class="value">$3.20</span><span class="sub">3 runs, released as they finish</span></div>
-      <div class="kpi"><span class="label">Last 7 days</span><span class="value">$218.40</span><span class="sub">$31.20 a day on average</span></div>
-      <div class="kpi"><span class="label">Daily limit</span><span class="value">$100</span><span class="sub">$8 a ticket · reviewer $1.50</span></div>
-    </div>
-    <section class="box chart">
-      <div class="chart-head"><h2>Daily spend</h2><span class="faint" style="font-size:12.5px">Last 14 days</span></div>
-      <div class="plot" role="img" aria-label="Daily spend for the last 14 days, between $9 and $64, under the $100 limit">
-        <div class="gridline limit" style="top:0"><span>$100</span><em>Daily limit</em></div>
-        <div class="gridline" style="top:25%"><span>$75</span></div>
-        <div class="gridline" style="top:50%"><span>$50</span></div>
-        <div class="gridline" style="top:75%"><span>$25</span></div>
-        <div class="gridline" style="top:100%"><span>$0</span></div>
-        <div class="bars"><i style="height:22%" title="$22"></i><i style="height:31%"></i><i style="height:9%"></i><i style="height:44%"></i><i style="height:28%"></i><i style="height:56%"></i><i style="height:35%"></i><i style="height:18%"></i><i style="height:47%"></i><i style="height:39%"></i><i style="height:64%"></i><i style="height:42%"></i><i style="height:51%"></i><i class="today" style="height:34%"></i></div>
-      </div>
-      <div class="xlabels"><span>18</span><span>19</span><span>20</span><span>21</span><span>22</span><span>23</span><span>24</span><span>25</span><span>26</span><span>27</span><span>28</span><span>29</span><span>30</span><span style="color:var(--fg)">Today</span></div>
-    </section>
-    <div class="cols-2">
-      <section>
-        <div class="sec"><h2>By hire</h2><span class="n">today</span></div>
-        <div class="table"><table><thead><tr><th>Hire</th><th class="r">Runs</th><th class="r">Spent</th></tr></thead><tbody>
-          <tr><td><span class="who"><span class="av cyan">EN</span>engineer</span></td><td class="r num">18</td><td><div class="share"><span class="track"><i style="width:63%"></i></span><span class="num">$21.40</span></div></td></tr>
-          <tr><td><span class="who"><span class="av violet">RV</span>reviewer</span></td><td class="r num">11</td><td><div class="share"><span class="track"><i style="width:26%"></i></span><span class="num">$8.96</span></div></td></tr>
-          <tr><td><span class="who"><span class="av pink">DE</span>designer</span></td><td class="r num">3</td><td><div class="share"><span class="track"><i style="width:6%"></i></span><span class="num">$2.10</span></div></td></tr>
-          <tr><td><span class="who"><span class="av gold">PR</span>producer</span></td><td class="r num">2</td><td><div class="share"><span class="track"><i style="width:3%"></i></span><span class="num">$0.98</span></div></td></tr>
-          <tr><td><span class="who"><span class="av">AP</span>approver</span></td><td class="r num">96</td><td><div class="share"><span class="track"><i style="width:1.4%"></i></span><span class="num">$0.48</span></div></td></tr>
-          <tr><td><span class="who"><span class="av">RO</span>router</span></td><td class="r num">12</td><td><div class="share"><span class="track"><i style="width:.6%"></i></span><span class="num">$0.20</span></div></td></tr>
-        </tbody></table></div>
-      </section>
-      <section>
-        <div class="sec"><h2>Most expensive tickets</h2><span class="n">today</span></div>
-        <div class="table"><table><thead><tr><th>Ticket</th><th>Outcome</th><th class="r">Spent</th></tr></thead><tbody>
-          <tr><td><span class="cellflex"><span class="mono faint">SHOP-7</span>Move orders to the new schema</span></td><td><span class="pill bad" style="height:20px;font-size:11.5px">Failed</span></td><td class="r num">$3.96</td></tr>
-          <tr><td><span class="cellflex"><span class="mono faint">SHOP-9</span>Landing page with sign-in</span></td><td><span class="pill ok" style="height:20px;font-size:11.5px">Ready</span></td><td class="r num">$2.06</td></tr>
-          <tr><td><span class="cellflex"><span class="mono faint">SHOP-11</span>Account menu with order history</span></td><td><span class="pill run" style="height:20px;font-size:11.5px">Running</span></td><td class="r num">$1.24</td></tr>
-          <tr><td><span class="cellflex"><span class="mono faint">SHOP-10</span>Save settings between sessions</span></td><td><span class="pill ok" style="height:20px;font-size:11.5px">Landed</span></td><td class="r num">$1.12</td></tr>
-        </tbody></table></div>
-        <div class="sec" style="margin-top:24px"><h2>By model</h2><span class="n">today</span></div>
-        <div class="table"><table><tbody>
-          <tr><td><span class="model">sonnet</span></td><td><div class="share"><span class="track"><i style="width:68%"></i></span><span class="num">$23.40</span></div></td></tr>
-          <tr><td><span class="model">opus</span></td><td><div class="share"><span class="track"><i style="width:30%"></i></span><span class="num">$10.20</span></div></td></tr>
-          <tr><td><span class="model">haiku</span></td><td><div class="share"><span class="track"><i style="width:1.5%"></i></span><span class="num">$0.52</span></div></td></tr>
-        </tbody></table></div>
-      </section>
-    </div>
   </div>
 </section>
 

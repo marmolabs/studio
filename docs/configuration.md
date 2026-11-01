@@ -7,8 +7,11 @@ Linux. `--home <dir>` or `STUDIO_HOME` replaces it; the data folder is then
 
 Unknown keys in `studio.toml` and `.studio.toml` are errors, so a typo is
 caught when the file loads. Run `studio doctor` to check your files. The daemon
-reads `studio.toml` when it starts; restart it after you change it. Rules
-apply on the next run.
+reads `studio.toml` and the hires again within a second of a change; a file
+that no longer loads is reported in `studiod.log` and the last good one stays
+in use. Runtimes and `[notify]` are read once, when the daemon starts, so
+restart it (`studio down`, then `studio up`) after changing those. Rules apply
+on the next run.
 
 ## studio.toml
 
@@ -25,7 +28,7 @@ apply on the next run.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `max_runs` | none, required | Agents running at once, at most 9 (one per desk in the office). `0` pauses the studio. |
+| `max_runs` | none, required | Agents running at once, from 1 to 9 (one per desk in the office). `0` is an error: to pause the studio, run `studio close`; `studio open` starts it again. |
 
 ### `[[projects]]`
 
@@ -43,15 +46,6 @@ apply on the next run.
 | --- | --- | --- |
 | `name` | required | Must match the pack's `pack.toml`. |
 | `path` | required | The pack folder. A relative path is read from the studio folder. |
-
-### `[providers.<name>]`
-
-Names an extra runtime that hires can use in `runtime:`. `claude-code` is
-always available without an entry.
-
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `kind` | required | Only `claude-code` today. |
 
 ### `[rules]`
 
@@ -173,7 +167,7 @@ One file per hire in `hires/` (or a pack's `hires/`). The file name, without
 | --- | --- | --- |
 | `name` | yes | Display name. |
 | `role` | yes | Free text. `reviewer` and `producer` have meaning to the studio. |
-| `runtime` | yes | `claude-code`, or a provider name from `studio.toml`. |
+| `runtime` | yes | `claude-code`, the only runtime today. |
 | `model` | yes | Model id or alias, like `sonnet`. |
 | `escalate` | no | Stronger models to use after each failed attempt. The last one repeats. |
 | `budget_per_ticket_usd` | no | Cap for one ticket on this hire. |

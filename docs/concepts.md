@@ -3,9 +3,10 @@
 ## The studio
 
 The studio is a folder of config (`studio.toml`, `hires/`, `rules/`) plus a
-data folder (the event store, run logs, the daemon's socket). The daemon,
-`studiod`, runs tickets. The CLI (`studio`) and the web UI (`studio-web`) are
-clients that talk to it.
+data folder (the event store, run logs, evidence). The daemon, `studiod`, runs
+tickets. The CLI (`studio`) and the web UI (`studio-web`) are clients that talk
+to it over a Unix socket. The web UI's home page is the office: the whole
+studio on one floor.
 
 ## Projects
 
@@ -25,6 +26,8 @@ that matter to the studio:
   `escalate` models, so an author that escalated onto the reviewer's model is
   still reviewed.
 - `producer`: plans goals. Needs `tools: [file_ticket]`.
+- `approver` and `router`: see below.
+
 Everything else is yours to name. A gate names its critic by hire, whatever
 that hire's role is.
 
@@ -84,7 +87,7 @@ branch into it and resolves the conflicts; merge again once it lands.
 
 An ask is a request that waits for you. Agents raise one when an action needs
 approval, or when they use `ask_owner` to put a question to you with options.
-Approve or deny from `studio asks`, or press Allow or Deny in the web UI. A
+Approve or deny from `studio asks`, or press Allow or Deny in the office. A
 permission you deny with a note refuses just that call: the agent is told "The owner declined this"
 and your note, and carries on. A deny without a note stops the ticket. A denied
 question or gate always stops it.
@@ -103,11 +106,12 @@ approver. When the approver errors, has no budget or gives no clear answer even 
 call goes to you, with the reason shown.
 
 The router picks the hire for a ticket created without one (`studio ticket`
-without `--hire`, the board's "Pick for me", or a producer's `file_ticket`
+without `--hire`, the New ticket form's "Pick for me", or a producer's `file_ticket`
 without a hire). Without a router, the first engineer takes it.
 
-Each call is capped at $0.05 and charged to the ticket. `studio init` writes
-both hires; deleting `hires/approver.md` or `hires/router.md` turns that one off.
+Each call is capped at five cents and charged to the ticket. `studio init`
+writes both hires; deleting `hires/approver.md` or `hires/router.md` turns that
+one off.
 
 ## Rules
 
@@ -138,12 +142,12 @@ that match the gate's globs, a critic hire reads it before you do. If the
 critic fails the work, it goes back to the author. After the gate's `rounds`
 are used up, the decision comes to you.
 
-For each changed `png`, `jpg` or `gif` that matches the gate's globs (up to
-12), the critic also gets the shipped version beside the new one, written as
-`before-*` and `after-*` files in the attempt's evidence folder. A new file has
-only the `after-` image. A deleted image is skipped, and so is a file reached
-through a symlink, with a note in the run log. On the ticket, these files
-appear in the "Images · shipped vs new" section, not among the screenshots.
+For each changed `png`, `jpg` or `gif` that matches the gate's globs, the
+critic also gets the shipped version beside the new one, written as `before-*`
+and `after-*` files in the attempt's evidence folder. A new file has only the
+`after-` image. A deleted image is skipped, and so is a file reached through a
+symlink, with a note in the run log. On the ticket, these files appear in the
+"Images · shipped vs new" section, not among the screenshots.
 
 ## Evidence
 

@@ -11,18 +11,24 @@ use topcoat::{
 
 pub const EVERY: Duration = Duration::from_secs(1);
 
-/// Streams `render()`'s HTML whenever it differs from what was last sent.
-/// A failed render (studiod restarting, say) is skipped, not fatal.
-pub fn watch<F, Fut>(render: F) -> Sse<impl Stream<Item = topcoat::Result<Event>> + Send>
+/// The longest a page that draws only when something changed goes without
+/// drawing, so the ages it shows ("5m ago") move on.
+pub const QUIET_MAX: Duration = Duration::from_secs(30);
+
+/// Streams a render's HTML whenever it differs from what was last sent. A
+/// render that knows nothing changed since it last drew answers `None`,
+/// without drawing; a failed render (studiod restarting, say) is skipped,
+/// not fatal.
+pub fn watch_changes<F, Fut>(render: F) -> Sse<impl Stream<Item = topcoat::Result<Event>> + Send>
 where
     F: Fn() -> Fut + Send + 'static,
-    Fut: Future<Output = topcoat::Result<String>> + Send,
+    Fut: Future<Output = topcoat::Result<Option<String>>> + Send,
 {
     let stream =
         futures_util::stream::unfold((render, String::new()), |(render, mut last)| async move {
             loop {
                 tokio::time::sleep(EVERY).await;
-                let Ok(html) = render().await else {
+                let Ok(Some(html)) = render().await else {
                     continue;
                 };
                 if html != last {

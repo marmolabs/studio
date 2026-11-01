@@ -7,7 +7,7 @@ it with Quick Look (below). Like the app, it has no script of its own: links and
 flips the theme. Build the app to look and behave like it. Its CSS is the design
 system: take the values, spacing and structure from it. Its data is sample data;
 the app shows only real data from studiod. The Office is the exception: its
-reference is the gallery's office screenshots (`examples/gallery.rs`, below).
+reference is the gallery's office screenshots (`examples/gallery/`, below).
 
 ## Look
 
@@ -40,13 +40,12 @@ can force either (below).
 
 ## Shell
 
-Sidebar (232px) on every page but the Office: the brand, then Office, Board,
-Asks (amber count when asks wait), Goals; a "Studio" label; Hires, Rules,
-Budget. At its foot: running and queued counts with a pulsing dot, today's
-spend of the daily limit with a meter, and the theme switch. The Office has no
-sidebar: it draws its own top bar (see Pages). Top bar (56px, sticky,
-translucent): title or breadcrumb, an Office/Board switch on those two pages,
-then page actions on the right, at most one primary button. Content in a
+Sidebar (232px) on every page but the Office: the brand, then Office; a
+"Studio" label; Hires, Rules. At its foot: running and queued counts with a
+pulsing dot, today's spend of the daily limit with a meter (it leads to the
+office's Money tab), and the theme switch. The Office has no sidebar: it draws
+its own top bar (see Pages). Top bar (56px, sticky, translucent): title or
+breadcrumb, then page actions on the right, at most one primary button. Content in a
 centred column up to 1200px. Below 760px the sidebar becomes a top bar with the
 brand, running count and spend, and a horizontally scrolling nav that starts
 with Office; rails stack under the main column; nothing scrolls the page
@@ -57,7 +56,7 @@ labels.
 
 - **Office** (the home page, `/`): the whole studio as one isometric floor on
   a page of its own, with no sidebar. Its visual reference is the gallery's
-  office screenshots (`examples/gallery.rs`), not the prototype. A top bar holds
+  office screenshots (`examples/gallery/`), not the prototype. A top bar holds
   the brand, a strip of projects that focuses one (the rest of the floor
   fades), the figures (need you, at work, shipped today), the money meter, Ticket,
   New goal and the theme switch. Under it, the floor: an SVG drawn from the
@@ -78,6 +77,13 @@ labels.
     review, changed files with Land, a held ticket's reason with Resume,
     Cancel); a hire's says what it did and what it is on, with a level from
     landed work; a goal's lists what it filed, with Merge once it is done.
+  - The Projects tab ends with History, what its other rows leave out, newest
+    first: goals that were merged and tickets that finished more than a day
+    ago. Each is a row like the tab's task rows and opens its panel. Twenty
+    show at first, and "Show more" adds twenty.
+  - Adding a project asks studiod what it would add, then shows the name, the
+    full folder, the branch and the checks, with "Add it" and Cancel; only
+    "Add it" adds anything.
   - Links: `/?tab=money` opens a tab, `/?sel=tickets/SHOP-3`, `hires/<id>`,
     `goals/<id>` or `elements/coffee` open a panel. An unknown tab opens Needs
     you; an unknown element shows the tabs.
@@ -85,15 +91,6 @@ labels.
     figures, labels and panel stay live. Below 900px the floor fills the width,
     the corners and the panel follow it, and only the labels that need you are
     shown on the floor.
-- **Board** (`/board`): four figures (needs you with the oldest wait; running with how
-  many are working or in review; ready to land with the diff size; spend today
-  with a 14-day sparkline), then one container grouped as Needs you (one row
-  per ask: what it wants in one line with the reason, Deny and Allow), Running
-  (the latest action, the four-step bar work/checks/critics/review with the
-  try, hire avatar, elapsed, spend), Ready to land (checks passed, diff size,
-  goal, spend, Land), Up next (goal, what it waits for). Empty groups are left
-  out; an empty board says so in one line. Then what finished in the last 24 hours as a table. The
-  office's "+n" links lead to its Up next group and that table.
 - **Ticket**: breadcrumb; title, who filed it and from which goal; the detail
   as Markdown; the ask card when there is one; Activity as one feed of studio
   events, agent messages (Markdown), grouped tool calls with a one-line summary
@@ -103,13 +100,6 @@ labels.
   changed files with +/-. Evidence and image pairs fit in the main column.
   Finished tickets state the outcome and offer only actions that still apply.
   Pause and Cancel live in the "more" menu.
-- **Asks**: the full ask cards, newest first, each with its ticket.
-- **Goals**: a table (goal with project and branch, progress n of m, spent,
-  state: planning, running, needs you, queued, done, merged; updated); a goal
-  opens to its tickets as nested rows; Merge only for a done, unmerged goal.
-- **Budget**: spent today of the limit, held for live runs, last 7 days, the
-  limits; 14 days of daily spend as bars with a $ axis and the daily limit;
-  today by hire, the most expensive tickets today, today by model.
 - **Hires**: the team as a table (hire with role, model and escalation,
   effort, what it is on now, what it did today, spend today, Edit), then the
   studio's own hires (approver, router) with what they did today.
@@ -124,6 +114,8 @@ The app stays Rust + Topcoat + Datastar + Tailwind.
 - Menus and the New ticket / New goal forms: the HTML `popover` attribute and
   `popovertarget` buttons, styled as the prototype's dialog; forms submit
   through the existing endpoints.
+- Showing what adding a project would do: the check's answer goes into a
+  signal, and the panel swaps its form for a card that reads the signal.
 - Theme: the switch is a small form that sets a `theme` cookie (`light`,
   `dark`, or none for the system); the server puts `data-theme` on `<html>`.
 - Grouped tool calls: `<details>`.
@@ -140,8 +132,9 @@ honestly, leave the element out; never show a made-up or placeholder value.
 
 ## Checking your work
 
-`cargo run -q -p studio-web --example gallery -- <dir>` renders every page with
-sample data. In a sandbox it uses Quick Look, which lays pages out at 1024px;
+`cargo run -q -p studio-web --example gallery -- <dir>` renders every page from
+real studios in temporary homes, with scripted agents doing the work. In a
+sandbox it uses Quick Look, which lays pages out at 1024px;
 the gallery also writes 1440px and 390px (phone) versions. Compare them with
 the prototype rendered the same way; the Office has no prototype, so check
 its screenshots (the floor, each panel tab, both themes, phone width) against

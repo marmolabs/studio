@@ -3,14 +3,14 @@
 //! interrupts) back.
 //!
 //! Only Claude Code ships today. Another agent (an ACP client, say) is one
-//! more adapter implementing [`Runtime`] and one more provider kind in
-//! studiod's `runtimes::build`.
+//! more adapter implementing [`Runtime`], added to the list studiod's
+//! `runtimes::build` returns.
 
 mod claude;
 mod fake;
 mod run;
 
-pub use claude::{ClaudeCode, Parsed, parse_line};
+pub use claude::ClaudeCode;
 pub use fake::FakeRuntime;
 pub use run::{
     Capabilities, Control, Cost, EnvReport, FailureKind, Outcome, Question, Run, RunEvent, RunSpec,

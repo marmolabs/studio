@@ -87,11 +87,7 @@ pub fn check_home(paths: &StudioPaths) -> Vec<Check> {
         }
     }
 
-    let built = crate::runtimes::build(config.as_ref());
-    for problem in built.problems {
-        checks.push(fail(problem, "fix the provider in studio.toml"));
-    }
-    for (name, runtime) in &built.runtimes {
+    for (name, runtime) in &crate::runtimes::build() {
         let report = runtime.check_env();
         checks.push(match report.problem {
             None => pass(format!(

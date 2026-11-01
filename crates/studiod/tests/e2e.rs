@@ -165,20 +165,11 @@ async fn a_ticket_goes_from_goal_to_landed() {
     assert_eq!(ticket["id"], "GAME-1");
     studio.spawn_scheduler();
 
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     assert_eq!(state_of(&studio, "GAME-1").await["asking"]["ask"], "a1");
     let asks = ok(&studio, Request::Asks).await;
     assert_eq!(asks[0]["tool"], "Bash");
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: true,
-            message: None,
-            answers: None,
-        },
-    )
-    .await;
+    answer_ask(&studio, "a1", true, None).await;
 
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
     let spec = &runtime.specs()[0];
@@ -271,26 +262,8 @@ async fn a_ticket_goes_from_goal_to_landed() {
 async fn a_denied_ask_stops_the_ticket() {
     let setup = setup("");
     let studio = studio(&setup, FakeRuntime::new(script()));
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: false,
-            message: None,
-            answers: None,
-        },
-    )
-    .await;
+    run_until_asked(&studio).await;
+    answer_ask(&studio, "a1", false, None).await;
     until(async || state_of(&studio, "GAME-1").await["failed"]["class"] == "denied").await;
 }
 
@@ -299,26 +272,8 @@ async fn a_deny_with_a_note_refuses_the_call_and_the_run_carries_on() {
     let setup = setup("");
     let runtime = FakeRuntime::new(script());
     let studio = studio(&setup, runtime.clone());
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: false,
-            message: Some("use the Edit tool".into()),
-            answers: None,
-        },
-    )
-    .await;
+    run_until_asked(&studio).await;
+    answer_ask(&studio, "a1", false, Some("use the Edit tool")).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
     assert!(matches!(
@@ -332,26 +287,8 @@ async fn a_deny_with_a_note_refuses_the_call_and_the_run_carries_on() {
 async fn a_blank_note_still_stops_the_ticket() {
     let setup = setup("");
     let studio = studio(&setup, FakeRuntime::new(script()));
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: false,
-            message: Some("  ".into()),
-            answers: None,
-        },
-    )
-    .await;
+    run_until_asked(&studio).await;
+    answer_ask(&studio, "a1", false, Some("  ")).await;
     until(async || state_of(&studio, "GAME-1").await["failed"]["class"] == "denied").await;
 }
 
@@ -369,36 +306,16 @@ async fn a_goals_next_ticket_starts_from_the_goal_branch() {
     let studio = studio(&setup, FakeRuntime::new(script()));
     ok(&studio, create("First part")).await;
     studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    an_ask(&studio).await;
     // The fake runtime can't edit files, so plant the first ticket's work.
     let first = setup.repo.join(".studio/worktrees/game-1");
     fs::write(first.join("first.txt"), "one\n").unwrap();
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
 
     ok(&studio, create("Second part")).await;
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    an_ask(&studio).await;
     let second = setup.repo.join(".studio/worktrees/game-2");
     assert!(second.join("first.txt").exists());
     let log = fs::read_to_string(setup.paths.data_dir.join("runs/GAME-2.jsonl")).unwrap();
@@ -417,7 +334,7 @@ async fn a_goal_runs_one_ticket_at_a_time() {
     ok(&studio, create_in("Other", "Beta")).await;
     studio.spawn_scheduler();
     // max_runs is 2: Alpha's first ticket and Beta's run side by side.
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 2).await;
+    asks_open(&studio, 2).await;
     assert!(state_of(&studio, "GAME-3").await["asking"].is_object());
     assert_eq!(state_of(&studio, "GAME-2").await, "queued");
 
@@ -429,13 +346,7 @@ async fn a_goal_runs_one_ticket_at_a_time() {
     tokio::time::sleep(Duration::from_millis(1300)).await;
     assert_eq!(state_of(&studio, "GAME-2").await, "queued");
 
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
     until(async || state_of(&studio, "GAME-2").await["asking"].is_object()).await;
 }
 
@@ -446,22 +357,9 @@ async fn a_failed_ticket_frees_its_goal() {
     ok(&studio, create_in("One", "Alpha")).await;
     ok(&studio, create_in("Two", "Alpha")).await;
     studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    an_ask(&studio).await;
     assert_eq!(state_of(&studio, "GAME-2").await, "queued");
-    ok(
-        &studio,
-        Request::Cancel {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    cancel(&studio, "GAME-1").await;
     until(async || state_of(&studio, "GAME-2").await["asking"].is_object()).await;
 }
 
@@ -472,7 +370,7 @@ async fn tickets_without_a_goal_never_block_each_other() {
     ok(&studio, create_in("One", "")).await;
     ok(&studio, create_in("Two", "")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 2).await;
+    asks_open(&studio, 2).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -480,9 +378,7 @@ async fn auto_land_leaves_unreviewed_work_for_the_owner() {
     let setup = setup("");
     write_project(&setup, "auto_land = true\n");
     let studio = studio(&setup, FakeRuntime::new(vec![finished(0.01, true, false)]));
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Add a level").await;
     assert!(!run_log(&setup).contains("auto-landed"));
 }
 
@@ -493,16 +389,7 @@ async fn auto_land_lands_a_ready_ticket_on_its_goal_branch() {
     add_reviewer(&setup, "fake-2");
     let reviewer = FakeRuntime::new(vec![reply("VERDICT: PASS")]);
     let studio = studio_with(&setup, FakeRuntime::new(script()), reviewer);
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    run_until_asked(&studio).await;
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "landed").await;
     until(async || run_log(&setup).contains("auto-landed on studio/goal/first-level")).await;
@@ -523,16 +410,7 @@ async fn auto_land_lands_a_ready_ticket_on_its_goal_branch() {
 async fn without_auto_land_a_ticket_waits_as_ready() {
     let setup = setup("");
     let studio = studio(&setup, FakeRuntime::new(script()));
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    run_until_asked(&studio).await;
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
     tokio::time::sleep(Duration::from_millis(1300)).await;
@@ -616,14 +494,7 @@ async fn ask_ids_continue_after_a_restart() {
     let studio = studio(&setup, FakeRuntime::new(script()));
     ok(&studio, create("New")).await;
     studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    an_ask(&studio).await;
     assert_eq!(ok(&studio, Request::Asks).await[0]["id"], "a8");
 }
 
@@ -651,16 +522,7 @@ async fn failing_checks_send_the_work_back_then_fail() {
 async fn a_restart_holds_work_that_was_waiting() {
     let setup = setup("");
     let first = studio(&setup, FakeRuntime::new(script()));
-    ok(&first, create("Add a level")).await;
-    first.spawn_scheduler();
-    until(async || {
-        !ok(&first, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    run_until_asked(&first).await;
 
     let second = studio(&setup, FakeRuntime::new(script()));
     assert_eq!(second.recover().unwrap(), 1);
@@ -678,16 +540,7 @@ async fn asks_say_when_they_were_asked() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || {
-        !ok(&studio, Request::Asks)
-            .await
-            .as_array()
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    run_until_asked(&studio).await;
     let asks = ok(&studio, Request::Asks).await;
     assert!(asks[0]["at_ms"].as_u64().unwrap() >= before, "{asks}");
 }
@@ -833,26 +686,12 @@ async fn budget_lists_each_hires_own_ticket_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn zero_max_runs_pauses_the_studio() {
-    let setup = setup("");
-    let config = setup.paths.config_dir.join("studio.toml");
-    let text = fs::read_to_string(&config).unwrap();
-    fs::write(&config, text.replace("max_runs = 2", "max_runs = 0")).unwrap();
-    let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
-    let studio = studio(&setup, runtime.clone());
-    ok(&studio, create("Anything")).await;
-    studio.schedule().unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(state_of(&studio, "GAME-1").await, "queued");
-    assert!(runtime.specs().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn editing_studio_toml_applies_without_a_restart() {
-    let setup = setup("");
+    // No money left, so nothing starts until the file says there is some.
+    let setup = setup_with("", "daily_usd = 0.0", "");
     let config = setup.paths.config_dir.join("studio.toml");
     let text = fs::read_to_string(&config).unwrap();
-    fs::write(&config, text.replace("max_runs = 2", "max_runs = 0")).unwrap();
+    let text = text.replace("daily_usd = 0.0", "daily_usd = 5.0");
     let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
     let studio = studio(&setup, runtime.clone());
     ok(&studio, create("Anything")).await;
@@ -975,7 +814,7 @@ async fn ticket_spend_counts_the_live_run_so_far() {
     ok(&studio, create("Still running")).await;
     studio.spawn_scheduler();
     // The run waits on its ask, with nothing in the ledger yet.
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     assert!((spent(&ok(&studio, Request::Budget).await) - 0.0).abs() < 1e-9);
     let one = ok(
         &studio,
@@ -1012,9 +851,7 @@ async fn spend_is_reported_by_day_model_and_ticket() {
     let setup = setup("");
     let runtime = FakeRuntime::new(vec![finished(0.25, true, false)]);
     let studio = studio(&setup, runtime);
-    ok(&studio, create("Costs a quarter")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Costs a quarter").await;
 
     let days = ok(&studio, Request::SpendByDay { days: 3 }).await;
     let days = days.as_array().unwrap();
@@ -1093,9 +930,7 @@ async fn recent_events_cover_every_ticket_from_a_time() {
 async fn activity_holds_the_histories_of_busy_tickets() {
     let setup = setup("");
     let studio = studio(&setup, FakeRuntime::new(vec![finished(0.25, true, false)]));
-    ok(&studio, create("Costs a quarter")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Costs a quarter").await;
 
     let all = ok(&studio, Request::Activity { since_ms: 0 }).await;
     let all = all.as_array().unwrap();
@@ -1180,7 +1015,7 @@ async fn parallel_runs_never_reserve_more_than_the_day_allows() {
     ok(&studio, create_in("Second", "Two")).await;
     studio.spawn_scheduler();
     // Both runs stop at their ask, holding their reservations.
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 2).await;
+    asks_open(&studio, 2).await;
     let mut caps: Vec<f64> = runtime
         .specs()
         .iter()
@@ -1232,9 +1067,7 @@ async fn rules_decide_permissions_without_bothering_the_owner() {
         finished(0.01, true, false),
     ]);
     let studio = studio(&setup, runtime.clone());
-    ok(&studio, create("Rules")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Rules").await;
     let received = runtime.received();
     assert!(
         matches!(&received[0], studio_runtime::Control::Allow { request_id } if request_id == "p1")
@@ -1274,7 +1107,7 @@ async fn a_protected_path_asks_with_the_reason() {
     let studio = studio(&setup, runtime);
     ok(&studio, create("Tune")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     let ask = ok(&studio, Request::Asks).await[0].clone();
     assert!(
         ask["reasons"][0]
@@ -1294,7 +1127,7 @@ async fn writes_outside_the_worktree_ask() {
     let studio = studio(&setup, runtime);
     ok(&studio, create("Escape")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1314,39 +1147,20 @@ async fn a_lint_rule_sends_a_change_back_before_it_is_committed() {
     let studio = studio(&setup, runtime.clone());
     ok(&studio, create("Ads")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     let worktree = setup.repo.join(".studio/worktrees/game-1");
     fs::write(
         worktree.join("ads.rs"),
         "const UNIT: &str = \"ca-app-pub-1234\";\n",
     )
     .unwrap();
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: true,
-            message: None,
-            answers: None,
-        },
-    )
-    .await;
+    answer_ask(&studio, "a1", true, None).await;
     // Every attempt finds the same planted ID, so the ticket fails on checks
     // without ever committing it.
     until(async || {
         let asks = ok(&studio, Request::Asks).await;
         for ask in asks.as_array().unwrap() {
-            let id = ask["id"].as_str().unwrap().to_string();
-            ok(
-                &studio,
-                Request::Decide {
-                    ask: id,
-                    allow: true,
-                    message: None,
-                    answers: None,
-                },
-            )
-            .await;
+            answer_ask(&studio, ask["id"].as_str().unwrap(), true, None).await;
         }
         state_of(&studio, "GAME-1").await["failed"]["class"] == "checks"
     })
@@ -1394,9 +1208,7 @@ async fn a_reviewer_on_another_model_passes_the_work() {
         reply("Does what the ticket asks.\nVERDICT: PASS"),
     ]);
     let studio = studio_with(&setup, author, reviewer.clone());
-    ok(&studio, create("Reviewed")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Reviewed").await;
     let spec = &reviewer.specs()[0];
     assert!(spec.prompt.contains("VERDICT: PASS"));
     assert!(spec.resume.is_none());
@@ -1425,9 +1237,7 @@ async fn a_verdict_given_before_the_budget_ran_out_still_counts() {
         summary: Some("Does what the ticket asks.\nVERDICT: PASS".into()),
     }]);
     let studio = studio_with(&setup, author, reviewer);
-    ok(&studio, create("Reviewed")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Reviewed").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1447,9 +1257,7 @@ async fn a_verdict_said_before_a_cut_short_run_still_counts() {
         },
     ]);
     let studio = studio_with(&setup, author, reviewer);
-    ok(&studio, create("Reviewed")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Reviewed").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1463,9 +1271,7 @@ async fn a_reviewer_on_the_authors_model_falls_back_to_its_escalate_model() {
     let author = FakeRuntime::new(vec![finished(0.01, true, false)]);
     let reviewer = FakeRuntime::new(vec![reply("VERDICT: PASS")]);
     let studio = studio_with(&setup, author, reviewer.clone());
-    ok(&studio, create("Reviewed")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Reviewed").await;
     let specs = reviewer.specs();
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].model.as_deref(), Some("fake-2"));
@@ -1496,9 +1302,7 @@ async fn no_verdict_is_a_fail_and_same_model_reviewers_are_skipped() {
         FakeRuntime::new(vec![finished(0.01, true, false)]),
         reviewer.clone(),
     );
-    ok(&studio, create("Self review")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Self review").await;
     assert!(reviewer.specs().is_empty());
 
     let second = setup("");
@@ -1769,17 +1573,8 @@ async fn landed_tickets_give_quotes_and_etas() {
     let studio = studio(&setup, runtime);
     ok(&studio, create("First")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
-    ok(
-        &studio,
-        Request::Decide {
-            ask: "a1".into(),
-            allow: true,
-            message: None,
-            answers: None,
-        },
-    )
-    .await;
+    asks_open(&studio, 1).await;
+    answer_ask(&studio, "a1", true, None).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
     // A ticket waiting for the owner has no finish time to give.
     assert!(
@@ -1789,13 +1584,7 @@ async fn landed_tickets_give_quotes_and_etas() {
             .unwrap()
             .is_empty()
     );
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
 
     ok(&studio, create("Second")).await;
     let estimates = ok(&studio, Request::Estimates).await;
@@ -1866,13 +1655,7 @@ async fn a_failing_ci_run_files_one_ticket_once() {
     assert!(detail.contains("https://example.com/runs/7") && detail.contains("the failing log"));
 
     // Cancelled, the same run is not filed again; a new failure is.
-    ok(
-        &studio,
-        Request::Cancel {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    cancel(&studio, "GAME-1").await;
     watcher.tick(&studio).await;
     assert_eq!(tickets(&studio).await.len(), 1);
     let watcher = CiWatcher::new(fake_gh(
@@ -1924,13 +1707,7 @@ async fn gc_removes_only_what_no_open_ticket_needs() {
     for id in ["GAME-1", "GAME-2", "GAME-9"] {
         repo.create_worktree(&TicketId::new(id), "master").unwrap();
     }
-    ok(
-        &studio,
-        Request::Cancel {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    cancel(&studio, "GAME-1").await;
 
     let stat = ok(
         &studio,
@@ -2052,9 +1829,7 @@ async fn a_capture_run_records_its_evidence() {
         &project_with_art(&format!("{CAPTURE}\ncapture_paths = [\"assets/**\"]")),
     );
     let studio = studio(&setup, FakeRuntime::new(vec![finished(0.01, true, false)]));
-    ok(&studio, create("Art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Art").await;
 
     let files = ok(
         &studio,
@@ -2088,9 +1863,7 @@ async fn capture_only_runs_for_matching_changes() {
         &project_with_art(&format!("{CAPTURE}\ncapture_paths = [\"src/**\"]")),
     );
     let studio = studio(&setup, FakeRuntime::new(vec![finished(0.01, true, false)]));
-    ok(&studio, create("Art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Art").await;
     let files = ok(
         &studio,
         Request::Evidence {
@@ -2137,9 +1910,7 @@ async fn a_failing_gate_sends_the_work_back_until_it_passes() {
         vec![reply("Crisp now.\nVERDICT: PASS")],
     ]);
     let studio = studio_with(&setup, author.clone(), gate.clone());
-    ok(&studio, create("Hero art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Hero art").await;
 
     let specs = gate.specs();
     assert_eq!(specs.len(), 2);
@@ -2207,7 +1978,7 @@ async fn gate_asks(setup: &Setup) -> (Arc<Studio>, Value) {
     let studio = studio_with(setup, author.clone(), gate.clone());
     ok(&studio, create("Hero art")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     // One send-back, then the ask; no third author run.
     assert_eq!(author.specs().len(), 2);
     assert_eq!(gate.specs().len(), 2);
@@ -2262,9 +2033,7 @@ async fn a_gate_never_grades_its_own_authors_model() {
         FakeRuntime::new(vec![finished(0.01, true, false)]),
         gate.clone(),
     );
-    ok(&studio, create("Hero art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Hero art").await;
     assert!(gate.specs().is_empty());
     assert!(run_log(&setup).contains("gate art skipped"));
 
@@ -2276,9 +2045,7 @@ async fn a_gate_never_grades_its_own_authors_model() {
         FakeRuntime::new(vec![finished(0.01, true, false)]),
         gate.clone(),
     );
-    ok(&studio, create("Hero art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Hero art").await;
     assert!(gate.specs().is_empty());
     assert!(run_log(&setup).contains("the ticket's own hire"));
 }
@@ -2318,9 +2085,7 @@ async fn a_gate_on_the_authors_model_falls_back_to_an_escalate_model() {
         vec![reply("Crisp.\nVERDICT: PASS")],
     ]);
     let studio = studio_with(&setup, author.clone(), gate.clone());
-    ok(&studio, create("Hero art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Hero art").await;
 
     let authors: Vec<_> = author.specs().into_iter().map(|s| s.model).collect();
     assert_eq!(authors, [Some("fake-1".into()), Some("fake-2".into())]);
@@ -2348,9 +2113,7 @@ async fn a_gate_with_only_the_authors_model_is_skipped() {
         FakeRuntime::new(vec![finished(0.01, true, false)]),
         gate.clone(),
     );
-    ok(&studio, create("Hero art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Hero art").await;
     assert!(gate.specs().is_empty());
     assert!(run_log(&setup).contains("art-critic runs on fake-1, which the author used"));
 }
@@ -2383,9 +2146,7 @@ async fn pack_hires_load_and_studio_hires_override_them() {
         .collect();
     assert!(hires.contains(&"helper"));
     // The studio's own `dev` replaced the pack's.
-    ok(&studio, create("Who am I")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Who am I").await;
     let spec = &runtime.specs()[0];
     assert_eq!(spec.model.as_deref(), Some("fake-1"));
     assert_eq!(
@@ -2442,9 +2203,7 @@ async fn the_approver_allows_a_call_without_bothering_the_owner() {
         "It runs the project's example.\nDECISION: ALLOW: fine",
     )]);
     let studio = with_approver(&setup, dev.clone(), approver.clone());
-    ok(&studio, create("Demo")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Demo").await;
     assert!(matches!(
         &dev.received()[0],
         studio_runtime::Control::Allow { .. }
@@ -2481,9 +2240,7 @@ async fn an_approver_denial_does_not_stop_the_ticket() {
         "Use the Edit tool.\nDECISION: DENY: write files with Edit",
     )]);
     let studio = with_approver(&setup, dev.clone(), approver);
-    ok(&studio, create("Demo")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Demo").await;
     assert!(matches!(
         &dev.received()[0],
         studio_runtime::Control::Deny { message, .. }
@@ -2507,7 +2264,7 @@ async fn the_approver_can_send_a_call_to_the_owner_with_its_reason() {
     let studio = with_approver(&setup, bash_then_finish(), approver);
     ok(&studio, create("Demo")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     let ask = ok(&studio, Request::Asks).await[0].clone();
     assert!(
         ask["reasons"]
@@ -2525,7 +2282,7 @@ async fn an_unclear_approver_falls_back_to_the_owner() {
     let studio = with_approver(&setup, bash_then_finish(), approver);
     ok(&studio, create("Demo")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2537,9 +2294,7 @@ async fn an_unclear_approver_is_asked_once_more_for_its_decision() {
         vec![reply("DECISION: ALLOW: runs the example")],
     ]);
     let studio = with_approver(&setup, dev.clone(), approver.clone());
-    ok(&studio, create("Demo")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Demo").await;
     assert!(matches!(
         &dev.received()[0],
         studio_runtime::Control::Allow { .. }
@@ -2572,7 +2327,7 @@ async fn two_unclear_replies_reach_the_owner_with_the_first_quoted() {
     let studio = with_approver(&setup, bash_then_finish(), approver.clone());
     ok(&studio, create("Demo")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     assert_eq!(approver.specs().len(), 2);
     let ask = ok(&studio, Request::Asks).await[0].clone();
     assert!(
@@ -2602,7 +2357,7 @@ async fn owner_rules_skip_the_approver() {
     let studio = with_approver(&setup, dev, approver.clone());
     ok(&studio, create("Tune")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     assert!(approver.specs().is_empty());
 }
 
@@ -2779,9 +2534,7 @@ async fn hires_today_counts_passed_work_reviews_and_the_approvers_calls() {
     let author = FakeRuntime::new(vec![finished(0.01, true, false)]);
     let reviewer = FakeRuntime::new(vec![reply("Does what it says.\nVERDICT: PASS")]);
     let studio = studio_with(&setup, author, reviewer);
-    ok(&studio, create("Reviewed")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Reviewed").await;
     // The approver's calls are notes in the run logs, which don't name it.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2846,7 +2599,7 @@ async fn recent_events_and_check_notes_say_what_happened_when() {
     let studio = studio(&setup, FakeRuntime::new(script()));
     ok(&studio, create("Add a level")).await;
     studio.spawn_scheduler();
-    until(async || ok(&studio, Request::Asks).await.as_array().unwrap().len() == 1).await;
+    asks_open(&studio, 1).await;
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
 
@@ -2899,6 +2652,47 @@ async fn recent_events_and_check_notes_say_what_happened_when() {
     assert!(run_log(&setup).contains("check: sh -c test -f README.md"));
 }
 
+/// Allows or denies a permission ask, with a note when denying.
+async fn answer_ask(studio: &Arc<Studio>, ask: &str, allow: bool, message: Option<&str>) {
+    let request = Request::Decide {
+        ask: ask.into(),
+        allow,
+        message: message.map(Into::into),
+        answers: None,
+    };
+    ok(studio, request).await;
+}
+
+/// Files the first ticket, starts the scheduler and waits for its agent's ask.
+async fn run_until_asked(studio: &Arc<Studio>) {
+    ok(studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    an_ask(studio).await;
+}
+
+/// Files the first ticket as `title`, starts the scheduler and waits until
+/// GAME-1 is ready.
+async fn run_to_ready(studio: &Arc<Studio>, title: &str) {
+    ok(studio, create(title)).await;
+    studio.spawn_scheduler();
+    until(async || state_of(studio, "GAME-1").await == "ready").await;
+}
+
+async fn land(studio: &Arc<Studio>, ticket: &str) {
+    let ticket = ticket.into();
+    ok(studio, Request::Land { ticket }).await;
+}
+
+async fn cancel(studio: &Arc<Studio>, ticket: &str) {
+    let ticket = ticket.into();
+    ok(studio, Request::Cancel { ticket }).await;
+}
+
+/// Waits until exactly `count` asks are open.
+async fn asks_open(studio: &Arc<Studio>, count: usize) {
+    until(async || ok(studio, Request::Asks).await.as_array().unwrap().len() == count).await;
+}
+
 /// Waits until some ask is open.
 async fn an_ask(studio: &Arc<Studio>) {
     until(async || {
@@ -2922,9 +2716,7 @@ async fn a_landing_that_conflicts_goes_back_to_its_agent_to_resolve() {
     let setup = setup("");
     let runtime = FakeRuntime::new(script());
     let studio = studio(&setup, runtime.clone());
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    an_ask(&studio).await;
+    run_until_asked(&studio).await;
     let worktree = setup.repo.join(".studio/worktrees/game-1");
     fs::write(worktree.join("README.md"), "game\nticket\n").unwrap();
     approve_all(&studio).await;
@@ -2964,13 +2756,7 @@ async fn a_landing_that_conflicts_goes_back_to_its_agent_to_resolve() {
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
 
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
     let goal = "studio/goal/first-level";
     assert_eq!(
         git(&setup.repo, &["show", &format!("{goal}:README.md")]),
@@ -2987,9 +2773,7 @@ async fn a_landing_that_conflicts_goes_back_to_its_agent_to_resolve() {
 async fn a_goal_that_conflicts_with_its_base_gets_a_ticket_to_merge_it() {
     let setup = setup("");
     let studio = studio(&setup, FakeRuntime::new(script()));
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    an_ask(&studio).await;
+    run_until_asked(&studio).await;
     fs::write(
         setup.repo.join(".studio/worktrees/game-1/README.md"),
         "game\nticket\n",
@@ -2997,13 +2781,7 @@ async fn a_goal_that_conflicts_with_its_base_gets_a_ticket_to_merge_it() {
     .unwrap();
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-1").await == "ready").await;
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
     commit_on(&setup.repo, "README.md", "game\nowner\n", "Owner edit");
 
     let merge = || {
@@ -3036,13 +2814,7 @@ async fn a_goal_that_conflicts_with_its_base_gets_a_ticket_to_merge_it() {
     fs::write(worktree.join("README.md"), "game\nowner\nticket\n").unwrap();
     approve_all(&studio).await;
     until(async || state_of(&studio, "GAME-2").await == "ready").await;
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-2".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-2").await;
 
     ok(
         &studio,
@@ -3110,9 +2882,7 @@ async fn evidence_and_image_pairs_outlive_the_worktree() {
         &project_with_art(&format!("{CAPTURE}\ncapture_paths = [\"assets/**\"]")),
     );
     let studio = studio(&setup, FakeRuntime::new(vec![finished(0.01, true, false)]));
-    ok(&studio, create("Art")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Art").await;
     // What a gate leaves for its critic: the shipped and the new image.
     let worktree = setup.repo.join(".studio/worktrees/game-1");
     for name in ["before-hero-png.png", "after-hero-png.png"] {
@@ -3144,13 +2914,7 @@ async fn evidence_and_image_pairs_outlive_the_worktree() {
         ["after-hero-png.png", "before-hero-png.png", "title.png"]
     );
 
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
     assert!(!worktree.exists(), "{}", run_log(&setup));
     let after = evidence().await;
     assert_eq!(names(&after), names(&before));
@@ -3174,9 +2938,7 @@ SHARED = "{repo}/cache"
     );
     let runtime = FakeRuntime::new(vec![finished(0.01, true, false)]);
     let studio = studio(&setup, runtime.clone());
-    ok(&studio, create("Build")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Build").await;
 
     let want = format!("{}/cache", setup.repo.display());
     let worktree = setup.repo.join(".studio/worktrees/game-1");
@@ -3347,17 +3109,9 @@ async fn trophies_come_from_what_landed_and_what_was_merged() {
     assert_eq!(none[0]["progress"], json!([0, 10]));
     assert_eq!(none[0]["earned_at"], Value::Null);
 
-    ok(&studio, create("Add a level")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Add a level").await;
     let before = now_ms();
-    ok(
-        &studio,
-        Request::Land {
-            ticket: "GAME-1".into(),
-        },
-    )
-    .await;
+    land(&studio, "GAME-1").await;
 
     let trophies = ok(&studio, Request::Trophies).await;
     let ids: Vec<&str> = trophies
@@ -3436,9 +3190,7 @@ async fn project_checks_list_the_commands_and_the_latest_result() {
 
     // Checks that pass.
     write_project(&setup, "verify = [[\"sh\", \"-c\", \"true\"]]\n");
-    ok(&studio, create("Passes")).await;
-    studio.spawn_scheduler();
-    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    run_to_ready(&studio, "Passes").await;
     let at = now_ms();
     let done = ok(&studio, Request::ProjectChecks).await;
     assert_eq!(done[0]["verify"], json!([["sh", "-c", "true"]]));
@@ -3483,6 +3235,9 @@ fn add_request(path: &Path, name: Option<&str>, branch: Option<&str>) -> Request
         path: path.to_string_lossy().into_owned(),
         name: name.map(str::to_string),
         branch: branch.map(str::to_string),
+        daily_usd: None,
+        pack: None,
+        check: false,
     }
 }
 
@@ -3520,6 +3275,113 @@ async fn adding_a_repository_makes_it_a_project_at_once() {
     let err = fails(&studio, add_request(repo.path(), Some("other"), None)).await;
     assert!(err.contains("already a project"), "{err}");
     assert_eq!(fs::read_to_string(&config).unwrap(), text);
+}
+
+fn checking(request: Request) -> Request {
+    match request {
+        Request::AddProject {
+            path,
+            name,
+            branch,
+            daily_usd,
+            pack,
+            ..
+        } => Request::AddProject {
+            path,
+            name,
+            branch,
+            daily_usd,
+            pack,
+            check: true,
+        },
+        other => other,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checking_a_project_writes_nothing_and_answers_what_adding_then_does() {
+    let setup = setup("");
+    let config = setup.paths.config_dir.join("studio.toml");
+    let before = fs::read_to_string(&config).unwrap();
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let repo = fresh_repo("trunk");
+
+    let request = add_request(repo.path(), None, None);
+    let checked = ok(&studio, checking(request)).await;
+    assert_eq!(fs::read_to_string(&config).unwrap(), before);
+    assert!(!repo.path().join(".studio.toml").exists());
+    assert_eq!(
+        ok(&studio, Request::Status).await["projects"],
+        json!(["game"])
+    );
+    assert_eq!(checked["branch"], "trunk");
+    assert!(checked["checks"].is_string(), "{checked}");
+
+    let added = ok(&studio, add_request(repo.path(), None, None)).await;
+    assert_eq!(checked, added);
+    assert!(repo.path().join(".studio.toml").is_file());
+
+    // Now it is a project, and checking it again is refused.
+    let err = fails(&studio, checking(add_request(repo.path(), None, None))).await;
+    assert!(err.contains("already exists"), "{err}");
+    let named = checking(add_request(repo.path(), Some("other"), None));
+    assert!(fails(&studio, named).await.contains("already a project"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checking_a_project_refuses_what_adding_would() {
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let other = fresh_repo("main");
+    let check = |path: &Path, name: Option<&str>| checking(add_request(path, name, None));
+
+    let err = fails(&studio, check(other.path(), Some("game"))).await;
+    assert!(err.contains("already exists"), "{err}");
+    let err = fails(&studio, check(other.path(), Some("not a name"))).await;
+    assert!(err.contains("letters, digits"), "{err}");
+    let plain = tempfile::tempdir().unwrap();
+    let err = fails(&studio, check(plain.path(), None)).await;
+    assert!(err.contains("not a git repository"), "{err}");
+    let err = fails(&studio, check(&plain.path().join("missing"), None)).await;
+    assert!(err.contains("is not a folder"), "{err}");
+    let mut request = checking(add_request(other.path(), None, None));
+    if let Request::AddProject { pack, .. } = &mut request {
+        *pack = Some("nowhere".into());
+    }
+    let err = fails(&studio, request).await;
+    assert!(err.contains("no pack called nowhere"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_is_added_with_its_own_daily_limit_and_pack_template() {
+    let pack = tempfile::tempdir().unwrap();
+    fs::write(pack.path().join("project.toml"), "verify = [[\"true\"]]\n").unwrap();
+    let setup = setup_with(
+        "",
+        "daily_usd = 5.0",
+        &format!(
+            "[[packs]]\nname = \"p\"\npath = \"{}\"\n",
+            pack.path().display()
+        ),
+    );
+    let studio = studio(&setup, FakeRuntime::new(Vec::new()));
+    let repo = fresh_repo("main");
+    let mut request = add_request(repo.path(), Some("side-quest"), None);
+    if let Request::AddProject {
+        daily_usd, pack, ..
+    } = &mut request
+    {
+        *daily_usd = Some(2.5);
+        *pack = Some("p".into());
+    }
+    ok(&studio, request).await;
+
+    let text = fs::read_to_string(setup.paths.config_dir.join("studio.toml")).unwrap();
+    assert!(text.contains("daily_usd = 2.5"), "{text}");
+    let checks = fs::read_to_string(repo.path().join(".studio.toml")).unwrap();
+    assert_eq!(checks, "verify = [[\"true\"]]\n");
+    let budget = ok(&studio, Request::Budget).await;
+    assert_eq!(budget["limits"]["projects"]["side-quest"], 2.5);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3571,4 +3433,240 @@ async fn a_folder_that_is_not_a_repository_is_refused() {
         ok(&studio, Request::Status).await["projects"],
         json!(["game"])
     );
+}
+
+/// Waits for an ask of `ticket` and allows it.
+async fn allow_ask_of(studio: &Arc<Studio>, ticket: &str) {
+    let ask = loop {
+        let asks = ok(studio, Request::Asks).await;
+        if let Some(ask) = asks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["ticket"] == ticket)
+        {
+            break ask.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    ok(studio, decide(&ask, true)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_judge_shows_while_a_review_runs_and_is_gone_after() {
+    let setup = setup("");
+    add_reviewer(&setup, "fake-2");
+    let author = FakeRuntime::new(script());
+    let (reviewer, release) = FakeRuntime::new(vec![reply("Fine.\nVERDICT: PASS")]).held();
+    let studio = studio_with(&setup, author, reviewer);
+    ok(&studio, create_in("First", "Goal one")).await;
+    studio.spawn_scheduler();
+    allow_ask_of(&studio, "GAME-1").await;
+
+    let judges = async || ok(&studio, Request::Office).await["judges"].clone();
+    until(async || judges().await.get("GAME-1").is_some()).await;
+    let judge = judges().await["GAME-1"].clone();
+    assert_eq!(
+        (&judge["hire"], &judge["model"], &judge["gate"]),
+        (&json!("critic"), &json!("fake-2"), &Value::Null)
+    );
+    assert!(judge["at"].as_u64().unwrap() > 0);
+
+    release.notify_one();
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    assert_eq!(judges().await, json!({}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_office_request_agrees_with_the_separate_ones_for_a_busy_studio() {
+    let setup = setup("");
+    add_reviewer(&setup, "fake-2");
+    let author = FakeRuntime::new(script());
+    let (reviewer, release) = FakeRuntime::new(vec![reply("Fine.\nVERDICT: PASS")]).held();
+    let studio = studio_with(&setup, author, reviewer);
+    ok(&studio, create_in("First", "Goal one")).await;
+    ok(&studio, create_in("Second", "Goal two")).await;
+    studio.spawn_scheduler();
+
+    // Both reach review, then pass it one at a time.
+    allow_ask_of(&studio, "GAME-1").await;
+    allow_ask_of(&studio, "GAME-2").await;
+    until(async || {
+        state_of(&studio, "GAME-1").await == "reviewing"
+            && state_of(&studio, "GAME-2").await == "reviewing"
+    })
+    .await;
+    release.notify_one();
+    until(async || {
+        state_of(&studio, "GAME-1").await == "ready" || state_of(&studio, "GAME-2").await == "ready"
+    })
+    .await;
+    release.notify_one();
+    until(async || {
+        state_of(&studio, "GAME-1").await == "ready" && state_of(&studio, "GAME-2").await == "ready"
+    })
+    .await;
+
+    // GAME-1 lands and its goal is merged; GAME-2 waits with a change.
+    let land = Request::Land {
+        ticket: "GAME-1".into(),
+    };
+    ok(&studio, land).await;
+    let goal = "studio/goal/goal-one";
+    let tree = git(&setup.repo, &["rev-parse", &format!("{goal}^{{tree}}")]);
+    let work = git(
+        &setup.repo,
+        &["commit-tree", &tree, "-p", goal, "-m", "work"],
+    );
+    git(
+        &setup.repo,
+        &["update-ref", &format!("refs/heads/{goal}"), &work],
+    );
+    let merge = Request::Merge {
+        ticket: "GAME-1".into(),
+    };
+    ok(&studio, merge).await;
+    let worktree = setup.repo.join(".studio/worktrees/game-2");
+    fs::write(worktree.join("level.txt"), "one\ntwo\n").unwrap();
+    git(&worktree, &["add", "-A"]);
+    git(&worktree, &["commit", "-q", "-m", "Add a level"]);
+
+    // GAME-3 sits in review with its reviewer at work, GAME-4 waits on an ask.
+    ok(&studio, create_in("Third", "Goal three")).await;
+    ok(&studio, create_in("Fourth", "Goal four")).await;
+    allow_ask_of(&studio, "GAME-3").await;
+    // Its reviewer is named in the run log just after the review begins; the
+    // office reads the notes only once in a while, so wait for it first.
+    let log = setup.paths.data_dir.join("runs/GAME-3.jsonl");
+    until(async || {
+        fs::read_to_string(&log).is_ok_and(|text| text.contains("review by critic (fake-2)"))
+    })
+    .await;
+    until(async || {
+        ok(&studio, Request::Office).await["judges"]
+            .as_object()
+            .unwrap()
+            .contains_key("GAME-3")
+    })
+    .await;
+    until(async || state_of(&studio, "GAME-3").await == "reviewing").await;
+    until(async || {
+        let asks = ok(&studio, Request::Asks).await;
+        asks.as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["ticket"] == "GAME-4")
+    })
+    .await;
+
+    let office = ok(&studio, Request::Office).await;
+    let day_ago = office["now"].as_u64().unwrap() - 86_400_000;
+    assert_eq!(office["status"], ok(&studio, Request::Status).await);
+    assert_eq!(office["tickets"], ok(&studio, Request::Tickets).await);
+    assert_eq!(office["asks"], ok(&studio, Request::Asks).await);
+    let recent = Request::RecentEvents {
+        since_ms: day_ago,
+        limit: None,
+        kinds: studiod::api::OFFICE_KINDS.map(String::from).to_vec(),
+    };
+    assert_eq!(office["events"], ok(&studio, recent).await);
+    assert_eq!(office["spend"], ok(&studio, Request::TicketSpends).await);
+    assert_eq!(office["merged"], ok(&studio, Request::MergedTickets).await);
+    assert_eq!(office["merged"], json!(["GAME-1"]));
+    assert_eq!(office["today"], ok(&studio, Request::HiresToday).await);
+    assert_eq!(office["today"]["dev"]["done"], 2);
+
+    // Only the ready ticket has a size, as git reports it.
+    let stats = Request::Diffstats {
+        tickets: vec!["GAME-2".into()],
+    };
+    let stats = ok(&studio, stats).await;
+    assert!(
+        stats["GAME-2"]
+            .as_str()
+            .unwrap()
+            .contains("1 file changed, 2 insertions(+)")
+    );
+    assert_eq!(office["sizes"], json!({"GAME-2": [2, 0]}));
+
+    // Only the ticket in review has a judge, as the studio holds it.
+    let judges = office["judges"].as_object().unwrap();
+    assert_eq!(judges.len(), 1, "{judges:?}");
+    let judge = &judges["GAME-3"];
+    assert_eq!(
+        (&judge["hire"], &judge["model"], &judge["gate"]),
+        (&json!("critic"), &json!("fake-2"), &Value::Null)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_office_says_what_a_live_run_is_doing() {
+    let setup = setup("");
+    let long = "y".repeat(3000);
+    let mut events = vec![
+        RunEvent::Text {
+            text: "Looking\n  around".into(),
+        },
+        RunEvent::ToolCall {
+            id: "t1".into(),
+            name: "Read".into(),
+            input: json!({ "file_path": "src/a.rs" }),
+        },
+        RunEvent::ToolCall {
+            id: "t2".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "src/b.rs", "content": long }),
+        },
+    ];
+    events.extend(script());
+    let studio = studio(&setup, FakeRuntime::new(events));
+    ok(&studio, create("First")).await;
+    studio.spawn_scheduler();
+    until(async || {
+        ok(&studio, Request::Asks)
+            .await
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+    })
+    .await;
+
+    // The run waits on its ask; its steps are the end of its log.
+    let office = ok(&studio, Request::Office).await;
+    let run = &office["runs"]["GAME-1"];
+    assert_eq!(run["said"], "Looking around", "{run}");
+    let calls = run["calls"].as_array().unwrap();
+    let tools: Vec<&Value> = calls.iter().map(|c| &c["tool"]).collect();
+    assert_eq!(tools, [&json!("Read"), &json!("Write")], "{run}");
+    assert_eq!(calls[0]["input"], json!({ "file_path": "src/a.rs" }));
+    // A long field is cut, not sent whole.
+    let content = calls[1]["input"]["content"].as_str().unwrap();
+    assert_eq!(content.len(), 400);
+    assert_eq!(run["latest"]["tool"], "Write");
+    assert!(run["latest"]["at"].as_u64().unwrap() > 0);
+    assert_eq!(office["unreviewed"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn work_nobody_else_read_is_unreviewed_until_a_reviewer_reads_it() {
+    // No reviewer on another model: the owner reviews.
+    let setup = setup("");
+    let studio = studio(&setup, FakeRuntime::new(script()));
+    ok(&studio, create("First")).await;
+    studio.spawn_scheduler();
+    allow_ask_of(&studio, "GAME-1").await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    let office = ok(&studio, Request::Office).await;
+    assert_eq!(office["unreviewed"], json!(["GAME-1"]), "{office}");
+    assert_eq!(office["runs"], json!({}));
+
+    // A reviewer on another model passes it.
+    let reviewed = self::setup("");
+    add_reviewer(&reviewed, "fake-2");
+    let reviewer = FakeRuntime::new(vec![reply("Fine.\nVERDICT: PASS")]);
+    let studio = studio_with(&reviewed, FakeRuntime::new(script()), reviewer);
+    ok(&studio, create("First")).await;
+    studio.spawn_scheduler();
+    allow_ask_of(&studio, "GAME-1").await;
+    until(async || state_of(&studio, "GAME-1").await == "ready").await;
+    assert_eq!(ok(&studio, Request::Office).await["unreviewed"], json!([]));
 }

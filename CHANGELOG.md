@@ -59,13 +59,15 @@ budget limits low.
   lounge. Every object on the floor is a control that opens its panel beside
   it, where you can act on it; the panel's tabs are Needs you, Projects, Team,
   Money, Rules and Log, and `/?tab=` and `/?sel=` links open any of them.
-  Board, Asks, Goals, Budget, Hires and Rules hold the lists and the detail,
-  and each ticket has a live activity feed. Dark or light, and usable on a
-  phone. `--host` serves it to your network; read docs/security.md first.
+  The office has it all, with History at the end of the Projects tab for merged
+  goals and tickets that finished more than a day ago. The Hires and Rules
+  pages edit your hires and rules, and each ticket has its own page with a live
+  activity feed. Dark or light, and usable on a phone. `--host` serves it to your network; read docs/security.md first.
 - From the Office you can close or reopen the studio (nothing new starts while
   it is closed), add or remove desks (how many agents work at once, up to
   nine), change the daily and per-ticket limits, focus the floor on one
-  project, and see each project's checks.
+  project, and see each project's checks. Adding a project shows what it
+  would add before you confirm.
 - Trophies come from the studio's history, and each hire's level grows with
   the work it has landed.
 - The office turns to show each corner (the arrows, or Q and E) and can be
@@ -76,8 +78,10 @@ budget limits low.
 ### CLI and the rest
 
 - `studio up` and `down`, `init`, `project add`, `ticket`, `goal`, `asks`,
-  `approve`, `deny`, `land`, `merge`, `budget`, `doctor`, `export`, `gc` and
-  more. `--json` prints the raw reply.
+  `approve`, `deny`, `land`, `merge`, `budget`, `close` and `open`, `doctor`,
+  `export`, `gc` and more. `--json` prints the raw reply. `studio close`
+  pauses the studio the way the office's coffee machine does; `max_runs` in
+  `studio.toml` is from 1 to 9.
 - Packs bundle hires, rules, skills and a project template to reuse across
   projects.
 - A project with `watch_ci` gets a fix ticket when CI fails on its integration

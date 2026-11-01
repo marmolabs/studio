@@ -1,11 +1,10 @@
-//! Applies the owner's rules to what an agent wants to do. Pure: callers pass
-//! the rules, who is acting, and the action.
+//! Applies the owner's rules to what an agent wants to do.
 //!
-//! - `protect`: paths (globs, relative to the repo) an agent may not touch
-//!   without the rule's level allowing it.
+//! - `protect`: path globs (relative to the repo) an agent may not touch
+//!   unless the rule's level allows it.
 //! - `gate`: agent tools or Bash commands (`action = "Bash"`, `"WebFetch"`,
-//!   `"bash:git push"` for a command prefix). `allow` approves them outright.
-//! - `lint`: a regex that must not appear in what an agent writes, runs, or
+//!   `"bash:git push"` for a command prefix); level `allow` approves outright.
+//! - `lint`: a regex that must not appear in what an agent writes, runs or
 //!   commits.
 //!
 //! With no matching rule, file edits inside the worktree are allowed and

@@ -7,7 +7,6 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use studio_config::draft::Draft;
-use studio_core::machine::MAX_ATTEMPTS;
 use studio_core::ticket::{FailureClass, HeldReason, Ticket, TicketState};
 use topcoat::{
     context::Cx,
@@ -41,8 +40,6 @@ pub const CODE: &str = "mx-0.5 whitespace-nowrap rounded-[5px] border border-lin
 /// Lines added and removed.
 pub const ADD: &str = "text-ok-fg";
 pub const DEL: &str = "text-bad-fg";
-/// Why something waits for the owner, after a row's detail.
-pub const REASON: &str = "ml-1.5 text-attn-fg";
 /// A button's words, hidden on a phone where the icon is enough.
 pub const LABEL: &str = "max-[760px]:hidden";
 
@@ -56,9 +53,6 @@ pub const TABLE_BOX: &str = "overflow-x-auto rounded-[10px] border border-line";
 pub const TABLE: &str = "w-full border-collapse text-left text-[13px]";
 pub const TH: &str = "whitespace-nowrap border-b border-line bg-bg-2 px-4 py-2.5 text-[12px] font-medium leading-4 text-fg-3";
 pub const TD: &str = "whitespace-nowrap border-t border-line px-4 py-[11px] align-middle";
-/// A title cell, which may wrap.
-pub const TD_TITLE: &str =
-    "min-w-[220px] border-t border-line px-4 py-[11px] align-middle font-medium";
 pub const TR: &str = "hover:bg-hover";
 
 // Buttons: 32px (28px small), 7px corners; at most one primary per page.
@@ -131,17 +125,6 @@ pub const CMD: &str = "overflow-y-auto whitespace-pre-wrap rounded-lg border bor
 /// The rule or reason that sent it to the owner.
 pub const WHY: &str = "text-[13px] leading-5 text-fg-3";
 pub const ASK_ACTIONS: &str = "flex flex-wrap items-center gap-2";
-
-// Inside a `kpi`.
-pub const KPI_SUB: &str = "truncate text-[12.5px] text-fg-3";
-/// A `KPI_SUB` of parts that may wrap, a part at a time, each after a dot.
-/// A line's first dot sits in the clipped margin, so no line starts or ends
-/// with one.
-pub const KPI_PARTS: &str = "-ml-3 flex flex-wrap text-[12.5px] text-fg-3";
-pub const KPI_PART: &str =
-    "whitespace-nowrap before:inline-block before:w-3 before:text-center before:content-['·']";
-// On a `row`'s right: a figure such as an age or a cost.
-pub const FIGURE: &str = "min-w-11 text-right max-[760px]:min-w-0 max-[760px]:text-left";
 
 /// Renders a view to HTML, for patches sent over a stream or a POST reply.
 pub async fn html(cx: &Cx, view: impl View) -> topcoat::Result<String> {
@@ -229,6 +212,21 @@ pub fn elapsed(ms: u64) -> String {
     }
 }
 
+/// States of a ticket with an agent at work. One paused on an ask holds a
+/// desk but isn't at work.
+pub const AT_WORK: [&str; 4] = ["claimed", "working", "checking", "reviewing"];
+
+/// Whether a ticket in state `kind` has an agent at work.
+pub fn at_work(kind: &str) -> bool {
+    AT_WORK.contains(&kind)
+}
+
+/// Whether a run is under way on a ticket in state `kind`, even if paused on
+/// an ask.
+pub fn run_under_way(kind: &str) -> bool {
+    at_work(kind) || kind == "asking"
+}
+
 /// Whether a held ticket waits for money or the provider rather than the owner.
 pub fn waits_on_its_own(state: &TicketState) -> bool {
     matches!(
@@ -264,8 +262,6 @@ pub fn shown(state: &TicketState) -> &'static str {
 pub enum Wait {
     /// The owner closed the office, so nothing new starts.
     Closed,
-    /// `max_runs` is 0, so nothing new starts.
-    Paused,
     /// Another ticket on its goal, which runs one at a time.
     After(String),
     /// Money for a run.
@@ -276,7 +272,6 @@ pub enum Wait {
 
 impl Wait {
     pub fn of(ticket: &Ticket, tickets: &[Ticket], status: &crate::client::Status) -> Wait {
-        let (out_of_budget, max_runs) = (status.out_of_budget, status.max_runs);
         let goal = |t: &Ticket| {
             if t.goal.trim().is_empty() {
                 t.id.to_string()
@@ -299,9 +294,8 @@ impl Wait {
         });
         match blocker {
             _ if status.closed => Wait::Closed,
-            _ if max_runs == 0 => Wait::Paused,
             Some(t) => Wait::After(t.id.to_string()),
-            None if out_of_budget => Wait::Budget,
+            None if status.out_of_budget => Wait::Budget,
             None => Wait::Slot,
         }
     }
@@ -310,7 +304,6 @@ impl Wait {
     pub fn short(&self) -> String {
         match self {
             Wait::Closed => "Office closed".into(),
-            Wait::Paused => "Paused".into(),
             Wait::After(id) => format!("After {id}"),
             Wait::Budget => "Waiting for budget".into(),
             Wait::Slot => "Waiting for a free desk".into(),
@@ -321,7 +314,6 @@ impl Wait {
     pub fn sentence(&self) -> String {
         match self {
             Wait::Closed => "The office is closed: it starts when you reopen it.".into(),
-            Wait::Paused => "Paused: max_runs is 0, so nothing new starts.".into(),
             Wait::After(id) => {
                 format!("Starts after {id} is done: tickets on a goal run one at a time.")
             }
@@ -337,7 +329,6 @@ impl Wait {
 pub fn goal_state(plan: &Ticket, filed: &[Ticket], merged: bool) -> &'static str {
     let any = |kinds: &[&str]| filed.iter().any(|t| kinds.contains(&t.state.kind()));
     let trouble = |t: &Ticket| t.state.kind() == "failed" || needs_owner(&t.state);
-    let running = ["claimed", "working", "checking", "reviewing"];
     let landed = filed.iter().all(|t| t.state.kind() == "landed");
     match plan.state.kind() {
         "failed" => "failed",
@@ -348,7 +339,7 @@ pub fn goal_state(plan: &Ticket, filed: &[Ticket], merged: bool) -> &'static str
         "landed" if landed => "done",
         "queued" if filed.is_empty() => "queued",
         _ if filed.is_empty() => "planning",
-        plan if running.contains(&plan) || any(&running) => "in progress",
+        plan if at_work(plan) || any(&AT_WORK) => "in progress",
         _ if any(&["queued"]) => "queued",
         _ => "in progress",
     }
@@ -681,46 +672,6 @@ pub async fn meter(
     })
 }
 
-/// The four steps of a run, with the current one half full, then the step's
-/// name and which try this is: "Checks · try 1 of 3". `step` is 0 to 3, as
-/// `run_step` gives; `attempt` counts from 1.
-#[component]
-pub async fn steps(step: usize, attempt: u32) -> topcoat::Result<impl View> {
-    let label = STEPS.get(step).copied().unwrap_or_default();
-    Ok(view! {
-        <div class="flex w-[132px] flex-col gap-[5px]">
-            step_bar(step: step)
-            <span class="whitespace-nowrap text-[12px] text-fg-3">
-                <b class="font-medium text-run-fg">(label)</b> " · try " (attempt) " of " (MAX_ATTEMPTS)
-            </span>
-        </div>
-    })
-}
-
-/// The bar of `steps` alone; it fills its container.
-#[component]
-pub async fn step_bar(step: usize) -> topcoat::Result<impl View> {
-    let bars = (0..STEPS.len()).map(move |i| match i.cmp(&step) {
-        std::cmp::Ordering::Less => "done",
-        std::cmp::Ordering::Equal => "now",
-        std::cmp::Ordering::Greater => "",
-    });
-    Ok(view! {
-        <div class="steps-bar grid grid-cols-4 gap-[3px]">
-            for class in bars { <i class=(class)></i> }
-        </div>
-    })
-}
-
-/// What a plan shows where a work ticket shows its `steps`: a plan runs
-/// once, with no checks or review.
-#[component]
-pub async fn planning() -> topcoat::Result<impl View> {
-    Ok(view! {
-        <span class="w-[132px] whitespace-nowrap text-[12px] font-medium text-run-fg">"Planning"</span>
-    })
-}
-
 /// The steps of a run, in the order studiod runs them: the reviewer reads
 /// the change before the critics of any gates that apply.
 pub const STEPS: [&str; 4] = ["Working", "Checks", "Review", "Critics"];
@@ -734,181 +685,6 @@ pub fn run_step(state: &str) -> Option<usize> {
         "reviewing" => Some(2),
         _ => None,
     }
-}
-
-/// The step of a critic at work, after the reviewer.
-pub const CRITICS: usize = 3;
-
-/// A row of figures at the top of a page; put `kpi`s in it.
-#[component]
-pub async fn kpis(child: Child<'_>) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div class="grid grid-cols-4 rounded-[10px] border border-line bg-bg-2 max-[760px]:grid-cols-2">
-            (child)
-        </div>
-    })
-}
-
-const KPI: &str = "relative flex min-w-0 flex-col gap-1 border-line px-[18px] pb-4 pt-3.5 [&:not(:first-child)]:border-l max-[760px]:[&:nth-child(3)]:border-l-0 max-[760px]:[&:nth-child(n+3)]:border-t";
-
-/// One figure: a label with the `dot` of an optional `state`, the value with an
-/// optional `unit` ("of $100"), then `child` (a `KPI_SUB` line or a
-/// `sparkline`). With `href` the whole figure is a link.
-#[component]
-pub async fn kpi(
-    label: &'static str,
-    #[default] state: &'static str,
-    #[into] value: String,
-    #[into]
-    #[default]
-    unit: String,
-    #[into]
-    #[default]
-    href: String,
-    child: Child<'_>,
-) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div class=(KPI)>
-            <span class="flex items-center gap-2 text-[12.5px] font-medium leading-4 text-fg-2">
-                if !state.is_empty() { dot(state: state) }
-                if href.is_empty() {
-                    (label)
-                } else {
-                    <a href=(href) class="after:absolute after:inset-0 after:content-['']">(label)</a>
-                }
-            </span>
-            <span class="text-2xl font-semibold leading-8 tracking-[-0.02em] tabular-nums">
-                (value)
-                if !unit.is_empty() {
-                    <small class="ml-1 text-[13px] font-medium tracking-normal text-fg-3">(unit)</small>
-                }
-            </span>
-            (child)
-        </div>
-    })
-}
-
-/// The points of a sparkline in a 120 by 20 box, oldest first, scaled to
-/// `max` or the largest value if that is more.
-fn spark_points(values: &[f64], max: f64) -> Vec<(f64, f64)> {
-    let max = values.iter().copied().fold(max, f64::max);
-    let step = if values.len() > 1 {
-        120.0 / (values.len() - 1) as f64
-    } else {
-        0.0
-    };
-    values
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let x = if values.len() > 1 {
-                i as f64 * step
-            } else {
-                120.0
-            };
-            let share = if max > 0.0 { v.max(0.0) / max } else { 0.0 };
-            (x, 17.0 - 14.0 * share)
-        })
-        .collect()
-}
-
-/// A line of `values`, oldest first, with a dot on the latest. `max` sets
-/// the scale, such as a daily limit, so small values stay low.
-#[component]
-pub async fn sparkline(
-    values: Vec<f64>,
-    #[into] label: String,
-    #[default] max: f64,
-) -> topcoat::Result<impl View> {
-    let points = spark_points(&values, max);
-    let line = points
-        .iter()
-        .map(|(x, y)| format!("{x:.1},{y:.1}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let last = points.last().copied();
-    Ok(view! {
-        <svg class="mt-0.5 block h-5 w-full" viewBox="0 0 120 20" preserveAspectRatio="none" role="img" aria-label=(label.clone())>
-            <title>(label)</title>
-            <polyline points=(line) fill="none" stroke="var(--fg-3)" stroke-width="1.5" vector-effect="non-scaling-stroke"></polyline>
-            if let Some((x, y)) = last {
-                <circle cx=(format!("{x:.1}")) cy=(format!("{y:.1}")) r="2.2" fill="var(--fg)"></circle>
-            }
-        </svg>
-    })
-}
-
-/// A group's header inside a `LIST`: its glyph, title and count, and an
-/// optional link on the right.
-#[component]
-pub async fn group_head(
-    state: &'static str,
-    title: &'static str,
-    count: usize,
-    #[into]
-    #[default]
-    href: String,
-    #[into]
-    #[default]
-    link: String,
-    /// Lets a link elsewhere lead to this group.
-    #[into]
-    #[default]
-    id: String,
-) -> topcoat::Result<impl View> {
-    let id = (!id.is_empty()).then_some(id);
-    Ok(view! {
-        <div id=(id) class="scroll-mt-16 flex h-[38px] items-center gap-2.5 border-t border-line bg-bg-2 px-4 text-[13px] font-medium leading-none first:border-t-0">
-            state_icon(state: state)
-            (title)
-            <span class="font-normal text-fg-3 tabular-nums">(count)</span>
-            if !href.is_empty() {
-                <a href=(href) class="ml-auto text-[12.5px] font-normal text-fg-3 hover:text-fg">(link)</a>
-            }
-        </div>
-    })
-}
-
-/// A ticket's row inside a `LIST`: glyph, id, the title as a link with a
-/// `detail` line under it, and `child` on the right (avatars, `FIGURE`s,
-/// buttons). `compact` rows are one line and 44px tall.
-#[component]
-pub async fn row(
-    state: &'static str,
-    #[into] id: String,
-    #[into] href: String,
-    #[into] title: String,
-    #[into]
-    #[default]
-    detail: Child<'_>,
-    #[default] compact: bool,
-    child: Child<'_>,
-) -> topcoat::Result<impl View> {
-    let height = if compact { "min-h-11" } else { "min-h-14" };
-    Ok(view! {
-        <div class=(format!("grid grid-cols-[16px_64px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-line px-4 py-[9px] transition-colors first:border-t-0 hover:bg-hover max-[760px]:grid-cols-[16px_minmax(0,1fr)] max-[760px]:gap-y-2 {height}"))>
-            state_icon(state: state)
-            <span class="font-mono text-[12.5px] font-medium leading-none text-fg-3 max-[760px]:hidden">(id)</span>
-            <div class="flex min-w-0 flex-col gap-[3px]">
-                <a href=(href) class="truncate font-medium text-fg decoration-line-3 underline-offset-3 hover:underline">(title)</a>
-                <span class="block min-w-0 truncate text-[12.5px] leading-5 text-fg-3 empty:hidden max-[760px]:whitespace-normal">(detail)</span>
-            </div>
-            <div class="flex items-center gap-4 text-[12.5px] text-fg-2 tabular-nums max-[760px]:col-start-2 max-[760px]:flex-wrap max-[760px]:justify-start max-[760px]:gap-2.5">
-                (child)
-            </div>
-        </div>
-    })
-}
-
-/// A ticket's glyph and id, for a table's first cell.
-#[component]
-pub async fn id_cell(state: &'static str, #[into] id: String) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <span class="flex items-center gap-2">
-            state_icon(state: state)
-            <span class="font-mono text-[12.5px] text-fg-3">(id)</span>
-        </span>
-    })
 }
 
 /// A section heading: the title, a quiet count, and an optional link on the
@@ -1051,28 +827,25 @@ mod tests {
         let d = ticket("G-4", json!("queued"), "Saves");
         let e = ticket("G-5", json!("queued"), "Saves");
         let all = vec![a, b.clone(), c.clone(), d, e.clone()];
-        let status = |broke: bool, slots: u64, closed: bool| crate::client::Status {
+        let status = |broke: bool, closed: bool| crate::client::Status {
             out_of_budget: broke,
-            max_runs: slots,
+            max_runs: 2,
             closed,
             ..Default::default()
         };
-        let wait = |t: &Ticket, broke: bool, slots: u64| {
-            Wait::of(t, &all, &status(broke, slots, false)).short()
-        };
-        assert_eq!(wait(&b, false, 2), "After G-1");
-        assert_eq!(wait(&c, false, 2), "Waiting for a free desk");
-        assert_eq!(wait(&c, true, 2), "Waiting for budget");
-        assert_eq!(wait(&e, false, 2), "After G-4");
-        assert_eq!(wait(&c, false, 0), "Paused");
-        assert_eq!(
-            Wait::of(&c, &all, &status(false, 0, false)).sentence(),
-            "Paused: max_runs is 0, so nothing new starts."
-        );
+        let wait = |t: &Ticket, broke: bool| Wait::of(t, &all, &status(broke, false)).short();
+        assert_eq!(wait(&b, false), "After G-1");
+        assert_eq!(wait(&c, false), "Waiting for a free desk");
+        assert_eq!(wait(&c, true), "Waiting for budget");
+        assert_eq!(wait(&e, false), "After G-4");
         // A closed office starts nothing, whatever else the ticket waits for.
         assert_eq!(
-            Wait::of(&b, &all, &status(false, 2, true)).short(),
+            Wait::of(&b, &all, &status(false, true)).short(),
             "Office closed"
+        );
+        assert_eq!(
+            Wait::of(&c, &all, &status(false, true)).sentence(),
+            "The office is closed: it starts when you reopen it."
         );
     }
 
@@ -1189,32 +962,18 @@ mod tests {
         assert_eq!(run_step("queued"), None);
     }
 
-    #[test]
-    fn sparklines_fit_their_box() {
-        let points = spark_points(&[0.0, 2.0, 4.0], 0.0);
-        assert_eq!(points, [(0.0, 17.0), (60.0, 10.0), (120.0, 3.0)]);
-        assert_eq!(spark_points(&[0.0], 0.0), [(120.0, 17.0)]);
-        assert!(spark_points(&[], 0.0).is_empty());
-        // Against a limit, small values stay low.
-        let points = spark_points(&[0.0, 1.0], 4.0);
-        assert_eq!(points, [(0.0, 17.0), (120.0, 13.5)]);
-    }
-
     #[tokio::test]
-    async fn states_get_their_glyph_and_colour() {
+    async fn states_get_their_glyph_and_word() {
         let cx = Cx::default();
         let failed = render(view! { cx => state_pill(state: "failed") }).await;
         assert!(
-            failed.contains("bg-bad-bg")
-                && failed.contains("#s-failed")
-                && failed.contains("Failed"),
+            failed.contains("#s-failed") && failed.contains("Failed"),
             "{failed}"
         );
+        let queued = render(view! { cx => state_pill(state: "queued") }).await;
+        assert_ne!(failed, queued);
         let working = render(view! { cx => state_icon(state: "checking") }).await;
-        assert!(
-            working.contains(r#"class="prog""#) && working.contains("--p:50"),
-            "{working}"
-        );
+        assert!(working.contains("--p:50"), "{working}");
     }
 
     #[tokio::test]
@@ -1222,80 +981,22 @@ mod tests {
         let cx = Cx::default();
         let html = render(view! { cx => icon(name: "plus", small: true) }).await;
         assert!(html.contains(r##"<use href="#i-plus">"##), "{html}");
-        assert!(html.contains(r#"class="i sm""#), "{html}");
+        // The small one is not the same drawing at the same size.
+        let large = render(view! { cx => icon(name: "plus", small: false) }).await;
+        assert!(large.contains(r##"<use href="#i-plus">"##), "{large}");
+        assert_ne!(html, large);
     }
 
     #[tokio::test]
     async fn meters_fill_to_their_share() {
         let cx = Cx::default();
         let html = render(view! { cx => meter(value: 1.0, max: 4.0, tone: "ok") }).await;
-        assert!(
-            html.contains("width:25.0%") && html.contains("bg-ok"),
-            "{html}"
-        );
+        assert!(html.contains("width:25.0%"), "{html}");
+        let other = render(view! { cx => meter(value: 1.0, max: 4.0, tone: "bad") }).await;
+        assert!(other.contains("width:25.0%"), "{other}");
+        assert_ne!(html, other);
         let over = render(view! { cx => meter(value: 9.0, max: 5.0) }).await;
         assert!(over.contains(r#"aria-valuenow="100""#), "{over}");
-    }
-
-    #[tokio::test]
-    async fn steps_mark_done_and_current() {
-        let cx = Cx::default();
-        let html = render(view! { cx => steps(step: 1, attempt: 2) }).await;
-        assert!(
-            html.contains(r#"<i class="done"></i><i class="now"></i>"#),
-            "{html}"
-        );
-        assert!(
-            html.contains("Checks") && html.contains(" · try 2 of 3"),
-            "{html}"
-        );
-    }
-
-    #[tokio::test]
-    async fn rows_link_their_title_and_hold_their_parts() {
-        let cx = Cx::default();
-        let html = render(view! { cx =>
-            row(state: "asking", id: "GAME-3", href: "/tickets/GAME-3", title: "Waves <now>",
-                detail: view! { "Wants to run " <span class=(CODE)>"cargo run"</span> },
-                <button>"Allow"</button>)
-        })
-        .await;
-        assert!(html.contains(r#"href="/tickets/GAME-3""#), "{html}");
-        assert!(html.contains("Waves &lt;now&gt;"), "{html}");
-        assert!(
-            html.contains(">cargo run</span>") && html.contains(">Allow</button>"),
-            "{html}"
-        );
-        assert!(
-            html.contains("#s-attn") && html.contains("min-h-14"),
-            "{html}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_kpi_is_a_link_only_with_an_href() {
-        let cx = Cx::default();
-        let plain = render(view! { cx =>
-            kpi(label: "Running", state: "working", value: "3", <span class=(KPI_SUB)>"2 working"</span>)
-        })
-        .await;
-        assert!(
-            !plain.contains("<a ") && plain.contains("2 working"),
-            "{plain}"
-        );
-        let link = render(view! { cx =>
-            kpi(label: "Spend", value: "$1.00", unit: "of $10", href: "/budget",
-                sparkline(values: vec![1.0, 2.0], label: "Spend by day"))
-        })
-        .await;
-        assert!(
-            link.contains(r#"href="/budget""#) && link.contains("of $10"),
-            "{link}"
-        );
-        assert!(
-            link.contains("<polyline") && link.contains("<circle"),
-            "{link}"
-        );
     }
 
     #[tokio::test]
@@ -1303,9 +1004,14 @@ mod tests {
         let cx = Cx::default();
         let html = render(view! { cx => who(hire: "engineer") }).await;
         assert!(html.contains(">EN<") && html.contains("engineer"), "{html}");
-        assert!(html.contains(&format!("av {}", hue("engineer"))), "{html}");
+        assert!(html.contains(hue("engineer")), "{html}");
+        // Staff have no hue of their own.
         let staff = render(view! { cx => who(hire: "approver", staff: true) }).await;
-        assert!(staff.contains(r#"class="av ""#), "{staff}");
+        assert!(
+            staff.contains(">AP<") && staff.contains("approver"),
+            "{staff}"
+        );
+        assert!(!staff.contains(hue("approver")), "{staff}");
     }
 
     #[tokio::test]
@@ -1329,11 +1035,11 @@ mod tests {
     async fn section_head_shows_count_and_link_only_when_given() {
         let cx = Cx::default();
         let full = render(view! { cx =>
-            section_head(title: "Running", count: Some(3), href: "/goals".to_string(), label: "All".to_string())
+            section_head(title: "Running", count: Some(3), href: "/hires".to_string(), label: "All".to_string())
         })
         .await;
         assert!(full.contains("Running") && full.contains(">3<"), "{full}");
-        assert!(full.contains(r#"href="/goals""#), "{full}");
+        assert!(full.contains(r#"href="/hires""#), "{full}");
         let bare = render(view! { cx =>
             section_head(title: "Running", count: None, href: String::new(), label: String::new())
         })

@@ -86,14 +86,6 @@ async fn facts(config: &AppConfig, id: &str) -> topcoat::Result<Facts> {
     })
 }
 
-/// Whether a run is under way on the ticket, even if paused on an ask.
-fn is_live(kind: &str) -> bool {
-    matches!(
-        kind,
-        "claimed" | "working" | "asking" | "checking" | "reviewing"
-    )
-}
-
 /// When the latest run began: the last time the ticket was claimed.
 fn run_started(events: &[client::Stamped]) -> Option<u64> {
     events.iter().rev().find(|e| claimed(e)).map(|e| e.at_ms)
@@ -193,7 +185,7 @@ async fn fragments(
         .await?,
         ui::html(
             cx,
-            view! { cx => activity::activity(items: feed.items, state: kind, live: is_live(kind)) },
+            view! { cx => activity::activity(items: feed.items, state: kind, live: ui::run_under_way(kind)) },
         )
         .await?,
         ui::html(cx, view! { cx => rail(ticket: facts.ticket.clone(), side: side) }).await?,
@@ -328,7 +320,7 @@ async fn ticket_stream(
 /// to the minute, for times such as "3m ago").
 fn built_from(facts: &Facts, files: &Changed, log_len: usize) -> String {
     let now = ui::now_ms();
-    let clock = if is_live(facts.ticket.state.kind()) {
+    let clock = if ui::run_under_way(facts.ticket.state.kind()) {
         now / 1000
     } else {
         now / 60_000
@@ -605,7 +597,7 @@ fn tries(ticket: &Ticket, events: &[client::Stamped]) -> Option<String> {
 /// when it passed review, not when the owner landed it.
 fn time_taken(ticket: &Ticket, events: &[client::Stamped], now: u64) -> Option<String> {
     let kind = ticket.state.kind();
-    if is_live(kind) {
+    if ui::run_under_way(kind) {
         return run_started(events).map(|start| ui::elapsed(now.saturating_sub(start)));
     }
     if !matches!(kind, "ready" | "landed" | "failed" | "cancelled") {
@@ -739,12 +731,22 @@ fn gate_stage(gate: &str) -> String {
     format!("{first}{} gate", chars.as_str())
 }
 
+/// Where a work ticket's goal is in the office: its plan ticket's panel.
+fn goal_link(ticket: &Ticket) -> Option<String> {
+    let plan = ticket.parent.as_ref()?;
+    Some(format!(
+        "/?sel={}",
+        super::office::key("goals", &plan.to_string())
+    ))
+}
+
 /// The title, who filed the ticket and from which goal, and what it asks for.
 #[component]
 async fn head(ticket: Ticket, filer: Filer) -> topcoat::Result<impl View> {
     let goal = activity::goal_name(&ticket)
         .filter(|_| ticket.kind == TicketKind::Work)
         .map(|_| ticket.goal.clone());
+    let link = goal_link(&ticket);
     let (hire, words) = match filer {
         Filer::Hire(hire) => (Some(hire), "filed this"),
         Filer::Studio(source) if source.starts_with("ci:") => {
@@ -772,7 +774,11 @@ async fn head(ticket: Ticket, filer: Filer) -> topcoat::Result<impl View> {
                     if let Some(goal) = goal {
                         <span>(words) " from"</span>
                         <span class="flex min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap">
-                            <a href="/goals" class="min-w-0 hover:[&>span]:border-line-3">ui::goal_chip(goal: goal)</a>
+                            if let Some(href) = link {
+                                <a href=(href) class="min-w-0 hover:[&>span]:border-line-3">ui::goal_chip(goal: goal)</a>
+                            } else {
+                                <span class="min-w-0">ui::goal_chip(goal: goal)</span>
+                            }
                             <span title=(exact(created))>"· " (relative(ui::now_ms(), created))</span>
                         </span>
                     } else {
@@ -816,7 +822,7 @@ async fn ticket_asks(
                 let said = quote
                     .clone()
                     .filter(|_| Some(ask.at_ms) == newest && matches!(ask.kind.as_str(), "permission" | "question"));
-                ask_card(ask: ask, title: String::new(), project: project.clone(), quote: said)
+                ask_card(ask: ask, project: project.clone(), quote: said)
             }
         </div>
     })
@@ -884,7 +890,7 @@ async fn outcome(
                         ui::state_icon(state: "landed")
                         if plan {
                             <span class="font-medium">"Done"</span>
-                            <span class=(ui::SECONDARY)>"The plan is filed; its tickets are on the board."</span>
+                            <span class=(ui::SECONDARY)>"The plan is filed; its tickets are in the office."</span>
                         } else {
                             <span class="font-medium">"Landed on "</span>
                             <span class=(BRANCH) title=(goal_branch.clone())>(goal_branch)</span>
@@ -981,6 +987,7 @@ async fn rail(ticket: Ticket, side: Side) -> topcoat::Result<impl View> {
         mut files,
     } = side;
     let goal = activity::goal_name(&ticket).map(|_| ticket.goal.clone());
+    let link = goal_link(&ticket);
     let more = files.len().saturating_sub(FILES_SHOWN);
     files.truncate(FILES_SHOWN);
     Ok(view! {
@@ -993,7 +1000,13 @@ async fn rail(ticket: Ticket, side: Side) -> topcoat::Result<impl View> {
                         if let Some(model) = model { ui::model_tag(model: model) }
                     )
                     if let Some(goal) = goal {
-                        ui::prop(label: "Goal", <a href="/goals" class="min-w-0">ui::goal_chip(goal: goal)</a>)
+                        ui::prop(label: "Goal",
+                            if let Some(href) = link {
+                                <a href=(href) class="min-w-0">ui::goal_chip(goal: goal)</a>
+                            } else {
+                                <span class="min-w-0">ui::goal_chip(goal: goal)</span>
+                            }
+                        )
                     }
                     ui::prop(label: "Project", <span class="truncate">(ticket.project.to_string())</span>)
                     if let Some(branch) = branch {
@@ -1106,32 +1119,7 @@ async fn actions(ticket: Ticket) -> topcoat::Result<impl View> {
     })
 }
 
-/// The last stretch of a run log, for what the agent is doing now.
-pub async fn log_tail(data_dir: &Path, id: &str) -> String {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-    const TAIL: u64 = 32 * 1024;
-    let Ok(mut file) = tokio::fs::File::open(log_path(data_dir, id)).await else {
-        return String::new();
-    };
-    let len = file.metadata().await.map_or(0, |m| m.len());
-    let start = len.saturating_sub(TAIL);
-    if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
-        return String::new();
-    }
-    let mut bytes = Vec::new();
-    if file.read_to_end(&mut bytes).await.is_err() {
-        return String::new();
-    }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    // A read that starts mid-file begins in the middle of a line.
-    match (start, text.split_once('\n')) {
-        (0, _) => text,
-        (_, Some((_, rest))) => rest.to_string(),
-        (_, None) => String::new(),
-    }
-}
-
-pub fn log_path(data_dir: &Path, id: &str) -> PathBuf {
+fn log_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("runs").join(format!("{id}.jsonl"))
 }
 
@@ -1307,6 +1295,7 @@ mod tests {
             serde_json::json!({
                 "detail": "Waves come from `rules.rs`",
                 "feedback": "**Quit** needs a confirm\nkeep `Esc`",
+                "parent": "GAME-1",
             }),
         );
         let cx = Cx::default();
@@ -1321,7 +1310,19 @@ mod tests {
         assert!(html.contains("<br />"), "{html}");
         assert!(html.contains(">producer"), "{html}");
         assert!(html.contains("filed this"), "{html}");
-        assert!(html.contains(r#"href="/goals""#), "{html}");
+        // The goal leads to its plan's panel in the office.
+        assert!(html.contains(r#"href="/?sel=goals/GAME-1""#), "{html}");
+    }
+
+    #[tokio::test]
+    async fn a_goal_without_a_plan_ticket_is_not_a_link() {
+        let t = ticket(serde_json::json!("queued"), serde_json::json!({}));
+        let cx = Cx::default();
+        let html = ui::html(&cx, view! { cx => head(ticket: t, filer: Filer::Owner) })
+            .await
+            .unwrap();
+        assert!(html.contains("Enemy waves"), "{html}");
+        assert!(!html.contains("sel=goals"), "{html}");
     }
 
     #[tokio::test]

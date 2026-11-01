@@ -66,7 +66,7 @@ impl Floor {
     /// The colour index of `project`: its place in `projects` (or 0), wrapped
     /// to the colours there are.
     pub fn tint(&self, project: &str) -> usize {
-        self.projects.iter().position(|p| p == project).unwrap_or(0) % TINTS
+        super::facts::tint(&self.projects, project)
     }
 }
 

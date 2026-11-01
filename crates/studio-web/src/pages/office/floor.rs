@@ -1,12 +1,11 @@
 //! Who sits where on the floor, and the rooms that show it.
 
-use serde_json::Value;
 use std::collections::HashMap;
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{HeldReason, Ticket, TicketKind, TicketState};
 
 use super::Office;
-use crate::pages::board::finished;
+use crate::client::Happened;
 use crate::{client, ui};
 
 /// Where a ticket is on the floor.
@@ -83,6 +82,14 @@ impl Goal {
 
 /// Every goal still open: not failed or cancelled, and not merged.
 pub fn goals(office: &Office) -> Vec<Goal> {
+    all_goals(office)
+        .into_iter()
+        .filter(|g| g.state() != "merged")
+        .collect()
+}
+
+/// Every goal that was not failed or cancelled, merged ones too.
+pub fn all_goals(office: &Office) -> Vec<Goal> {
     office
         .tickets
         .iter()
@@ -106,7 +113,6 @@ pub fn goals(office: &Office) -> Vec<Goal> {
                     .any(|t| office.merged.contains(&t.id.to_string())),
             }
         })
-        .filter(|g| g.state() != "merged")
         .collect()
 }
 
@@ -122,19 +128,6 @@ pub(super) fn held_short(state: &TicketState) -> &'static str {
         },
         _ => "",
     }
-}
-
-/// The project checks a run log names since `since` (epoch ms): each
-/// command and when it started, oldest first.
-pub fn checks_since(log: &str, since: u64) -> Vec<(String, u64)> {
-    log.lines()
-        .filter_map(|raw| {
-            let entry: Value = serde_json::from_str(raw).ok()?;
-            let at = entry["at"].as_u64().unwrap_or(0);
-            let command = entry["note"].as_str()?.strip_prefix("check: ")?;
-            (at >= since).then(|| (command.to_string(), at))
-        })
-        .collect()
 }
 
 /// When a hire's last run of its own ended, if the window shows it: its
@@ -163,6 +156,25 @@ pub fn idle_since(office: &Office, hire: &str) -> Option<u64> {
             })
         })
         .map(|e| e.at_ms)
+}
+
+/// States a ticket ends in.
+const FINISHED: [&str; 3] = ["landed", "failed", "cancelled"];
+
+/// Tickets that are landed, failed or cancelled, newest first, each with
+/// the time of its latest event in `events`: the one that ended it. Tickets that ended before `events` are left out.
+pub fn finished(events: &[Happened], tickets: &[Ticket]) -> Vec<(Ticket, u64)> {
+    let mut latest: HashMap<&str, u64> = HashMap::new();
+    for e in events {
+        latest.insert(&e.ticket_id, e.at_ms);
+    }
+    let mut done: Vec<(Ticket, u64)> = tickets
+        .iter()
+        .filter(|t| FINISHED.contains(&t.state.kind()))
+        .filter_map(|t| Some((t.clone(), *latest.get(t.id.0.as_str())?)))
+        .collect();
+    done.sort_by_key(|(_, end)| std::cmp::Reverse(*end));
+    done
 }
 
 /// Tickets that finished in the window, newest first, with when. A landed
@@ -210,7 +222,7 @@ pub fn front_desk(office: &Office) -> Vec<client::Member> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     pub fn ticket(id: &str, state: Value, extra: Value) -> Ticket {
         let mut t = json!({
@@ -264,19 +276,54 @@ mod tests {
     }
 
     #[test]
-    fn checks_are_read_from_the_current_run() {
-        let log = [
-            r#"{"at":10,"note":"check: cargo fmt --check"}"#,
-            r#"{"at":50,"note":"check: cargo fmt --check"}"#,
-            r#"{"at":54,"note":"check: cargo test"}"#,
-        ]
-        .join("\n");
+    fn finished_tickets_come_newest_first_by_their_last_event() {
+        let tickets = vec![
+            ticket("G-1", json!("landed"), json!({})),
+            // Out of tries: the last failed checks end it, with no failed
+            // event of its own.
+            ticket(
+                "G-2",
+                json!({"failed": {"class": "checks", "detail": "x"}}),
+                json!({}),
+            ),
+            // The owner denied its ask.
+            ticket(
+                "G-3",
+                json!({"failed": {"class": "denied", "detail": ""}}),
+                json!({}),
+            ),
+            ticket("G-4", json!("queued"), json!({})),
+            // Finished before the window.
+            ticket("G-5", json!("landed"), json!({})),
+        ];
+        let recent = |id: &str, at_ms, event: Value| Happened {
+            ticket_id: id.into(),
+            at_ms,
+            event: serde_json::from_value(event).unwrap(),
+        };
+        let events = vec![
+            recent("G-1", 10, json!({"type": "landed"})),
+            recent("G-2", 20, json!({"type": "checks_failed", "detail": "x"})),
+            recent(
+                "G-3",
+                30,
+                json!({"type": "ask_resolved", "ask": "a1", "approved": false}),
+            ),
+            recent("G-4", 40, json!({"type": "cancelled"})),
+        ];
+        let done = finished(&events, &tickets);
+        let ids: Vec<(String, u64)> = done.iter().map(|(t, at)| (t.id.to_string(), *at)).collect();
         assert_eq!(
-            checks_since(&log, 40),
+            ids,
             [
-                ("cargo fmt --check".to_string(), 50),
-                ("cargo test".to_string(), 54)
+                ("G-3".to_string(), 30),
+                ("G-2".to_string(), 20),
+                ("G-1".to_string(), 10)
             ]
+        );
+        assert_eq!(
+            ui::failure(&tickets[1].state).map(|f| f.0).as_deref(),
+            Some("Checks failed")
         );
     }
 }

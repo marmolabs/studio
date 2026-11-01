@@ -2,7 +2,7 @@ use clap::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use studio_config::{StudioConfig, StudioPaths};
+use studio_config::StudioPaths;
 use studio_runtime::Runtime;
 use studiod::{CiWatcher, Studio, serve};
 
@@ -20,17 +20,13 @@ struct Args {
 async fn main() {
     let args = Args::parse();
     let paths = StudioPaths::resolve(args.home);
-    let config = StudioConfig::load(&paths).ok();
-    let built = studiod::runtimes::build(config.as_ref());
-    for problem in &built.problems {
-        eprintln!("{problem}");
-    }
-    for (name, runtime) in &built.runtimes {
+    let built = studiod::runtimes::build();
+    for (name, runtime) in &built {
         if let Some(problem) = runtime.check_env().problem {
             eprintln!("runtime {name}: {problem}; its hires won't run");
         }
     }
-    let runtimes: HashMap<String, Arc<dyn Runtime>> = built.runtimes.into_iter().collect();
+    let runtimes: HashMap<String, Arc<dyn Runtime>> = built.into_iter().collect();
 
     let studio = match Studio::open(paths, runtimes) {
         Ok(studio) => studio,
