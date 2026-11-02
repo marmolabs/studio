@@ -12,8 +12,9 @@ pub struct Worktree {
     pub base_commit: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RebaseOutcome {
+pub(crate) enum RebaseOutcome {
     Clean { new_base: String },
     Conflict { files: Vec<String> },
 }
@@ -87,7 +88,8 @@ impl Worktree {
 
     /// Replays the ticket's commits (and uncommitted work) onto `rev`. On conflict
     /// the rebase is aborted and the worktree is left as it was.
-    pub fn rebase_onto(&mut self, rev: &str) -> Result<RebaseOutcome> {
+    #[cfg(test)]
+    pub(crate) fn rebase_onto(&mut self, rev: &str) -> Result<RebaseOutcome> {
         let new_base = resolve_in(&self.path, rev)?;
         let args = [
             "rebase",

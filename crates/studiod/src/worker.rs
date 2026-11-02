@@ -238,7 +238,10 @@ async fn work_on(
                         .collect();
                     let request = review_prompt(&ticket, &worktree.diff()?, &images, &checked);
                     log.note(&format!("review by {} ({})", reviewer.id, reviewer.model));
-                    match run.go(&worktree, &request, &mut None).await? {
+                    studio.set_judge(id, &reviewer.id.0, &reviewer.model, None);
+                    let ended = run.go(&worktree, &request, &mut None).await;
+                    studio.clear_judge(id);
+                    match ended? {
                         AgentEnd::Stopped => return Ok(()),
                         AgentEnd::Done(reply) => {
                             match verdict(reply.as_deref().unwrap_or_default()) {
@@ -584,20 +587,35 @@ impl AgentRun<'_> {
                         policy::Decision::Ask => {
                             let mut why = reasons(&verdict, "");
                             // Owner rules always reach the owner; the rest go to the
-                            // approver, when the studio has one.
+                            // project's lead, or else the studio's approver, when
+                            // there is one. A lead never answers for its own work.
                             let owner_rule = verdict
                                 .findings
                                 .iter()
                                 .any(|f| f.level == studio_core::rule::Level::Ask);
-                            let approver = self.studio.first_with_role("approver");
-                            if let (false, Some(approver)) = (owner_rule, approver) {
+                            let lead = self
+                                .studio
+                                .lead_of(&self.ticket.project.0)
+                                .filter(|lead| lead.id != self.hire.id);
+                            let led = lead.as_ref().map(|_| self.ticket.project.0.as_str());
+                            // The notes read the same whoever decided, so the log
+                            // shows them alike.
+                            let title = "approver";
+                            let (label, decider) = match &lead {
+                                Some(lead) => ("Lead", Some(lead.clone())),
+                                None => ("Approver", self.studio.first_with_role("approver")),
+                            };
+                            if let (false, Some(approver)) = (owner_rule, decider) {
                                 let key = format!("{tool}{input}");
                                 let call = match approved.get(&key) {
                                     Some(reason) => approver::Call::Allow(reason.clone()),
                                     None => {
                                         approver::judge(
                                             self.studio,
-                                            &approver,
+                                            &approver::Decider {
+                                                hire: &approver,
+                                                led,
+                                            },
                                             self.ticket,
                                             &worktree.path,
                                             &tool,
@@ -609,16 +627,26 @@ impl AgentRun<'_> {
                                 };
                                 match call {
                                     approver::Call::Allow(reason) => {
-                                        self.log
-                                            .note(&format!("approver allowed {tool}: {reason}"));
+                                        self.log.note_by(
+                                            &format!("{title} allowed {tool}: {reason}"),
+                                            &approver.id.0,
+                                        );
                                         approved.insert(key, reason);
                                         run.allow(&request_id).await?;
                                         continue;
                                     }
                                     approver::Call::Deny(reason) => {
-                                        self.log.note(&format!("approver denied {tool}: {reason}"));
+                                        self.log.note_by(
+                                            &format!("{title} denied {tool}: {reason}"),
+                                            &approver.id.0,
+                                        );
+                                        let by = if led.is_some() {
+                                            "The project's lead"
+                                        } else {
+                                            "The studio's approver"
+                                        };
                                         let message = format!(
-                                            "The studio's approver declined this: {reason} \
+                                            "{by} declined this: {reason} \
                                              Find another way, or explain in your summary \
                                              why it's needed."
                                         );
@@ -626,10 +654,11 @@ impl AgentRun<'_> {
                                         continue;
                                     }
                                     approver::Call::Owner(reason) => {
-                                        self.log.note(&format!(
-                                            "approver left {tool} to the owner: {reason}"
-                                        ));
-                                        why.push(format!("Approver: {reason}"));
+                                        self.log.note_by(
+                                            &format!("{title} left {tool} to the owner: {reason}"),
+                                            &approver.id.0,
+                                        );
+                                        why.push(format!("{label}: {reason}"));
                                     }
                                 }
                             }
@@ -1443,10 +1472,13 @@ async fn run_gates(
             "gate {} by {} ({})",
             gate.name, critic.id, critic.model
         ));
+        studio.set_judge(&ticket.id, &critic.id.0, &critic.model, Some(&gate.name));
         let pairs = image_pairs(worktree, ticket.attempts, &files, gate, log);
         let measured = measurements(worktree, &files, gate, log).await;
         let request = gate_prompt(ticket, gate, &diff, &images, &pairs, &measured);
-        let reply = match run.go(worktree, &request, &mut None).await? {
+        let ended = run.go(worktree, &request, &mut None).await;
+        studio.clear_judge(&ticket.id);
+        let reply = match ended? {
             AgentEnd::Stopped => return Ok(GateEnd::Stop),
             AgentEnd::Done(reply) => reply,
         };
@@ -1546,6 +1578,11 @@ fn first_prompt(ticket: &Ticket) -> String {
              short summary of the plan.",
             ticket.goal, ticket.project
         );
+        if let Some(version) = &ticket.version {
+            plan.push_str(&format!(
+                " The goal is a milestone towards version {version}."
+            ));
+        }
         if !ticket.detail.trim().is_empty() {
             plan.push_str(&format!(
                 "\n\nThe owner's brief:\n\n{}",
@@ -1620,6 +1657,7 @@ mod tests {
             parent: None,
             detail: String::new(),
             source: None,
+            version: None,
         }
     }
 

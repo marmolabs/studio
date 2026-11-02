@@ -1,12 +1,13 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use crate::worktree::RebaseOutcome;
+use crate::{LandOutcome, MergeOutcome, Repo};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use studio_core::ids::TicketId;
-use studio_git::{LandOutcome, MergeOutcome, RebaseOutcome, Repo};
 use tempfile::TempDir;
 
 /// Runs git for test setup with the developer's global and system config hidden.
@@ -447,4 +448,46 @@ fn a_long_goal_gets_a_short_branch_that_git_accepts() {
     assert!(branch.len() <= "studio/goal/".len() + 60, "{branch}");
     assert!(!branch.ends_with('-'));
     assert_eq!(repo.ensure_goal_branch(&goal, "HEAD").unwrap(), branch);
+}
+
+#[test]
+fn a_release_checks_out_one_commit_and_tags_it() {
+    let (_dir, repo) = init();
+    let commit = repo.resolve("master").unwrap();
+    let path = repo.create_release_worktree("one", "master").unwrap();
+    assert!(path.join("README.md").exists());
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]), commit);
+    // A commit on master after the checkout leaves the checkout alone.
+    commit_on_master(repo.root(), "README.md", "moved\n");
+    assert_eq!(
+        fs::read_to_string(path.join("README.md")).unwrap(),
+        "hello\n"
+    );
+
+    assert!(!repo.tag_exists("v1.0").unwrap());
+    repo.tag("v1.0", &commit, "Release 1.0").unwrap();
+    assert!(repo.tag_exists("v1.0").unwrap());
+    assert_eq!(git(repo.root(), &["cat-file", "-t", "v1.0"]), "tag");
+    assert_eq!(git(repo.root(), &["rev-parse", "v1.0^{commit}"]), commit);
+    assert_eq!(
+        git(
+            repo.root(),
+            &["for-each-ref", "--format=%(taggername)", "refs/tags/v1.0"]
+        ),
+        "Test Owner"
+    );
+
+    fs::write(path.join("scratch.txt"), "x").unwrap();
+    repo.remove_release_worktree(&path).unwrap();
+    assert!(!path.exists());
+    repo.remove_release_worktree(&path).unwrap();
+    assert!(!git(repo.root(), &["worktree", "list"]).contains("releases"));
+}
+
+#[test]
+fn tag_names_are_checked_by_git() {
+    let (_dir, repo) = init();
+    assert!(repo.is_tag_name("v1.2-rc1").unwrap());
+    assert!(!repo.is_tag_name("v1..2").unwrap());
+    assert!(!repo.is_tag_name("v1.lock").unwrap());
 }

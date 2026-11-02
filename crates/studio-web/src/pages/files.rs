@@ -114,7 +114,7 @@ async fn hires_page(cx: &Cx) -> topcoat::Result<impl View> {
         open => open,
     };
     let list = if open.is_none() {
-        hires::hires_for(&config.socket, &config.data_dir, &all).await
+        hires::hires_for(&config.socket, &all).await
     } else {
         Vec::new()
     };

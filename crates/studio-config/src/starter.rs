@@ -19,7 +19,7 @@ ticket_usd = 2.0
 min_run_usd = 0.05
 # run_usd = 1.0
 
-# Agents running at once. 0 pauses the studio.
+# Agents running at once, from 1 to 9. `studio close` pauses the studio.
 [concurrency]
 max_runs = 2
 
@@ -193,12 +193,23 @@ pub struct AddedProject {
     pub created_checks: Option<PathBuf>,
 }
 
-/// Appends a project to studio.toml, keeping the file's comments, and gives
-/// the project a `.studio.toml` with guessed checks if it has none.
-pub fn add_project(
+/// What `add_project` would add, found without writing anything.
+pub struct ProjectPlan {
+    pub name: String,
+    pub path: PathBuf,
+    /// The `.studio.toml` that would be written: none when the project has one.
+    pub new_checks: Option<PathBuf>,
+    /// The pack's `project.toml`, when it has one, in place of guessed checks.
+    template: Option<String>,
+}
+
+/// Everything `add_project` refuses on, without writing anything: the folder,
+/// the name, a project of that name or folder already in studio.toml, the
+/// pack.
+pub fn check_project(
     paths: &StudioPaths,
-    project: NewProject<'_>,
-) -> Result<AddedProject, StarterError> {
+    project: &NewProject<'_>,
+) -> Result<ProjectPlan, StarterError> {
     if !project.path.is_dir() {
         return Err(StarterError::NotADirectory(project.path.to_path_buf()));
     }
@@ -263,6 +274,27 @@ pub fn add_project(
         }
     }
 
+    let checks = path.join(".studio.toml");
+    Ok(ProjectPlan {
+        name,
+        new_checks: (!checks.exists()).then_some(checks),
+        path,
+        template,
+    })
+}
+
+/// Appends a project to studio.toml, keeping the file's comments, and gives
+/// the project a `.studio.toml` with guessed checks if it has none.
+pub fn add_project(
+    paths: &StudioPaths,
+    project: NewProject<'_>,
+) -> Result<AddedProject, StarterError> {
+    let ProjectPlan {
+        name,
+        path,
+        template,
+        ..
+    } = check_project(paths, &project)?;
     let mut entry = format!(
         "\n[[projects]]\nname = {}\npath = {}\n",
         toml_string(&name),

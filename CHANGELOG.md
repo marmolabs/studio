@@ -51,36 +51,70 @@ budget limits low.
   plus limits per ticket and per run. A run starts only when its allowance
   fits under every limit, and live runs reserve theirs.
 
+### Leads, milestones and releases
+
+- The studio works like a company. You are the owner; a project can have a
+  lead, a hire who plans its goals, assigns its tickets and answers its team's
+  routine questions in place of the producer, router and approver, and sends
+  you what it can't decide. Name one with `lead` in `studio.toml`, with
+  `studio lead <project> [hire]`, or from the project's page in the web UI.
+  The lead needs `tools: [file_ticket]` to plan, and never answers for its own
+  tickets.
+- A goal can carry a version and become a milestone: `studio goal
+  --milestone 0.4`, or the Version field of New work. The project's sign and
+  page show the milestone and how many of its tasks are done.
+- A project whose `.studio.toml` lists `release` commands can be released:
+  `studio release <project> <version>` runs the project's final checks, waits
+  for your go-ahead (`studio release approve <project>`, or Approve in the web
+  UI), runs the release commands with `VERSION` set, and tags `v<version>`.
+  `studio release cancel` stops one before the go-ahead, and `studio releases`
+  lists them. The tag is never pushed.
+
 ### Web UI
 
-- A local web UI behind a token link. It opens on the Office: the whole studio
-  as one isometric floor on a single page, with tickets at desks, in checks, in
-  review and ready to land, goals on the whiteboard and idle hires in the
-  lounge. Every object on the floor is a control that opens its panel beside
-  it, where you can act on it; the panel's tabs are Needs you, Projects, Team,
-  Money, Rules and Log, and `/?tab=` and `/?sel=` links open any of them.
-  Board, Asks, Goals, Budget, Hires and Rules hold the lists and the detail,
-  and each ticket has a live activity feed. Dark or light, and usable on a
-  phone. `--host` serves it to your network; read docs/security.md first.
-- From the Office you can close or reopen the studio (nothing new starts while
-  it is closed), add or remove desks (how many agents work at once, up to
-  nine), change the daily and per-ticket limits, focus the floor on one
-  project, and see each project's checks.
+- A local web UI behind a token link. It opens on the company floor: one
+  isometric floor with a team area for each project, around the owner's
+  office, the lounge, and the review room and QA lab every project shares. Each
+  project has a sign with its phase (Planning, Building, Testing, Releasing,
+  Live, Paused or Idle), its milestone and progress, who is on it and a bell
+  when it needs you. Everything on the floor is a control that opens its panel
+  beside it, where you can act on it. Dark or light, and usable on a phone.
+  `--host` serves it to your network; read docs/security.md first.
+- The panel's tabs are For you, Projects, Company, Money and Log, and
+  `/?tab=` and `/?sel=` links open any of them. For you gathers what waits for
+  you across the projects: a release that wants your go-ahead, questions, held
+  work, work ready to ship, work that failed, and how many routine questions
+  your leads answered. Projects has a card for each project, with History at
+  the end for merged goals and tickets that finished more than a day ago.
+  Company shows who reports to whom and holds the desks, closing and opening
+  the studio, rules, trophies and hiring.
+- Each project has its own page: its pipeline, its milestone, the tasks in To
+  do, Doing, Checking and Done, the release checklist with Start, Approve and
+  Cancel, and its lead, which you can change there. The Hires and Rules pages
+  edit your hires and rules, and each ticket has its own page with a live
+  activity feed.
+- You can close or reopen the studio (nothing new starts while it is closed),
+  add or remove desks (how many agents work at once, up to nine), change the
+  daily and per-ticket limits, and see each project's checks. Adding a project
+  shows what it would add before you confirm.
 - Trophies come from the studio's history, and each hire's level grows with
   the work it has landed.
-- The office turns to show each corner (the arrows, or Q and E) and can be
-  dragged around when zoomed in. A new studio starts as a bare room that grows
-  as you add: projects and hires can be added from the office itself, and a
+- The floor turns to show each corner (the arrows, or Q and E) and can be
+  dragged around when zoomed in. A new studio starts as a bare floor that grows
+  as you add: projects and hires can be added from the web UI itself, and a
   "Start here" list leads the way.
 
 ### CLI and the rest
 
-- `studio up` and `down`, `init`, `project add`, `ticket`, `goal`, `asks`,
-  `approve`, `deny`, `land`, `merge`, `budget`, `doctor`, `export`, `gc` and
-  more. `--json` prints the raw reply.
+- `studio up` and `down`, `init`, `project add`, `ticket`, `goal`, `lead`,
+  `release` and `releases`, `asks`, `approve`, `deny`, `land`, `merge`,
+  `budget`, `close` and `open`, `doctor`, `export`, `gc` and more. `--json`
+  prints the raw reply. `studio close` pauses the studio the way the web UI's
+  Company tab does; `max_runs` in `studio.toml` is from 1 to 9.
 - Packs bundle hires, rules, skills and a project template to reuse across
   projects.
 - A project with `watch_ci` gets a fix ticket when CI fails on its integration
-  branch. Desktop notifications when a ticket asks, is ready, is held or fails.
+  branch. Desktop notifications when a ticket asks, is ready, is held or fails,
+  and when a release waits for your go-ahead.
 - Claude Code is the only runtime. It runs with your own `claude` login; the
   studio never reads your credentials.

@@ -14,40 +14,31 @@ use topcoat::{
     view::{Unescaped, View, component, view},
 };
 
-use std::collections::BTreeMap;
-use studiod::api::{HireDay, Request};
+use studiod::api::Request;
 
 use crate::{AppConfig, client, statics, ui};
 
 /// The studio's mark on a dark tile, inline so no request is made for it.
 const FAVICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2318181b'/%3E%3Crect x='3.5' y='5.8' width='6.7' height='6.7' rx='1.6' fill='none' stroke='%23f4f4f5' stroke-width='1.5'/%3E%3Cpath d='M6.2 3.3h5a1.5 1.5 0 0 1 1.5 1.5v5' fill='none' stroke='%23f4f4f5' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
-/// Sidebar links: (href, label, icon), the owner's work first.
-const WORK: [(&str, &str, &str); 4] = [
-    OFFICE,
-    BOARD,
-    ("/asks", "Asks", "inbox"),
-    ("/goals", "Goals", "target"),
-];
+/// Sidebar links: (href, label, icon), the office first.
+const WORK: [(&str, &str, &str); 1] = [OFFICE];
 /// The office is the home page.
 const OFFICE: (&str, &str, &str) = ("/", "Office", "building-2");
-const BOARD: (&str, &str, &str) = ("/board", "Board", "layout-dashboard");
-const STUDIO: [(&str, &str, &str); 3] = [
+const STUDIO: [(&str, &str, &str); 2] = [
     ("/hires", "Hires", "users"),
     ("/rules", "Rules", "shield-check"),
-    ("/budget", "Budget", "wallet"),
 ];
+/// Where the money meter leads: the office's Money tab.
+const MONEY: &str = "/?tab=money";
 
 const NAV_LINK: &str = "flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2 font-medium text-fg-2 transition-colors hover:bg-bg-3 hover:text-fg aria-[current=page]:bg-bg-3 aria-[current=page]:text-fg max-[760px]:h-[30px] max-[760px]:whitespace-nowrap max-[760px]:px-2.5 max-[760px]:[&>.i]:hidden";
-
-/// A link in the Office/Board switch.
-const SEGMENT: &str = "inline-flex h-[26px] items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium leading-none text-fg-2 hover:text-fg aria-[current=page]:bg-bg aria-[current=page]:text-fg aria-[current=page]:shadow-[0_0_0_1px_var(--line-2)]";
 
 /// The cookie that forces a theme; without it the system decides.
 const THEME_COOKIE: &str = "theme";
 
 /// The top bar's title: the page name, plus what is open inside it, shown
-/// as a breadcrumb: the ticket on a ticket page ("Board › SHOP-3"), the hire
+/// as a breadcrumb: the ticket on a ticket page ("Office › SHOP-3"), the hire
 /// being edited ("Hires › dev").
 fn title(path: &str, query: &str) -> (String, Option<String>) {
     let mut parts = path.trim_matches('/').split('/');
@@ -59,7 +50,7 @@ fn title(path: &str, query: &str) -> (String, Option<String>) {
         })
     };
     match (first, parts.next()) {
-        ("tickets", Some(id)) => ("Board".into(), Some(id.to_owned())),
+        ("tickets", Some(id)) => ("Office".into(), Some(id.to_owned())),
         ("hires", None) => match param("file").filter(|f| !f.is_empty()) {
             Some(file) => ("Hires".into(), Some(file)),
             None => ("Hires".into(), None),
@@ -83,42 +74,11 @@ fn title(path: &str, query: &str) -> (String, Option<String>) {
     }
 }
 
-/// A line beside the page's title in the top bar, for pages that need one.
-fn note(path: &str) -> Option<&'static str> {
-    match path {
-        "/budget" => Some(
-            "Spend over the last 24h. A run only starts if its allowance fits under every limit.",
-        ),
-        _ => None,
-    }
-}
-
-/// What the approver did for the owner in the last 24 hours, for the Asks
-/// page; `None` if it decided nothing or studiod can't say.
-async fn approver_note(socket: &std::path::Path) -> Option<String> {
-    let days: BTreeMap<String, HireDay> = client::call(socket, Request::HiresToday).await.ok()?;
-    approver_line(days.values())
-}
-
-/// "The approver decided 96 calls in the last 24h and sent you 4." Only the
-/// approver decides calls, so its counts are the only ones.
-fn approver_line<'a>(days: impl Iterator<Item = &'a HireDay>) -> Option<String> {
-    let (decided, to_owner) = days.fold((0, 0), |(n, o), d| {
-        (n + d.allowed + d.denied + d.to_owner, o + d.to_owner)
-    });
-    let calls = if decided == 1 { "call" } else { "calls" };
-    (decided > 0).then(|| {
-        format!(
-            "The approver decided {decided} {calls} in the last 24h and sent you\u{a0}{to_owner}."
-        )
-    })
-}
-
 /// Whether the link to `href` is the page at `path`.
 fn current(href: &str, path: &str) -> bool {
     match href {
-        "/" => path == "/",
-        "/board" => path.starts_with("/board") || path.starts_with("/tickets"),
+        // A ticket is seen from the office.
+        "/" => path == "/" || path.starts_with("/tickets"),
         _ => path.starts_with(href),
     }
 }
@@ -126,8 +86,6 @@ fn current(href: &str, path: &str) -> bool {
 /// The count beside a sidebar link, when there is one to show.
 fn count(label: &str, status: &client::Status) -> Option<u64> {
     let n = match label {
-        "Asks" => status.asks,
-        "Goals" => status.goals,
         "Hires" => status.hires.len() as u64,
         "Rules" => status.rules,
         _ => 0,
@@ -214,13 +172,9 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
     let (page, crumb) = title(&path, &query);
     // A crumb leads back to the page it is in.
     let crumb_home = if path.starts_with("/tickets") {
-        BOARD.0
+        OFFICE.0
     } else {
         "/hires"
-    };
-    let note = match path.as_str() {
-        "/asks" => approver_note(&config.socket).await,
-        _ => note(&path).map(str::to_string),
     };
     let queued = status.tickets.get("queued").copied().unwrap_or(0);
     let running = status.at_work();
@@ -236,11 +190,6 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
     };
     let work: Vec<NavLink> = WORK.into_iter().map(link).collect();
     let studio: Vec<NavLink> = STUDIO.into_iter().map(link).collect();
-    let switch: Vec<NavLink> = if path == BOARD.0 {
-        [OFFICE, BOARD].into_iter().map(link).collect()
-    } else {
-        Vec::new()
-    };
 
     Ok(view! {
         <!DOCTYPE html>
@@ -273,7 +222,7 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                                 </span>
                                 <b class="text-[14.5px] font-semibold tracking-[-0.01em]">"studio"</b>
                             </a>
-                            <a href="/budget" class="ml-auto hidden items-center gap-1.5 text-[12.5px] tabular-nums text-fg-2 max-[760px]:inline-flex">
+                            <a href=(MONEY) class="ml-auto hidden items-center gap-1.5 text-[12.5px] tabular-nums text-fg-2 max-[760px]:inline-flex">
                                 if running > 0 {
                                     <span class="pulse"></span>
                                     (running) " running · "
@@ -306,7 +255,7 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                                     </span>
                                 }
                             </div>
-                            <a href="/budget" class="flex flex-col gap-1.5" title="Spend over the last 24 hours, against the daily limit">
+                            <a href=(MONEY) class="flex flex-col gap-1.5" title="Spend over the last 24 hours, against the daily limit">
                                 <span class="flex items-baseline justify-between text-[13px]">
                                     <span class="tabular-nums">(ui::usd(spent)) <span class="text-fg-3">" of " (ui::limit(daily))</span></span>
                                     <span class="text-fg-3">"last 24h"</span>
@@ -336,19 +285,6 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                                 </nav>
                             } else {
                                 <h1 class="min-w-0 shrink-0 truncate text-[15px] font-semibold leading-5 tracking-[-0.005em]">(page)</h1>
-                                if let Some(note) = note {
-                                    <span class="min-w-0 truncate text-[13px] text-fg-3 max-[760px]:basis-full max-[760px]:whitespace-normal">(note)</span>
-                                }
-                            }
-                            if !switch.is_empty() {
-                                <nav class="inline-flex shrink-0 gap-0.5 rounded-lg bg-bg-3 p-0.5" aria-label="View">
-                                    for link in switch {
-                                        <a href=(link.href) class=(SEGMENT) aria-current=(link.current.then_some("page"))>
-                                            ui::icon(name: link.icon, small: true)
-                                            (link.label)
-                                        </a>
-                                    }
-                                </nav>
                             }
                         </header>
                         <main class="mx-auto flex w-full max-w-[1200px] flex-col has-[#office]:max-w-[1480px] gap-7 px-8 pb-18 pt-7 max-[760px]:gap-6 max-[760px]:px-4 max-[760px]:pb-14 max-[760px]:pt-5">
@@ -388,11 +324,7 @@ async fn nav_link(link: NavLink) -> topcoat::Result<impl View> {
             ui::icon(name: icon)
             (label)
             if let Some(n) = count {
-                if label == "Asks" {
-                    <span class="ml-auto rounded-full bg-attn px-[7px] py-[3px] text-[12px] font-medium leading-none tabular-nums text-[#1d1400]" aria-label=(format!("{n} waiting"))>(n)</span>
-                } else {
-                    <span class="ml-auto text-[12px] font-medium leading-none tabular-nums text-fg-3">(n)</span>
-                }
+                <span class="ml-auto text-[12px] font-medium leading-none tabular-nums text-fg-3">(n)</span>
             }
         </a>
     })
@@ -447,8 +379,6 @@ mod tests {
     #[test]
     fn the_top_bar_names_the_page() {
         assert_eq!(title("/", ""), ("Office".into(), None));
-        assert_eq!(title("/board", ""), ("Board".into(), None));
-        assert_eq!(title("/goals", "open=G-1"), ("Goals".into(), None));
         assert_eq!(title("/hires", ""), ("Hires".into(), None));
         assert_eq!(
             title("/hires", "file=dev"),
@@ -456,35 +386,15 @@ mod tests {
         );
         assert_eq!(
             title("/tickets/GAME-3", ""),
-            ("Board".into(), Some("GAME-3".into()))
+            ("Office".into(), Some("GAME-3".into()))
         );
-    }
-
-    #[test]
-    fn the_asks_page_says_what_the_approver_did() {
-        let approver = HireDay {
-            allowed: 81,
-            denied: 11,
-            to_owner: 4,
-            ..HireDay::default()
-        };
-        let dev = HireDay {
-            done: 3,
-            ..HireDay::default()
-        };
-        assert_eq!(
-            approver_line([&approver, &dev].into_iter()).as_deref(),
-            Some("The approver decided 96 calls in the last 24h and sent you\u{a0}4.")
-        );
-        assert_eq!(approver_line([&dev].into_iter()), None);
     }
 
     #[test]
     fn links_light_up_for_their_pages() {
-        assert!(current("/board", "/tickets/GAME-3"));
+        assert!(current("/", "/tickets/GAME-3"));
         assert!(current("/", "/"));
-        assert!(!current("/", "/goals"));
-        assert!(!current("/", "/board"));
+        assert!(!current("/", "/hires"));
         assert!(current("/rules", "/rules"));
     }
 
@@ -503,7 +413,7 @@ mod tests {
 
     #[test]
     fn going_back_stays_on_this_site() {
-        assert_eq!(back_to("/goals?x=1"), "/goals?x=1");
+        assert_eq!(back_to("/rules?x=1"), "/rules?x=1");
         assert_eq!(back_to("//evil.example"), "/");
         assert_eq!(back_to("https://evil.example"), "/");
         assert_eq!(back_to("/\\evil.example"), "/");

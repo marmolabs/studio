@@ -36,7 +36,7 @@ another computer on the network can open the UI. Give the address the other
 device will use: the printed link and the origin check are built from it.
 
 This exposes the UI to your network. Anyone who has the link can approve
-asks, land tickets and spend your budget, and the page is plain HTTP, so the
+asks, land tickets, approve releases and spend your budget, and the page is plain HTTP, so the
 token crosses the network unencrypted where others on it could read it. Use it
 only on a network you trust, never on public Wi-Fi, and run
 `studio up --new-token` when you are done sharing the link.
@@ -60,30 +60,60 @@ only on a network you trust, never on public Wi-Fi, and run
 
 ## The approver and the router
 
-Two cheap hires work for the studio itself.
+Two cheap hires work for the studio itself: the approver decides the tool calls
+no rule covers, so only dangerous ones reach you, and the router picks a hire
+for a ticket. Your own `protect` rules, ask-level gates and agents' questions
+always reach you, never the approver. When the approver errors, has no budget
+or gives no clear answer, the call goes to you. In a project with a lead, the
+lead does both jobs (see below). See
+[concepts](concepts.md#the-approver-and-the-router).
 
-The approver decides tool calls that no rule covers, so only dangerous ones
-reach you. It allows what is a normal part of the ticket inside its worktree,
-denies what the ticket doesn't need, and sends to you what is dangerous,
-irreversible or reaches outside the project. A denial does not stop the ticket:
-the agent is told why and tries another way. Asks from your own rules (`protect`
-rules and ask-level gates) and questions from agents always reach you, never the
-approver. When the approver errors, has no budget or gives no clear answer, the
-call goes to you, with the reason shown.
+## Project leads
 
-The router picks the hire for a ticket created without one (`studio ticket`
-without `--hire`, the board's "Pick for me", or a producer's `file_ticket`
-without a hire). Without a router, the first engineer takes it.
+A project's lead (see [concepts](concepts.md#project-leads)) takes the
+approver's and the router's place in that project, so it can allow a tool call
+that no rule covers, deny it, or pass it up to you. It judges under the same
+policy as the approver and sends you what is dangerous, irreversible or reaches
+outside the project. What a lead may not decide stays with you:
 
-Each call is capped at $0.05 and charged to the ticket. `studio init` writes
-both hires; deleting `hires/approver.md` or `hires/router.md` turns that one off.
+- Your own `protect` rules and ask-level gates always come to you.
+- Questions an agent puts to you (`ask_owner`) always come to you.
+- A lead never answers for its own tickets; the approver does.
+- When the lead errors, has no budget or gives no clear answer, the call goes
+  to you.
+- Landing a ticket, merging a goal into your branch and giving a release its
+  go-ahead are yours. A lead plans and assigns; it does not land, merge or
+  release.
+
+A lead's calls to assign or answer are capped at five cents each and charged to
+the ticket. The For you tab counts what your leads answered today, so you can
+see how much they decide for you. A lead is a hire and an agent's prompt can
+steer it, so choose its model and prompt as you would for any hire that can
+approve tool calls.
+
+## Releases
+
+A release runs the project's own commands, `release` in its `.studio.toml`, on
+your machine as you, with the project's `env` and `VERSION` set. Nothing runs
+until the project's final checks pass and you give the go-ahead
+(`studio release approve`, or Approve in the web UI); the checks themselves
+are the project's `verify` commands, which also run as you. A release that is
+waiting can be cancelled, and one that has begun publishing cannot be stopped.
+The tools the studio gives agents (`read_rules`, `load_skill`, `ask_owner` and
+`file_ticket`) cannot start, approve or cancel a release. As with everything
+else, a process that can reach the daemon's socket can; see below.
+
+The studio tags the released commit `v<version>` and never pushes the tag or
+anything else. Review a project's `.studio.toml` before you add a project you
+did not write: its release commands are code that runs when you release.
 
 ## What is not protected
 
 - Anything that can reach the `studiod` Unix socket acts as you. The socket
-  is in the data folder with mode `0600`, so other accounts can't use it. But
-  any process running as your user can approve asks, land tickets and spend
-  your budget. Don't share the machine account.
+  has mode `0600` (it is in the data folder, or in `/tmp` when that path is too
+  long for a socket), so other accounts can't use it. But
+  any process running as your user can approve asks, land tickets, approve
+  releases and spend your budget. Don't share the machine account.
 - Bash commands that you allow run with your privileges, outside any sandbox.
   A rule that allows `Bash` lets an agent run anything you can. Prefer
   prefix rules like `bash:cargo test`, and keep the default of asking. An
@@ -91,9 +121,9 @@ both hires; deleting `hires/approver.md` or `hires/router.md` turns that one off
   `bash:cargo` also allows `cargo run` and `cargo install`.
 - An allowed command can read files outside the worktree, use the network and
   call other tools.
-- The checks in `.studio.toml` and in `check` rules run on your machine, as
-  you. Review a project's `.studio.toml` before adding a project you did not
-  write, and a pack before adding it.
+- The checks in `.studio.toml` and in `check` rules, and a project's release
+  commands, run on your machine, as you. Review a project's `.studio.toml`
+  before adding a project you did not write, and a pack before adding it.
 - Hire prompts and pack skills are instructions to an agent. A bad one can
   steer it. Read them.
 - Budget limits cap spend as the studio sees it. They are not a billing

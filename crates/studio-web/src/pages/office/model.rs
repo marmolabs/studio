@@ -1,45 +1,5 @@
-//! What the isometric office floor shows, as plain data: `plan` builds a
-//! `Floor` from studiod's state and `scene` draws it.
-
-/// Everything on the floor at one moment.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Floor {
-    /// One desk per run slot, in order. A desk with no worker is free.
-    pub desks: Vec<Desk>,
-    /// Whether the office has room for another desk, shown as a "+" spot.
-    pub room_for_desk: bool,
-    /// Tickets running their checks, in the checks lab.
-    pub checks: Vec<Worker>,
-    /// Tickets being reviewed or judged by a critic, in the review room.
-    pub review: Vec<Worker>,
-    /// Ready to land, on the pallet at the dock.
-    pub ready: Vec<Crate>,
-    /// Landed in the last 24 hours, newest first.
-    pub shipped: Vec<Crate>,
-    /// Failed in the last 24 hours, newest first.
-    pub returns: Vec<Crate>,
-    /// Open goals, as notes on the whiteboard.
-    pub goals: Vec<Note>,
-    /// Hires planning a goal, at the whiteboard.
-    pub planners: Vec<Person>,
-    /// Hires with nothing to do, in the lounge.
-    pub lounge: Vec<Person>,
-    /// The approver and the router, at the front desk.
-    pub front: Vec<Person>,
-    /// Tickets waiting for a free desk.
-    pub queued: usize,
-    /// The owner closed the office: nothing new starts.
-    pub closed: bool,
-    /// Every project in a stable order; a project's colour is its index.
-    pub projects: Vec<String>,
-    /// Trophies earned: one cup each on the shelf.
-    pub trophies: usize,
-    /// House rule files: one poster each.
-    pub rules: usize,
-    /// Hires other than the approver and the router: one card each on the
-    /// team board.
-    pub hires: usize,
-}
+//! What the company floor shows, as plain data: `plan` builds an `Hq` from
+//! studiod's state and `hq_scene` draws it.
 
 /// Which corner the office is seen from. 0 is the first view; each step
 /// moves the camera a quarter turn around the room, clockwise seen from
@@ -62,19 +22,6 @@ impl Turn {
 /// first one's.
 pub const TINTS: usize = 8;
 
-impl Floor {
-    /// The colour index of `project`: its place in `projects` (or 0), wrapped
-    /// to the colours there are.
-    pub fn tint(&self, project: &str) -> usize {
-        self.projects.iter().position(|p| p == project).unwrap_or(0) % TINTS
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Desk {
-    pub worker: Option<Worker>,
-}
-
 /// Someone at work on a ticket.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Worker {
@@ -82,6 +29,8 @@ pub struct Worker {
     pub project: String,
     pub title: String,
     pub hire: String,
+    /// What the hire is called: the name in its file, else its id.
+    pub name: String,
     pub role: Role,
     pub doing: Doing,
     /// How far through work, checks, review and landing, from 0 to 1.
@@ -98,31 +47,12 @@ pub enum Doing {
     Held(String),
 }
 
-/// A ticket at the dock: ready, shipped or returned.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Crate {
-    pub ticket: String,
-    pub project: String,
-    pub title: String,
-}
-
-/// An open goal on the whiteboard.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Note {
-    /// The goal's selection key, as the inspector takes it (`goals/<id>`).
-    pub key: String,
-    pub project: String,
-    pub title: String,
-    pub landed: usize,
-    pub total: usize,
-    /// Every ticket has landed: the goal waits to be merged.
-    pub done: bool,
-}
-
-/// A hire who isn't at a desk: planning, resting or at the front desk.
+/// A hire who isn't at a desk: a lead, the owner or someone resting.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Person {
     pub hire: String,
+    /// What the hire is called: the name in its file, else its id.
+    pub name: String,
     pub role: Role,
     /// Minutes since it last worked, for the lounge.
     pub idle_minutes: Option<u64>,
@@ -138,6 +68,11 @@ pub enum Role {
     Critic,
     Approver,
     Router,
+    /// Leads a project: plans its work, hands it out and answers routine
+    /// asks.
+    Lead,
+    /// The owner, at the top of the company.
+    Owner,
     Other,
 }
 
@@ -153,6 +88,7 @@ impl Role {
             "critic" => Role::Critic,
             "approver" => Role::Approver,
             "router" => Role::Router,
+            "lead" | "manager" => Role::Lead,
             _ => Role::Other,
         }
     }
@@ -168,88 +104,53 @@ impl Role {
             Role::Critic => "r-cri",
             Role::Approver => "r-app",
             Role::Router => "r-rou",
+            Role::Lead => "r-lead",
+            Role::Owner => "r-own",
             Role::Other => "r-oth",
         }
     }
 }
 
-/// The office's game elements: each is a control for part of the studio,
-/// selected as `elements/<key>`.
+/// What the company floor draws as a control, each for a part of the studio
+/// and selected as `elements/<key>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Element {
-    /// Goals in every project.
-    Board,
-    /// The team and hiring.
-    Corkboard,
-    /// House rules.
-    Posters,
-    /// Every project's checks.
-    Racks,
-    /// One more desk: one more agent at once.
-    AddDesk,
-    /// Who's free.
+    /// The owner's office, with what waits on the owner in its tray.
+    Owner,
+    /// Who is free.
     Lounge,
-    /// Close or reopen the office.
-    Coffee,
-    /// Achievements from the studio's history.
-    Trophies,
+    /// A free seat in the lounge: hire someone.
+    Hire,
     /// Reviewers and critics.
     Review,
-    /// What shipped today.
-    Crates,
-    /// Failed work.
-    Returns,
-    /// The approver and the router.
-    Counter,
-    /// What's up next.
-    Queue,
-    /// The budget.
-    Safe,
+    /// Every project's checks.
+    Racks,
     /// An empty rack slot in the checks lab: add a project, which gets a
     /// rack of its own.
     AddProject,
-    /// A free seat in the lounge: hire someone.
-    Hire,
 }
 
 impl Element {
-    pub const ALL: [Element; 16] = [
-        Element::Board,
-        Element::Corkboard,
-        Element::Posters,
-        Element::Racks,
-        Element::AddDesk,
+    /// Every element, in the order the company floor shows them: the owner's
+    /// office, the lounge and its free seat, the shared rooms and the spot
+    /// for a new project.
+    pub const ALL: [Element; 6] = [
+        Element::Owner,
         Element::Lounge,
-        Element::Coffee,
-        Element::Trophies,
-        Element::Review,
-        Element::Crates,
-        Element::Returns,
-        Element::Counter,
-        Element::Queue,
-        Element::Safe,
-        Element::AddProject,
         Element::Hire,
+        Element::Review,
+        Element::Racks,
+        Element::AddProject,
     ];
 
     pub fn key(self) -> &'static str {
         match self {
-            Element::Board => "board",
-            Element::Corkboard => "corkboard",
-            Element::Posters => "posters",
-            Element::Racks => "racks",
-            Element::AddDesk => "add-desk",
+            Element::Owner => "owner",
             Element::Lounge => "lounge",
-            Element::Coffee => "coffee",
-            Element::Trophies => "trophies",
-            Element::Review => "review",
-            Element::Crates => "crates",
-            Element::Returns => "returns",
-            Element::Counter => "counter",
-            Element::Queue => "queue",
-            Element::Safe => "safe",
-            Element::AddProject => "add-project",
             Element::Hire => "hire",
+            Element::Review => "review",
+            Element::Racks => "racks",
+            Element::AddProject => "add-project",
         }
     }
 
@@ -260,22 +161,12 @@ impl Element {
     /// What it is, on hover or with "What's what".
     pub fn hint(self) -> &'static str {
         match self {
-            Element::Board => "Whiteboard · goals",
-            Element::Corkboard => "Team board · hire",
-            Element::Posters => "House rules",
-            Element::Racks => "Checks · every project",
-            Element::AddDesk => "Add a desk",
+            Element::Owner => "Your office · what needs you",
             Element::Lounge => "Lounge · who's free",
-            Element::Coffee => "Coffee · close the office",
-            Element::Trophies => "Trophies",
-            Element::Review => "Review · reviewers and critics",
-            Element::Crates => "Shipped today",
-            Element::Returns => "Returns · failed work",
-            Element::Counter => "Front desk · approver, router",
-            Element::Queue => "Up next",
-            Element::Safe => "Safe · budget",
-            Element::AddProject => "Add a project",
             Element::Hire => "Hire someone",
+            Element::Review => "Review · reviewers and critics",
+            Element::Racks => "Checks · every project",
+            Element::AddProject => "Add a project",
         }
     }
 }
@@ -286,20 +177,106 @@ pub struct Pin {
     pub left: f64,
     pub top: f64,
     pub what: PinWhat,
+    /// Where it hangs at each width of the page, widest first, when that
+    /// differs from `left` and `top`.
+    pub spots: Vec<Spot>,
+}
+
+/// Where a label hangs: a point in percent of the scene's box and which
+/// point of the label sits on it, as shares of the label's own width and
+/// height (0 is its left or top, 1 its right or bottom).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub left: f64,
+    pub top: f64,
+    pub across: f64,
+    pub down: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PinWhat {
-    /// A ticket at a desk, in checks or in review.
+    /// A task at a desk, in checks or in review.
     Ticket(Worker),
-    /// A ticket ready to land, with its Land button.
-    Ready(Crate),
-    /// How many tickets wait for a desk, at the front desk.
-    Queue(usize),
-    /// How many goals are being planned, at the whiteboard.
-    Planning(usize),
     /// What a game element is, shown on hover or with "What's what".
     Hint(Element),
+    /// A project's sign by its team area on the company floor.
+    Sign(Box<Team>),
+}
+
+/// The company floor: one team area per project, the owner's office, the
+/// lounge, and the rooms every project shares.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Hq {
+    /// One per project, in the order of `studio.toml`.
+    pub teams: Vec<Team>,
+    /// What waits on the owner across every project.
+    pub owner_needs: usize,
+    /// Hires with nothing to do.
+    pub lounge: Vec<Person>,
+    /// Tickets a reviewer or critic is reading, with who reads them.
+    pub review: Vec<Worker>,
+    /// Tickets running their checks.
+    pub checks: Vec<Worker>,
+    /// The owner closed the office: nothing new starts.
+    pub closed: bool,
+}
+
+/// A project's team area.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Team {
+    pub project: String,
+    /// Its colour index (`pj-N`).
+    pub tint: usize,
+    pub phase: Phase,
+    /// Things in this project waiting on the owner.
+    pub needs: usize,
+    /// Who leads it, at the head of the area.
+    pub lead: Option<Person>,
+    /// Who is working on it now, at its desks.
+    pub members: Vec<Worker>,
+    /// The goal it is working towards.
+    pub milestone: Option<Milestone>,
+    /// The release under way.
+    pub release: Option<Launch>,
+    /// The version last released.
+    pub live: Option<String>,
+}
+
+/// Where a project stands, in the order a project moves through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Phase {
+    /// Nothing open and never released.
+    Idle,
+    Planning,
+    Building,
+    Testing,
+    Releasing,
+    /// Released, with nothing open.
+    Live,
+    /// The office is closed.
+    Paused,
+}
+
+/// The goal a project is working towards.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Milestone {
+    /// Its selection key, `goals/<plan id>`.
+    pub key: String,
+    pub title: String,
+    pub version: Option<String>,
+    pub done: usize,
+    pub total: usize,
+}
+
+/// A release under way.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Launch {
+    pub version: String,
+    pub done: usize,
+    pub total: usize,
+    /// It waits for the owner's go-ahead.
+    pub waiting: bool,
+    pub failed: bool,
 }
 
 /// The floor drawn: an SVG for the page, its size in SVG units, and the
@@ -310,4 +287,45 @@ pub struct Scene {
     pub height: f64,
     pub svg: String,
     pub pins: Vec<Pin>,
+    /// How full the signs are at each width of the page, from 0 (all it
+    /// can show) down: the floor is crowded when a larger form won't fit.
+    pub forms: [usize; super::pins::TIERS],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lead_or_a_manager_is_a_lead() {
+        for role in ["lead", "Lead", " manager ", "MANAGER"] {
+            assert_eq!(Role::of(role), Role::Lead, "{role}");
+        }
+        assert_eq!(Role::Lead.class(), "r-lead");
+        assert_eq!(Role::Owner.class(), "r-own");
+        // The owner is nobody's hire file.
+        assert_eq!(Role::of("owner"), Role::Other);
+        assert_eq!(Role::of("engineer"), Role::Engineer);
+    }
+
+    #[test]
+    fn every_element_can_be_picked_by_its_key() {
+        assert_eq!(Element::from_key("owner"), Some(Element::Owner));
+        assert_eq!(Element::Owner.hint(), "Your office · what needs you");
+        for e in Element::ALL {
+            assert_eq!(Element::from_key(e.key()), Some(e));
+        }
+        // What the old floor drew is no longer a control.
+        for gone in [
+            "board",
+            "corkboard",
+            "posters",
+            "coffee",
+            "trophies",
+            "crates",
+        ] {
+            assert_eq!(Element::from_key(gone), None, "{gone}");
+        }
+        assert_eq!(Element::from_key("nope"), None);
+    }
 }

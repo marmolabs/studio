@@ -27,6 +27,9 @@ pub enum StoreError {
     IdMismatch { expected: String, got: String },
 }
 
+#[cfg(test)]
+mod tests;
+
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,7 +222,8 @@ impl Store {
         Ok(events)
     }
 
-    pub fn claim_next(&mut self, at_ms: u64) -> Result<Option<Ticket>> {
+    #[cfg(test)]
+    pub(crate) fn claim_next(&mut self, at_ms: u64) -> Result<Option<Ticket>> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -561,7 +565,8 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn rebuild_projections(&mut self) -> Result<()> {
+    #[cfg(test)]
+    pub(crate) fn rebuild_projections(&mut self) -> Result<()> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

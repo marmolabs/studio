@@ -14,6 +14,8 @@ pub enum SettingsError {
     Missing,
     #[error("the change would leave studio.toml unreadable: {0}")]
     Unreadable(String),
+    #[error("studio.toml has no [[projects]] entry named {0}")]
+    NoProject(String),
 }
 
 /// A value to write: a whole number or a decimal.
@@ -41,6 +43,48 @@ pub fn set_values(
     paths: &StudioPaths,
     changes: &[(&str, &str, Setting)],
 ) -> Result<(), SettingsError> {
+    rewrite(paths, |text| {
+        let mut text = text.to_string();
+        for (table, key, value) in changes {
+            text = with_value(&text, table, key, &value.text());
+        }
+        Ok(text)
+    })
+}
+
+/// Sets `lead = "<hire>"` in the `[[projects]]` entry named `project`, or
+/// removes it when `lead` is none. Every other line and comment stays, and
+/// the result is checked and swapped in as `set_values` does.
+pub fn set_project_lead(
+    paths: &StudioPaths,
+    project: &str,
+    lead: Option<&str>,
+) -> Result<(), SettingsError> {
+    rewrite(paths, |text| {
+        let text = with_entry_value(text, project, "lead", lead)
+            .ok_or_else(|| SettingsError::NoProject(project.to_string()))?;
+        let config =
+            StudioConfig::parse(&text).map_err(|e| SettingsError::Unreadable(e.to_string()))?;
+        let now = config
+            .projects
+            .iter()
+            .find(|p| p.name == project)
+            .and_then(|p| p.lead.as_deref());
+        if now != lead {
+            return Err(SettingsError::Unreadable(format!(
+                "the lead of {project} could not be written there"
+            )));
+        }
+        Ok(text)
+    })
+}
+
+/// Reads studio.toml, lets `change` make the new text, checks that it loads
+/// and swaps it in whole.
+fn rewrite(
+    paths: &StudioPaths,
+    change: impl FnOnce(&str) -> Result<String, SettingsError>,
+) -> Result<(), SettingsError> {
     let path = paths.config_dir.join("studio.toml");
     let path = match fs::canonicalize(&path) {
         Ok(path) => path,
@@ -48,14 +92,11 @@ pub fn set_values(
         Err(e) => return Err(e.into()),
     };
     let before = fs::read_to_string(&path)?;
-    let mut text = before.clone();
-    for (table, key, value) in changes {
-        text = with_value(&text, table, key, &value.text());
-    }
+    let mut text = change(&before)?;
     if before.contains("\r\n") {
         text = text.replace("\r\n", "\n").replace('\n', "\r\n");
     }
-    if let Err(e) = toml::from_str::<StudioConfig>(&text) {
+    if let Err(e) = StudioConfig::parse(&text) {
         return Err(SettingsError::Unreadable(e.to_string()));
     }
     let staging = path.with_extension("toml.tmp");
@@ -88,6 +129,54 @@ fn with_value(text: &str, table: &str, key: &str, value: &str) -> String {
     let mut out = lines.join("\n");
     out.push('\n');
     out
+}
+
+/// `text` with `key` set to the string `value` (or removed, for none) in the
+/// `[[projects]]` entry named `project`; none when no entry has that name.
+fn with_entry_value(text: &str, project: &str, key: &str, value: Option<&str>) -> Option<String> {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut found = None;
+    for at in 0..lines.len() {
+        if !is_header(&lines[at], "[[projects]]") {
+            continue;
+        }
+        let end = lines[at + 1..]
+            .iter()
+            .position(|l| l.trim_start().starts_with('['))
+            .map_or(lines.len(), |n| at + 1 + n);
+        let named = (at + 1..end).find(|&i| {
+            names_key(&lines[i], "name")
+                && string_after_equals(&lines[i]).as_deref() == Some(project)
+        });
+        if let Some(named) = named {
+            found = Some((named, (at + 1..end).find(|&i| names_key(&lines[i], key))));
+            break;
+        }
+    }
+    let (named, existing) = found?;
+    match (existing, value) {
+        (Some(i), Some(value)) => lines[i] = replaced(&lines[i], &quoted(value)),
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, Some(value)) => lines.insert(named + 1, format!("{key} = {}", quoted(value))),
+        (None, None) => {}
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    Some(out)
+}
+
+/// `value` as a TOML string.
+fn quoted(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
+}
+
+/// The string that a `key = "value" # comment` line assigns.
+fn string_after_equals(line: &str) -> Option<String> {
+    let (_, value) = line.split_once('=')?;
+    let table: toml::Table = toml::from_str(&format!("v = {}", value.trim())).ok()?;
+    table.get("v")?.as_str().map(str::to_string)
 }
 
 /// Whether `line` is the table header `header`, with or without a comment.
@@ -228,6 +317,66 @@ mod tests {
                 .is_symlink()
         );
         assert!(fs::read_to_string(&kept).unwrap().contains("max_runs = 3"));
+    }
+
+    const TWO: &str = "# my studio\n[budget]\ndaily_usd = 5.0\n\n[concurrency]\nmax_runs = 1\n\n\
+                       # the game\n[[projects]]\nname = \"game\" # main\npath = \"/g\"\n\n\
+                       [[projects]]\nname = \"site\"\npath = \"/s\"\nlead = \"old\" # was\n";
+
+    fn lead_of(paths: &StudioPaths, project: &str) -> Option<String> {
+        let config = StudioConfig::load(paths).unwrap();
+        config
+            .projects
+            .iter()
+            .find(|p| p.name == project)
+            .and_then(|p| p.lead.clone())
+    }
+
+    #[test]
+    fn a_lead_is_added_to_the_named_project_and_nothing_else_changes() {
+        let (_tmp, paths) = home(TWO);
+        set_project_lead(&paths, "game", Some("boss")).unwrap();
+        assert_eq!(
+            read(&paths),
+            TWO.replace(
+                "name = \"game\" # main\n",
+                "name = \"game\" # main\nlead = \"boss\"\n"
+            )
+        );
+        assert_eq!(lead_of(&paths, "game").as_deref(), Some("boss"));
+        assert_eq!(lead_of(&paths, "site").as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn a_lead_is_replaced_keeping_its_comment_and_removed_with_its_line() {
+        let (_tmp, paths) = home(TWO);
+        set_project_lead(&paths, "site", Some("new")).unwrap();
+        assert_eq!(
+            read(&paths),
+            TWO.replace("lead = \"old\" # was", "lead = \"new\" # was")
+        );
+        set_project_lead(&paths, "site", None).unwrap();
+        assert_eq!(read(&paths), TWO.replace("lead = \"old\" # was\n", ""));
+        assert_eq!(lead_of(&paths, "site"), None);
+        // Clearing a lead that is not there changes nothing.
+        set_project_lead(&paths, "game", None).unwrap();
+        assert_eq!(read(&paths), TWO.replace("lead = \"old\" # was\n", ""));
+    }
+
+    #[test]
+    fn an_unknown_project_is_refused_and_the_file_left_alone() {
+        let (_tmp, paths) = home(TWO);
+        let err = set_project_lead(&paths, "nope", Some("boss"));
+        assert!(matches!(err, Err(SettingsError::NoProject(name)) if name == "nope"));
+        assert_eq!(read(&paths), TWO);
+    }
+
+    #[test]
+    fn a_lead_keeps_crlf_line_endings() {
+        let (_tmp, paths) = home(&TWO.replace('\n', "\r\n"));
+        set_project_lead(&paths, "game", Some("boss")).unwrap();
+        assert!(read(&paths).contains("name = \"game\" # main\r\nlead = \"boss\"\r\n"));
+        assert!(!read(&paths).replace("\r\n", "").contains('\n'));
     }
 
     #[test]

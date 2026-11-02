@@ -30,6 +30,8 @@ topcoat = { version = "=0.10.0", default-features = false, features = ["tailwind
 
 [dev-dependencies]
 reqwest = { workspace = true }
+studio-runtime = { path = "../studio-runtime" }
+studio-store = { path = "../studio-store" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "process"] }
 

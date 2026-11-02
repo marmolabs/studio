@@ -1,4 +1,5 @@
-//! The router: a cheap hire that picks who works on a new ticket.
+//! The router: a cheap hire that picks who works on a new ticket. In a project
+//! with a lead, the lead picks instead.
 
 use crate::quick::{self, Reply};
 use crate::studio::{Studio, StudioError, other};
@@ -8,13 +9,16 @@ use studio_config::ProjectConfig;
 use studio_core::rule::Hire;
 
 /// Roles that never take tickets, so the router is never offered them.
-const NOT_CANDIDATES: [&str; 3] = ["approver", "router", "reviewer"];
+const NOT_CANDIDATES: [&str; 4] = ["approver", "router", "reviewer", "lead"];
 
 /// Who was picked, and why. `reply` carries the router's spend, for the caller
 /// to charge to the new ticket.
 pub(crate) struct Routed {
     pub hire: String,
     pub reason: String,
+    /// The hire that picked: the project's lead or the studio's router. None
+    /// when there was no one to ask.
+    pub by: Option<String>,
     pub reply: Option<Reply>,
 }
 
@@ -37,7 +41,15 @@ fn cut(text: &str, max: usize) -> String {
     format!("{head}…")
 }
 
-pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str) -> String {
+/// The ask. `led` is the project when its lead is the one picking.
+pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str, led: Option<&str>) -> String {
+    let who = match led {
+        Some(project) => format!(
+            "You lead the project {project}. A new ticket was filed in it: assign it to \
+             the member of your team best suited to it.\n\n"
+        ),
+        None => String::new(),
+    };
     let list: Vec<String> = candidates
         .iter()
         .map(|h| {
@@ -52,7 +64,7 @@ pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str) -> String 
         })
         .collect();
     format!(
-        "Pick the hire best suited to this ticket.\n\nHires:\n{}\n\n\
+        "{who}Pick the hire best suited to this ticket.\n\nHires:\n{}\n\n\
          Ticket: {title}\n\n{}\n\n\
          Reply with one or two sentences, then end with exactly one line:\n\
          HIRE: <id>",
@@ -93,7 +105,8 @@ fn engineer(studio: &Studio) -> Result<String, StudioError> {
         .ok_or_else(|| other("no hire given and no router or engineer hire to pick one"))
 }
 
-/// Picks the hire for a new ticket in `project`.
+/// Picks the hire for a new ticket in `project`: its lead when it has one,
+/// otherwise the studio's router.
 pub(crate) async fn pick(
     studio: &Arc<Studio>,
     project: &str,
@@ -101,10 +114,12 @@ pub(crate) async fn pick(
     title: &str,
     detail: &str,
 ) -> Result<Routed, StudioError> {
-    let Some(router) = studio.first_with_role("router") else {
+    let lead = studio.lead_of(project);
+    let Some(router) = lead.clone().or_else(|| studio.first_with_role("router")) else {
         return Ok(Routed {
             hire: engineer(studio)?,
             reason: "no router; the first engineer".to_string(),
+            by: None,
             reply: None,
         });
     };
@@ -114,14 +129,17 @@ pub(crate) async fn pick(
         .flatten()
         .map(|config| config.gates.into_iter().map(|g| g.hire).collect())
         .unwrap_or_default();
-    let found = candidates(&hires, &critics);
+    let mut found = candidates(&hires, &critics);
+    // A lead assigns work to its team, not to itself.
+    found.retain(|h| lead.as_ref().is_none_or(|lead| h.id != lead.id));
+    let led = lead.as_ref().map(|_| project);
     let asked = quick::ask(
         studio,
         None,
         project,
         &router,
         path,
-        &prompt(&found, title, detail),
+        &prompt(&found, title, detail, led),
     )
     .await;
     match asked {
@@ -138,12 +156,14 @@ pub(crate) async fn pick(
             Ok(Routed {
                 hire,
                 reason,
+                by: Some(router.id.0.clone()),
                 reply: Some(reply),
             })
         }
         Err(err) => Ok(Routed {
             hire: engineer(studio)?,
             reason: format!("{err}; the first engineer"),
+            by: Some(router.id.0.clone()),
             reply: None,
         }),
     }
@@ -177,6 +197,7 @@ mod tests {
             hire("dev", "engineer"),
             hire("approver", "approver"),
             hire("router", "router"),
+            hire("boss", "lead"),
             hire("critic", "reviewer"),
             hire("art", "artist"),
         ];
@@ -196,10 +217,14 @@ mod tests {
     #[test]
     fn the_prompt_lists_hires_and_the_ticket() {
         let hires = vec![hire("dev", "engineer")];
-        let text = prompt(&candidates(&hires, &[]), "Add a menu", "Escape opens it.");
+        let found = candidates(&hires, &[]);
+        let text = prompt(&found, "Add a menu", "Escape opens it.", None);
         assert!(text.contains("- dev: DEV, role engineer, model m. You write code."));
         assert!(text.contains("Add a menu"));
         assert!(text.contains("Escape opens it."));
+        assert!(!text.contains("You lead"));
+        let led = prompt(&found, "Add a menu", "", Some("game"));
+        assert!(led.contains("You lead the project game."));
     }
 
     #[test]

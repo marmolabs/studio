@@ -1,30 +1,26 @@
-//! Who is where on the isometric floor, from studiod's state.
+//! Who is where on the company floor, from studiod's state.
 
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{HeldReason, Ticket, TicketState};
+use studiod::api::{ReleaseState, ReleaseView};
 
 use super::floor::{self, Room};
-use super::model::{Crate, Desk, Doing, Floor, Note, Person, Role, Worker};
+use super::model::{Doing, Hq, Launch, Milestone, Person, Role, Team, Worker};
 use super::panel::Extra;
-use super::{Office, key};
+use super::{Office, facts, key};
 use crate::words;
 
-/// Desks the office can grow to; at this many there is no "+" spot.
-const MOST_DESKS: usize = 9;
 const MINUTE_MS: u64 = 60_000;
 
-/// The floor for `office`, with what the panel read beyond it: the
-/// trophies and the rule files.
-pub fn floor(office: &Office, extra: &Extra) -> Floor {
-    let closed = office.status.closed;
+/// The company floor for `office`: a team for each project, in the order of
+/// `studio.toml`, and the people and rooms they share.
+pub fn hq(office: &Office, _extra: &Extra) -> Hq {
+    let projects = office.project_names();
     let seated = at_desks(office);
-    let slots = usize::try_from(office.status.max_runs)
-        .unwrap_or(usize::MAX)
-        .max(seated.len());
-    let desks: Vec<Desk> = (0..slots)
-        .map(|i| Desk {
-            worker: seated.get(i).cloned(),
-        })
+    let teams = projects
+        .iter()
+        .enumerate()
+        .map(|(i, name)| team(office, &seated, name, facts::wrap(i)))
         .collect();
     let in_room = |which: Room| -> Vec<&Ticket> {
         office
@@ -33,77 +29,82 @@ pub fn floor(office: &Office, extra: &Extra) -> Floor {
             .filter(|t| floor::room(t) == which)
             .collect()
     };
-    let checks = in_room(Room::Checks)
-        .into_iter()
-        .map(|t| worker(office, t, t.hire.to_string(), 0.5))
-        .collect();
-    let review = in_room(Room::Review)
-        .into_iter()
-        .map(|t| judged(office, t))
-        .collect();
-    let finished = floor::shipped(office);
-    let ended = |state: &str| -> Vec<Crate> {
-        finished
-            .iter()
-            .filter(|(t, _)| t.state.kind() == state)
-            .map(|(t, _)| crate_of(t))
-            .collect()
-    };
-    let mut planners: Vec<Person> = Vec::new();
-    for ticket in in_room(Room::Planning) {
-        let hire = ticket.hire.to_string();
-        if !planners.iter().any(|p| p.hire == hire) {
-            planners.push(person(office, hire, None));
-        }
-    }
-    Floor {
-        room_for_desk: desks.len() < MOST_DESKS,
-        desks,
-        checks,
-        review,
-        ready: in_room(Room::Ready).into_iter().map(crate_of).collect(),
-        shipped: ended("landed"),
-        returns: ended("failed"),
-        goals: floor::goals(office)
-            .into_iter()
-            .map(|g| Note {
-                key: key("goals", &g.plan.id.to_string()),
-                project: g.plan.project.to_string(),
-                title: g.name(),
-                landed: g.landed(),
-                total: g.filed.len(),
-                done: g.state() == "done",
-            })
-            .collect(),
-        planners,
+    Hq {
+        teams,
+        owner_needs: facts::owner_needs(office),
         lounge: floor::resting(office)
             .into_iter()
+            .filter(|m| !facts::leads(office, &m.id) && Role::of(&m.role) != Role::Lead)
             .map(|m| {
                 let idle = floor::idle_since(office, &m.id)
                     .map(|at| office.now.saturating_sub(at) / MINUTE_MS);
                 person(office, m.id, idle)
             })
             .collect(),
-        front: floor::front_desk(office)
+        review: in_room(Room::Review)
             .into_iter()
-            .map(|m| person(office, m.id, None))
+            .map(|t| judged(office, t))
             .collect(),
-        queued: in_room(Room::UpNext).len(),
-        closed,
-        projects: office.status.projects.clone(),
-        trophies: extra
-            .trophies
-            .iter()
-            .filter(|t| t.earned_at.is_some())
-            .count(),
-        rules: extra.rules.len(),
-        hires: office
-            .status
-            .team
-            .iter()
-            .filter(|m| !floor::FRONT.contains(&m.role.as_str()))
-            .count(),
+        checks: in_room(Room::Checks)
+            .into_iter()
+            .map(|t| worker(office, t, t.hire.to_string(), 0.5))
+            .collect(),
+        closed: office.status.closed,
     }
+}
+
+/// One project's team area.
+fn team(office: &Office, seated: &[Worker], project: &str, tint: usize) -> Team {
+    let view = office.project(project);
+    Team {
+        project: project.to_string(),
+        tint,
+        phase: facts::phase(office, project),
+        needs: facts::project_needs(office, project),
+        lead: view.and_then(|v| v.lead.clone()).map(|hire| Person {
+            role: Role::Lead,
+            name: office.name_of(&hire),
+            hire,
+            idle_minutes: None,
+        }),
+        members: seated
+            .iter()
+            .filter(|w| w.project == project)
+            .cloned()
+            .collect(),
+        milestone: milestone(office, project),
+        release: view.and_then(|v| v.release.as_ref()).and_then(launch),
+        live: view
+            .and_then(|v| v.last_release.as_ref())
+            .map(|r| r.version.clone()),
+    }
+}
+
+/// The project's open goal, preferring one that is a milestone towards a
+/// version.
+fn milestone(office: &Office, project: &str) -> Option<Milestone> {
+    let goal = facts::milestone(office, project)?;
+    Some(Milestone {
+        key: key("goals", &goal.plan.id.to_string()),
+        title: goal.name(),
+        version: goal.plan.version.clone(),
+        done: goal.landed(),
+        total: goal.filed.len(),
+    })
+}
+
+/// A release as the sign tells it; one that was cancelled is not shown.
+fn launch(release: &ReleaseView) -> Option<Launch> {
+    if release.state == ReleaseState::Cancelled {
+        return None;
+    }
+    Some(Launch {
+        version: release.version.clone(),
+        done: release.steps.iter().filter(|s| s.done).count(),
+        total: release.steps.len(),
+        waiting: release.state == ReleaseState::Waiting,
+        failed: release.state == ReleaseState::Failed,
+    })
 }
 
 /// The workers at desks: oldest claim first, then by id so the order holds
@@ -144,6 +145,7 @@ fn worker(office: &Office, ticket: &Ticket, hire: String, progress: f32) -> Work
         project: ticket.project.to_string(),
         title: ticket.title.clone(),
         role: role_of(office, &hire),
+        name: office.name_of(&hire),
         hire,
         doing: doing(office, ticket),
         progress,
@@ -172,6 +174,9 @@ fn doing(office: &Office, ticket: &Ticket) -> Doing {
 }
 
 fn role_of(office: &Office, hire: &str) -> Role {
+    if facts::leads(office, hire) {
+        return Role::Lead;
+    }
     office
         .member(hire)
         .map_or(Role::Other, |m| Role::of(&m.role))
@@ -180,16 +185,9 @@ fn role_of(office: &Office, hire: &str) -> Role {
 fn person(office: &Office, hire: String, idle_minutes: Option<u64>) -> Person {
     Person {
         role: role_of(office, &hire),
+        name: office.name_of(&hire),
         hire,
         idle_minutes,
-    }
-}
-
-fn crate_of(ticket: &Ticket) -> Crate {
-    Crate {
-        ticket: ticket.id.to_string(),
-        project: ticket.project.to_string(),
-        title: ticket.title.clone(),
     }
 }
 
@@ -199,11 +197,11 @@ mod tests {
     use crate::client::{Happened, Member};
     use crate::summary::Judge;
     use serde_json::{Value, json};
-    use studiod::api::AskView;
+    use studiod::api::{AskView, ProjectView};
 
-    fn ticket(id: &str, state: Value, extra: Value) -> Ticket {
+    fn ticket(id: &str, project: &str, state: Value, extra: Value) -> Ticket {
         let mut t = json!({
-            "id": id, "project": "game", "title": format!("Title {id}"),
+            "id": id, "project": project, "title": format!("Title {id}"),
             "goal": "", "hire": "dev", "state": state,
             "attempts": 0, "base_branch": "main", "created_at": 0,
         });
@@ -214,7 +212,7 @@ mod tests {
     }
 
     fn work(id: &str, state: Value) -> Ticket {
-        ticket(id, state, json!({}))
+        ticket(id, "game", state, json!({}))
     }
 
     fn plan(id: &str, state: Value, extra: Value) -> Ticket {
@@ -222,7 +220,7 @@ mod tests {
         if let (Some(f), Some(extra)) = (fields.as_object_mut(), extra.as_object()) {
             f.extend(extra.clone());
         }
-        ticket(id, state, fields)
+        ticket(id, "game", state, fields)
     }
 
     fn member(id: &str, role: &str) -> Member {
@@ -230,6 +228,7 @@ mod tests {
             id: id.into(),
             role: role.into(),
             model: "m".into(),
+            name: Default::default(),
         }
     }
 
@@ -250,23 +249,48 @@ mod tests {
         }
     }
 
-    fn office(max_runs: u64, tickets: Vec<Ticket>) -> Office {
+    fn office(tickets: Vec<Ticket>) -> Office {
         let mut office = Office {
             tickets,
             now: 10_000_000,
             ..Office::default()
         };
-        office.status.max_runs = max_runs;
+        office.status.projects = vec!["game".into(), "site".into()];
         office.status.team = vec![
             member("dev", "engineer"),
             member("ana", "writer"),
             member("pro", "producer"),
             member("rev", "reviewer"),
             member("cri", "critic"),
+            member("nora", "lead"),
+            member("sam", "lead"),
             member("boss", "approver"),
             member("rout", "router"),
         ];
+        office.projects = vec![
+            ProjectView {
+                name: "game".into(),
+                lead: Some("nora".into()),
+                ..ProjectView::default()
+            },
+            ProjectView {
+                name: "site".into(),
+                lead: Some("sam".into()),
+                ..ProjectView::default()
+            },
+        ];
         office
+    }
+
+    fn release(state: &str, done: usize) -> ReleaseView {
+        let steps: Vec<Value> = (0..5)
+            .map(|i| json!({"name": format!("Step {i}"), "done": i < done}))
+            .collect();
+        serde_json::from_value(json!({
+            "project": "game", "version": "1.2", "state": state, "steps": steps,
+            "started_at": 0,
+        }))
+        .unwrap()
     }
 
     fn ask(ticket: &str) -> AskView {
@@ -282,135 +306,256 @@ mod tests {
         }
     }
 
-    fn seated(f: &Floor) -> Vec<&Worker> {
-        f.desks.iter().filter_map(|d| d.worker.as_ref()).collect()
+    fn floor_of(office: &Office) -> Hq {
+        hq(office, &Extra::default())
     }
 
     #[test]
-    fn desks_follow_max_runs_and_grow_to_fit_workers() {
-        let free = floor(
-            &office(3, vec![work("G-1", json!("working"))]),
-            &Extra::default(),
+    fn a_team_for_each_project_in_the_studios_order() {
+        let f = floor_of(&office(vec![]));
+        let names: Vec<(&str, usize)> = f
+            .teams
+            .iter()
+            .map(|t| (t.project.as_str(), t.tint))
+            .collect();
+        assert_eq!(names, [("game", 0), ("site", 1)]);
+        assert!(!f.closed);
+        let lead = f.teams[0].lead.as_ref().unwrap();
+        assert_eq!((lead.hire.as_str(), lead.role), ("nora", Role::Lead));
+        assert_eq!(
+            f.teams[1].lead.as_ref().map(|p| p.hire.as_str()),
+            Some("sam")
         );
-        assert_eq!(free.desks.len(), 3);
-        assert_eq!(free.desks.iter().filter(|d| d.worker.is_none()).count(), 2);
-        assert!(free.room_for_desk);
-
-        let crowded = floor(
-            &office(
-                1,
-                vec![work("G-1", json!("working")), work("G-2", json!("claimed"))],
-            ),
-            &Extra::default(),
-        );
-        assert_eq!(crowded.desks.len(), 2);
-        assert!(crowded.desks.iter().all(|d| d.worker.is_some()));
-
-        let full = floor(&office(9, vec![]), &Extra::default());
-        assert_eq!(full.desks.len(), 9);
-        assert!(!full.room_for_desk);
-        assert!(floor(&office(8, vec![]), &Extra::default()).room_for_desk);
     }
 
     #[test]
-    fn workers_sit_oldest_claim_first_then_by_id() {
-        let mut o = office(
-            4,
-            vec![
-                work("G-4", json!("working")),
-                work("G-2", json!("working")),
-                work("G-3", json!("working")),
-                work("G-1", json!("working")),
-            ],
+    fn a_project_without_a_lead_has_none() {
+        let mut o = office(vec![]);
+        o.projects[1].lead = None;
+        assert!(floor_of(&o).teams[1].lead.is_none());
+    }
+
+    #[test]
+    fn the_members_are_the_people_on_the_projects_tasks_at_desks() {
+        let mut o = office(vec![
+            work("G-1", json!("working")),
+            ticket("S-1", "site", json!("claimed"), json!({"hire": "ana"})),
+            work("G-2", json!({"asking": {"ask": "a1"}})),
+            // Not at desks: in checks, in review, ready, waiting, and plans.
+            work("G-3", json!("checking")),
+            work("G-4", json!("reviewing")),
+            work("G-5", json!("ready")),
+            work("G-6", json!("queued")),
+            plan("G-7", json!("working"), json!({"hire": "pro"})),
+        ]);
+        o.asks = vec![ask("G-2")];
+        let f = floor_of(&o);
+        let ids =
+            |t: &Team| -> Vec<String> { t.members.iter().map(|w| w.ticket.clone()).collect() };
+        assert_eq!(ids(&f.teams[0]), ["G-1", "G-2"]);
+        assert_eq!(ids(&f.teams[1]), ["S-1"]);
+        let first = &f.teams[0].members[0];
+        assert_eq!(
+            (first.hire.as_str(), first.role, first.progress),
+            ("dev", Role::Engineer, 0.25)
         );
+        assert_eq!(
+            f.teams[0].members[1].doing,
+            Doing::Asking("Run a command".into())
+        );
+    }
+
+    #[test]
+    fn members_sit_oldest_claim_first_then_by_id() {
+        let mut o = office(vec![
+            work("G-4", json!("working")),
+            work("G-2", json!("working")),
+            work("G-3", json!("working")),
+            work("G-1", json!("working")),
+        ]);
         o.recent = vec![
             happened("G-3", 10, json!({"type": "claimed"})),
             happened("G-1", 20, json!({"type": "claimed"})),
         ];
-        let f = floor(&o, &Extra::default());
-        let order: Vec<&str> = seated(&f).iter().map(|w| w.ticket.as_str()).collect();
+        let f = floor_of(&o);
+        let order: Vec<&str> = f.teams[0]
+            .members
+            .iter()
+            .map(|w| w.ticket.as_str())
+            .collect();
         // No claim in the window means an older claim; those go first, by id.
         assert_eq!(order, ["G-2", "G-4", "G-3", "G-1"]);
     }
 
     #[test]
-    fn only_desk_tickets_sit_at_desks() {
-        let o = office(
-            5,
-            vec![
-                work("G-1", json!("working")),
-                work("G-2", json!("checking")),
-                work("G-3", json!("reviewing")),
-                work("G-4", json!("ready")),
-                work("G-5", json!("queued")),
-                plan("G-6", json!("working"), json!({})),
-            ],
-        );
-        let f = floor(&o, &Extra::default());
-        let at = seated(&f);
-        assert_eq!(at.len(), 1);
-        assert_eq!(at[0].ticket, "G-1");
-        assert_eq!(at[0].progress, 0.25);
-        assert_eq!(at[0].role, Role::Engineer);
-        assert_eq!(at[0].hire, "dev");
-        assert_eq!(at[0].project, "game");
-        assert_eq!(at[0].title, "Title G-1");
-        assert_eq!(at[0].doing, Doing::Working);
-        assert_eq!(f.queued, 1);
-    }
-
-    #[test]
-    fn asking_and_held_say_what_they_want() {
-        let mut o = office(
-            7,
-            vec![
-                work("G-1", json!({"asking": {"ask": "a1"}})),
-                work("G-2", json!({"held": {"reason": "budget"}})),
-                work("G-3", json!({"held": {"reason": "quota"}})),
-                work("G-4", json!({"held": {"reason": "auth"}})),
-                work("G-5", json!({"held": {"reason": "paused"}})),
-                work("G-6", json!("claimed")),
-                work("G-7", json!({"asking": {"ask": "a9"}})),
-            ],
-        );
-        o.asks = vec![ask("G-1")];
-        let f = floor(&o, &Extra::default());
+    fn a_hold_says_why_and_an_unknown_hire_is_other() {
+        let o = office(vec![
+            work("G-1", json!({"held": {"reason": "budget"}})),
+            work("G-2", json!({"held": {"reason": "paused"}})),
+            work("G-3", json!({"asking": {"ask": "a9"}})),
+            ticket("G-4", "game", json!("working"), json!({"hire": "ghost"})),
+        ]);
+        let f = floor_of(&o);
         let doing = |id: &str| {
-            seated(&f)
-                .into_iter()
+            f.teams[0]
+                .members
+                .iter()
                 .find(|w| w.ticket == id)
-                .map(|w| w.doing.clone())
+                .map(|w| (w.doing.clone(), w.role))
                 .unwrap()
         };
-        assert_eq!(doing("G-1"), Doing::Asking("Run a command".into()));
-        assert_eq!(doing("G-2"), Doing::Held("budget".into()));
-        assert_eq!(doing("G-3"), Doing::Held("quota".into()));
-        assert_eq!(doing("G-4"), Doing::Held("login".into()));
-        assert_eq!(doing("G-5"), Doing::Held("paused".into()));
-        assert_eq!(doing("G-6"), Doing::Working);
-        // An ask studiod no longer lists still shows the ticket needs you.
-        assert_eq!(doing("G-7"), Doing::Asking("Needs you".into()));
+        assert_eq!(doing("G-1").0, Doing::Held("budget".into()));
+        assert_eq!(doing("G-2").0, Doing::Held("paused".into()));
+        // An ask studiod no longer lists still shows the task needs you.
+        assert_eq!(doing("G-3").0, Doing::Asking("Needs you".into()));
+        assert_eq!(doing("G-4").1, Role::Other);
     }
 
     #[test]
-    fn checks_and_review_hold_their_tickets() {
-        let mut o = office(
-            3,
-            vec![
-                work("G-1", json!("checking")),
-                work("G-2", json!("reviewing")),
-                work("G-3", json!("reviewing")),
-                ticket(
-                    "G-4",
-                    json!({"asking": {"ask": "a1"}}),
-                    json!({"held_from": "reviewing"}),
-                ),
-            ],
+    fn the_phase_comes_from_the_one_set_of_rules() {
+        let mut o = office(vec![work("G-1", json!("working"))]);
+        let f = floor_of(&o);
+        assert_eq!(f.teams[0].phase, facts::phase(&o, "game"));
+        assert_eq!(f.teams[1].phase, facts::phase(&o, "site"));
+        o.status.closed = true;
+        assert!(floor_of(&o).closed);
+        assert_eq!(
+            floor_of(&o).teams[0].phase,
+            super::super::model::Phase::Paused
         );
+    }
+
+    #[test]
+    fn the_milestone_is_the_open_goal_preferring_one_with_a_version() {
+        let o = office(vec![
+            plan("P-1", json!("landed"), json!({"goal": "Polish\nmore"})),
+            ticket("G-1", "game", json!("landed"), json!({"parent": "P-1"})),
+            plan(
+                "P-2",
+                json!("landed"),
+                json!({"goal": "Boss fight", "version": "0.4"}),
+            ),
+            ticket("G-2", "game", json!("landed"), json!({"parent": "P-2"})),
+            ticket("G-3", "game", json!("working"), json!({"parent": "P-2"})),
+            ticket("G-4", "game", json!("cancelled"), json!({"parent": "P-2"})),
+            // A merged goal is not open.
+            plan(
+                "P-3",
+                json!("landed"),
+                json!({"goal": "Merged", "version": "0.1"}),
+            ),
+            ticket("G-5", "game", json!("landed"), json!({"parent": "P-3"})),
+        ]);
+        let mut o = o;
+        o.merged = vec!["G-5".into()];
+        let f = floor_of(&o);
+        let m = f.teams[0].milestone.as_ref().unwrap();
+        assert_eq!(m.key, "goals/P-2");
+        assert_eq!(m.title, "Boss fight");
+        assert_eq!(m.version.as_deref(), Some("0.4"));
+        // Landed over every task filed, cancelled ones left out.
+        assert_eq!((m.done, m.total), (1, 2));
+        assert!(f.teams[1].milestone.is_none());
+
+        // Without a version, the first open goal.
+        let o = office(vec![
+            plan("P-1", json!("landed"), json!({"goal": "Polish\nmore"})),
+            ticket("G-1", "game", json!("landed"), json!({"parent": "P-1"})),
+        ]);
+        let m = floor_of(&o).teams[0].milestone.clone().unwrap();
+        assert_eq!(
+            (m.title.as_str(), m.version, m.done, m.total),
+            ("Polish", None, 1, 1)
+        );
+    }
+
+    #[test]
+    fn a_release_shows_its_steps_and_what_it_waits_for() {
+        let mut o = office(vec![]);
+        o.projects[0].release = Some(release("waiting", 4));
+        o.projects[1].release = Some(release("failed", 2));
+        o.projects[1].last_release = Some(release("released", 5));
+        let f = floor_of(&o);
+        let r = f.teams[0].release.clone().unwrap();
+        assert_eq!((r.version.as_str(), r.done, r.total), ("1.2", 4, 5));
+        assert!(r.waiting && !r.failed);
+        let r = f.teams[1].release.clone().unwrap();
+        assert!(r.failed && !r.waiting);
+        assert_eq!(f.teams[1].live.as_deref(), Some("1.2"));
+        assert_eq!(f.teams[0].live, None);
+        // A cancelled release is gone from the sign.
+        o.projects[0].release = Some(release("cancelled", 1));
+        assert!(floor_of(&o).teams[0].release.is_none());
+    }
+
+    #[test]
+    fn what_waits_for_the_owner_is_counted_by_project_and_across() {
+        let mut o = office(vec![
+            work("G-1", json!({"asking": {"ask": "a1"}})),
+            ticket(
+                "S-1",
+                "site",
+                json!({"held": {"reason": "auth"}}),
+                json!({}),
+            ),
+        ]);
+        o.asks = vec![ask("G-1")];
+        o.projects[1].release = Some(release("waiting", 4));
+        let f = floor_of(&o);
+        assert_eq!(f.teams[0].needs, 1);
+        // A held task and a release waiting for the go-ahead.
+        assert_eq!(f.teams[1].needs, 2);
+        assert_eq!(f.owner_needs, 3);
+    }
+
+    #[test]
+    fn the_lounge_is_free_people_without_the_leads() {
+        let mut o = office(vec![
+            plan("P-1", json!("working"), json!({"hire": "pro"})),
+            work("G-1", json!("working")),
+            work("G-2", json!("reviewing")),
+        ]);
+        o.judges.insert("G-2".into(), judge("rev"));
+        let f = floor_of(&o);
+        // dev is at a desk, pro plans, rev judges; the leads and the front
+        // desk are elsewhere.
+        let lounge: Vec<&str> = f.lounge.iter().map(|p| p.hire.as_str()).collect();
+        assert_eq!(lounge, ["ana", "cri"]);
+        assert_eq!(f.lounge[0].role, Role::Writer);
+    }
+
+    #[test]
+    fn the_lounge_counts_idle_minutes() {
+        let mut o = office(vec![work("G-1", json!("checking"))]);
+        o.recent = vec![happened(
+            "G-1",
+            o.now - 7 * 60_000 - 5_000,
+            json!({"type": "checks_started"}),
+        )];
+        let f = floor_of(&o);
+        let dev = f.lounge.iter().find(|p| p.hire == "dev").unwrap();
+        assert_eq!(dev.idle_minutes, Some(7));
+        let ana = f.lounge.iter().find(|p| p.hire == "ana").unwrap();
+        assert_eq!(ana.idle_minutes, None);
+    }
+
+    #[test]
+    fn checks_and_review_hold_their_tasks() {
+        let mut o = office(vec![
+            work("G-1", json!("checking")),
+            work("G-2", json!("reviewing")),
+            work("G-3", json!("reviewing")),
+            ticket(
+                "G-4",
+                "game",
+                json!({"asking": {"ask": "a1"}}),
+                json!({"held_from": "reviewing"}),
+            ),
+        ]);
         o.asks = vec![ask("G-4")];
         o.judges.insert("G-2".into(), judge("cri"));
-        let f = floor(&o, &Extra::default());
-        assert!(seated(&f).is_empty());
+        let f = floor_of(&o);
+        assert!(f.teams[0].members.is_empty());
         assert_eq!(f.checks.len(), 1);
         assert_eq!(f.checks[0].ticket, "G-1");
         assert_eq!(f.checks[0].progress, 0.5);
@@ -421,142 +566,10 @@ mod tests {
         assert_eq!(review("G-2").hire, "cri");
         assert_eq!(review("G-2").role, Role::Critic);
         assert_eq!(review("G-2").progress, 0.75);
-        // No judge known: the ticket's own hire.
+        // No judge known: the task's own hire.
         assert_eq!(review("G-3").hire, "dev");
         assert_eq!(review("G-3").role, Role::Engineer);
-        // A ticket that asked in review waits there.
+        // A task that asked in review waits there.
         assert_eq!(review("G-4").doing, Doing::Asking("Run a command".into()));
-    }
-
-    #[test]
-    fn unknown_hires_are_other() {
-        let o = office(
-            1,
-            vec![ticket("G-1", json!("working"), json!({"hire": "ghost"}))],
-        );
-        let f = floor(&o, &Extra::default());
-        assert_eq!(seated(&f)[0].role, Role::Other);
-    }
-
-    #[test]
-    fn the_dock_holds_ready_shipped_and_returned_tickets() {
-        let mut o = office(
-            1,
-            vec![
-                work("G-1", json!("ready")),
-                work("G-2", json!("landed")),
-                work("G-3", json!("landed")),
-                work("G-4", json!({"failed": {"class": "checks", "detail": "x"}})),
-                work("G-5", json!("cancelled")),
-                work("G-6", json!("landed")),
-            ],
-        );
-        o.recent = vec![
-            happened("G-2", 100, json!({"type": "landed"})),
-            happened("G-3", 300, json!({"type": "landed"})),
-            happened(
-                "G-4",
-                200,
-                json!({"type": "failed", "class": "checks", "detail": "x"}),
-            ),
-            happened("G-5", 250, json!({"type": "cancelled"})),
-        ];
-        let f = floor(&o, &Extra::default());
-        assert_eq!(f.ready.len(), 1);
-        assert_eq!(f.ready[0].ticket, "G-1");
-        assert_eq!(f.ready[0].title, "Title G-1");
-        let shipped: Vec<&str> = f.shipped.iter().map(|c| c.ticket.as_str()).collect();
-        // Newest first; G-6 landed before the window and cancelled is no crate.
-        assert_eq!(shipped, ["G-3", "G-2"]);
-        let returns: Vec<&str> = f.returns.iter().map(|c| c.ticket.as_str()).collect();
-        assert_eq!(returns, ["G-4"]);
-    }
-
-    #[test]
-    fn goals_become_notes_keyed_for_the_inspector() {
-        let mut o = office(
-            1,
-            vec![
-                plan("P-1", json!("landed"), json!({"goal": "Ship waves\nmore"})),
-                ticket("G-1", json!("landed"), json!({"parent": "P-1"})),
-                ticket("G-2", json!("working"), json!({"parent": "P-1"})),
-                plan("P-2", json!("landed"), json!({"goal": "Polish"})),
-                ticket("G-3", json!("landed"), json!({"parent": "P-2"})),
-                plan("P-3", json!("landed"), json!({"goal": "Merged"})),
-                ticket("G-4", json!("landed"), json!({"parent": "P-3"})),
-                plan(
-                    "P-4",
-                    json!({"failed": {"class": "crash", "detail": "y"}}),
-                    json!({}),
-                ),
-            ],
-        );
-        o.merged = vec!["G-4".into()];
-        let f = floor(&o, &Extra::default());
-        assert_eq!(f.goals.len(), 2);
-        let waves = &f.goals[0];
-        assert_eq!(waves.key, "goals/P-1");
-        assert_eq!(waves.title, "Ship waves");
-        assert_eq!(waves.project, "game");
-        assert_eq!((waves.landed, waves.total, waves.done), (1, 2, false));
-        let polish = &f.goals[1];
-        assert_eq!(polish.key, "goals/P-2");
-        assert_eq!((polish.landed, polish.total, polish.done), (1, 1, true));
-    }
-
-    #[test]
-    fn producers_plan_and_the_rest_rest() {
-        let mut o = office(
-            2,
-            vec![
-                plan("P-1", json!("working"), json!({"hire": "pro"})),
-                work("G-1", json!("working")),
-                work("G-2", json!("reviewing")),
-            ],
-        );
-        o.judges.insert("G-2".into(), judge("rev"));
-        let f = floor(&o, &Extra::default());
-        assert_eq!(f.planners.len(), 1);
-        assert_eq!(f.planners[0].hire, "pro");
-        assert_eq!(f.planners[0].role, Role::Producer);
-        assert_eq!(f.planners[0].idle_minutes, None);
-        // dev is at a desk, pro plans, rev judges; the front desk stays out.
-        let lounge: Vec<&str> = f.lounge.iter().map(|p| p.hire.as_str()).collect();
-        assert_eq!(lounge, ["ana", "cri"]);
-        assert_eq!(f.lounge[0].role, Role::Writer);
-
-        let front: Vec<(&str, Role)> = f.front.iter().map(|p| (p.hire.as_str(), p.role)).collect();
-        assert_eq!(front, [("boss", Role::Approver), ("rout", Role::Router)]);
-    }
-
-    #[test]
-    fn the_lounge_counts_idle_minutes() {
-        let mut o = office(1, vec![work("G-1", json!("checking"))]);
-        o.recent = vec![happened(
-            "G-1",
-            o.now - 7 * 60_000 - 5_000,
-            json!({"type": "checks_started"}),
-        )];
-        let f = floor(&o, &Extra::default());
-        let dev = f.lounge.iter().find(|p| p.hire == "dev").unwrap();
-        assert_eq!(dev.idle_minutes, Some(7));
-        let ana = f.lounge.iter().find(|p| p.hire == "ana").unwrap();
-        assert_eq!(ana.idle_minutes, None);
-    }
-
-    #[test]
-    fn the_rest_is_carried_over() {
-        let mut o = office(
-            1,
-            vec![work("G-1", json!("queued")), work("G-2", json!("queued"))],
-        );
-        o.status.projects = vec!["game".into(), "site".into()];
-        assert!(!floor(&o, &Extra::default()).closed);
-        o.status.closed = true;
-        let f = floor(&o, &Extra::default());
-        assert_eq!(f.queued, 2);
-        assert!(f.closed);
-        assert_eq!(f.projects, ["game", "site"]);
-        assert_eq!(f.tint("site"), 1);
     }
 }

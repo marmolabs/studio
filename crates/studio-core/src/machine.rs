@@ -145,6 +145,7 @@ pub fn replay(events: &[Event]) -> Result<Ticket, ReplayError> {
         parent,
         detail,
         source,
+        version,
     } = first
     else {
         return Err(ReplayError::MissingCreated);
@@ -166,6 +167,7 @@ pub fn replay(events: &[Event]) -> Result<Ticket, ReplayError> {
         parent: parent.clone(),
         detail: detail.clone(),
         source: source.clone(),
+        version: version.clone(),
     };
 
     for event in &events[1..] {
@@ -257,11 +259,23 @@ mod tests {
             parent: None,
             detail: String::new(),
             source: None,
+            version: None,
         }
     }
 
     fn new_ticket() -> Ticket {
         replay(&[created_event()]).unwrap()
+    }
+
+    #[test]
+    fn a_plan_tickets_version_survives_replay_and_old_events_have_none() {
+        let mut event = serde_json::to_value(created_event()).unwrap();
+        assert!(event.get("version").is_none());
+        event["version"] = "0.4".into();
+        let event: Event = serde_json::from_value(event).unwrap();
+        let ticket = replay(&[event, Event::Claimed]).unwrap();
+        assert_eq!(ticket.version.as_deref(), Some("0.4"));
+        assert_eq!(new_ticket().version, None);
     }
 
     fn ticket(state: TicketState, attempts: u32, held_from: Option<TicketState>) -> Ticket {
@@ -281,6 +295,7 @@ mod tests {
             parent: None,
             detail: String::new(),
             source: None,
+            version: None,
         }
     }
 
@@ -948,6 +963,16 @@ mod tests {
         assert_eq!(resumed.attempts, 1);
     }
 
+    /// Replaying the whole list gives the same ticket as applying it one event at a time.
+    fn assert_replay_equals_stepwise(events: &[Event]) {
+        let replayed = replay(events).unwrap();
+        let mut stepwise = replay(&events[..1]).unwrap();
+        for event in &events[1..] {
+            stepwise = apply(&stepwise, event).unwrap();
+        }
+        assert_eq!(replayed, stepwise);
+    }
+
     #[test]
     fn replay_equals_stepwise_apply() {
         let events = vec![
@@ -959,13 +984,7 @@ mod tests {
             Event::ReviewPassed,
             Event::Landed,
         ];
-        let replayed = replay(&events).unwrap();
-
-        let mut stepwise = replay(&[events[0].clone()]).unwrap();
-        for event in &events[1..] {
-            stepwise = apply(&stepwise, event).unwrap();
-        }
-        assert_eq!(replayed, stepwise);
+        assert_replay_equals_stepwise(&events);
     }
 
     struct Rng(u64);
@@ -981,61 +1000,38 @@ mod tests {
     }
 
     fn allowed_events(state: &TicketState) -> Vec<Event> {
-        let held = || {
-            vec![
-                Event::Held {
-                    reason: HeldReason::Budget,
-                },
-                Event::Held {
-                    reason: HeldReason::Quota,
-                },
-                Event::Held {
-                    reason: HeldReason::Auth,
-                },
-                Event::Held {
-                    reason: HeldReason::Conflict,
-                },
-                Event::Held {
-                    reason: HeldReason::Paused,
-                },
-            ]
-        };
         let cancelled = || Event::Cancelled;
+        let failed = |class, detail: &str| Event::Failed {
+            class,
+            detail: detail.into(),
+        };
+        // The events every running state also accepts: cancelling, and any hold.
+        let with_exits = |mut events: Vec<Event>| {
+            events.push(cancelled());
+            for reason in [
+                HeldReason::Budget,
+                HeldReason::Quota,
+                HeldReason::Auth,
+                HeldReason::Conflict,
+                HeldReason::Paused,
+            ] {
+                events.push(Event::Held { reason });
+            }
+            events
+        };
         match state {
             TicketState::Queued => vec![Event::Claimed, cancelled()],
-            TicketState::Claimed => {
-                let mut events = vec![
-                    Event::RunStarted { run: rid() },
-                    Event::Failed {
-                        class: FailureClass::Crash,
-                        detail: "crash".into(),
-                    },
-                    Event::Failed {
-                        class: FailureClass::Timeout,
-                        detail: "timeout".into(),
-                    },
-                    cancelled(),
-                ];
-                events.extend(held());
-                events
-            }
-            TicketState::Working => {
-                let mut events = vec![
-                    Event::ChecksStarted,
-                    Event::AskOpened { ask: aid() },
-                    Event::Failed {
-                        class: FailureClass::Crash,
-                        detail: "crash".into(),
-                    },
-                    Event::Failed {
-                        class: FailureClass::Timeout,
-                        detail: "timeout".into(),
-                    },
-                    cancelled(),
-                ];
-                events.extend(held());
-                events
-            }
+            TicketState::Claimed => with_exits(vec![
+                Event::RunStarted { run: rid() },
+                failed(FailureClass::Crash, "crash"),
+                failed(FailureClass::Timeout, "timeout"),
+            ]),
+            TicketState::Working => with_exits(vec![
+                Event::ChecksStarted,
+                Event::AskOpened { ask: aid() },
+                failed(FailureClass::Crash, "crash"),
+                failed(FailureClass::Timeout, "timeout"),
+            ]),
             TicketState::Asking { ask } => vec![
                 Event::AskResolved {
                     ask: ask.clone(),
@@ -1050,36 +1046,20 @@ mod tests {
                     reason: HeldReason::Paused,
                 },
             ],
-            TicketState::Checking => {
-                let mut events = vec![
-                    Event::ChecksPassed,
-                    Event::ChecksFailed {
-                        detail: "checks".into(),
-                    },
-                    Event::Failed {
-                        class: FailureClass::Tooling,
-                        detail: "tooling".into(),
-                    },
-                    cancelled(),
-                ];
-                events.extend(held());
-                events
-            }
-            TicketState::Reviewing => {
-                let mut events = vec![
-                    Event::ReviewPassed,
-                    Event::ReviewFailed {
-                        detail: "review".into(),
-                    },
-                    Event::Failed {
-                        class: FailureClass::Review,
-                        detail: "review".into(),
-                    },
-                    cancelled(),
-                ];
-                events.extend(held());
-                events
-            }
+            TicketState::Checking => with_exits(vec![
+                Event::ChecksPassed,
+                Event::ChecksFailed {
+                    detail: "checks".into(),
+                },
+                failed(FailureClass::Tooling, "tooling"),
+            ]),
+            TicketState::Reviewing => with_exits(vec![
+                Event::ReviewPassed,
+                Event::ReviewFailed {
+                    detail: "review".into(),
+                },
+                failed(FailureClass::Review, "review"),
+            ]),
             TicketState::Ready => vec![
                 Event::Landed,
                 Event::ChangesRequested {
@@ -1116,14 +1096,8 @@ mod tests {
         let seq = random_events(0x1234_5678_9abc_def0, 250);
         assert!(!seq.is_empty());
 
-        let replayed = replay(&seq).unwrap();
-        assert_eq!(replay(&seq).unwrap(), replayed);
-
-        let mut stepwise = replay(&[seq[0].clone()]).unwrap();
-        for event in &seq[1..] {
-            stepwise = apply(&stepwise, event).unwrap();
-        }
-        assert_eq!(replayed, stepwise);
+        assert_eq!(replay(&seq).unwrap(), replay(&seq).unwrap());
+        assert_replay_equals_stepwise(&seq);
     }
 
     fn plan(state: TicketState) -> Ticket {

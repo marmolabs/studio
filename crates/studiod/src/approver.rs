@@ -1,5 +1,6 @@
 //! The approver: a cheap hire that decides tool calls no rule covers, so only
-//! the dangerous ones reach the owner.
+//! the dangerous ones reach the owner. In a project with a lead, the lead
+//! decides them instead, under the same policy.
 
 use crate::quick;
 use crate::studio::Studio;
@@ -59,14 +60,22 @@ pub(crate) fn prompt(
     tool: &str,
     input: &Value,
     reasons: &[String],
+    led: Option<&str>,
 ) -> String {
+    let who = match led {
+        Some(project) => format!(
+            "You lead the project {project}. Its team asks you the routine questions \
+             so the owner only sees the ones that matter.\n\n"
+        ),
+        None => String::new(),
+    };
     let why = if reasons.is_empty() {
         "no rule covers it".to_string()
     } else {
         reasons.join("; ")
     };
     format!(
-        "Ticket {id}: {title}\n\n{detail}\n\nWorktree: {worktree}\n\n\
+        "{who}Ticket {id}: {title}\n\n{detail}\n\nWorktree: {worktree}\n\n\
          Tool: {tool}\nInput (JSON):\n{input}\n\n\
          Why no rule allowed it: {why}\n\n{POLICY}",
         id = ticket.id,
@@ -105,17 +114,28 @@ pub(crate) fn parse(reply: &str) -> Call {
     }
 }
 
-/// Asks the studio's approver about one tool call. Any failure goes to the owner.
+/// Who decides a ticket's tool calls: the studio's approver, or a project's
+/// lead, which `led` names the project of.
+pub(crate) struct Decider<'a> {
+    pub hire: &'a Hire,
+    pub led: Option<&'a str>,
+}
+
+/// Asks the decider about one tool call. Any failure goes to the owner.
 pub(crate) async fn judge(
     studio: &Arc<Studio>,
-    approver: &Hire,
+    decider: &Decider<'_>,
     ticket: &Ticket,
     worktree: &Path,
     tool: &str,
     input: &Value,
     reasons: &[String],
 ) -> Call {
-    let text = prompt(ticket, worktree, tool, input, reasons);
+    let Decider {
+        hire: approver,
+        led,
+    } = *decider;
+    let text = prompt(ticket, worktree, tool, input, reasons, led);
     let ask = |text: String| async move {
         quick::ask_model(
             studio,
@@ -218,6 +238,7 @@ mod tests {
             parent: None,
             detail: "Escape opens it.".into(),
             source: None,
+            version: None,
         };
         let text = prompt(
             &ticket,
@@ -225,11 +246,22 @@ mod tests {
             "Bash",
             &json!({ "command": "cargo test --all" }),
             &["no rule covers it".into()],
+            None,
         );
         assert!(text.contains("GAME-7"));
         assert!(text.contains("Add a pause menu"));
         assert!(text.contains("/work/game-7"));
         assert!(text.contains("cargo test --all"));
         assert!(text.contains("DECISION: ALLOW|DENY|OWNER"));
+        assert!(!text.contains("You lead"));
+        let led = prompt(
+            &ticket,
+            Path::new("/work/game-7"),
+            "Bash",
+            &json!({}),
+            &[],
+            Some("game"),
+        );
+        assert!(led.starts_with("You lead the project game."));
     }
 }

@@ -1,16 +1,18 @@
 //! Git operations the studio needs: per-ticket worktrees, owner-identity commits
-//! and goal branches. Everything shells out to the `git` CLI.
+//! goal branches and release tags. Everything shells out to the `git` CLI.
 
 mod attribution;
 mod cmd;
 mod error;
+mod releases;
 mod repo;
+#[cfg(test)]
+mod scenarios;
 mod worktree;
 
-pub use attribution::strip_attribution;
 pub use error::{GitError, Result};
 pub use repo::{EVIDENCE_DIR, LandOutcome, MergeOutcome, Repo};
-pub use worktree::{RebaseOutcome, Worktree};
+pub use worktree::Worktree;
 
 /// Lowercase ASCII letters and digits, everything else collapsed to `-`.
 pub(crate) fn slug(text: &str) -> String {
