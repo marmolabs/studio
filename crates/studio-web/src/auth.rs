@@ -213,7 +213,7 @@ mod tests {
             without_token("/", "token=abc&sel=tickets/GAME-1"),
             "/?sel=tickets/GAME-1"
         );
-        assert_eq!(without_token("/board", "x=1&tok%65n=abc"), "/board?x=1");
+        assert_eq!(without_token("/hires", "x=1&tok%65n=abc"), "/hires?x=1");
         assert_eq!(without_token("//evil.example", "token=abc"), "/");
     }
 

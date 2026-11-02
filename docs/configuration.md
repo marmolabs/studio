@@ -7,8 +7,11 @@ Linux. `--home <dir>` or `STUDIO_HOME` replaces it; the data folder is then
 
 Unknown keys in `studio.toml` and `.studio.toml` are errors, so a typo is
 caught when the file loads. Run `studio doctor` to check your files. The daemon
-reads `studio.toml` when it starts; restart it after you change it. Rules
-apply on the next run.
+reads `studio.toml` and the hires again within a second of a change; a file
+that no longer loads is reported in `studiod.log` and the last good one stays
+in use. Runtimes and `[notify]` are read once, when the daemon starts, so
+restart it (`studio down`, then `studio up`) after changing those. Rules apply
+on the next run.
 
 ## studio.toml
 
@@ -25,7 +28,7 @@ apply on the next run.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `max_runs` | none, required | Agents running at once, at most 9 (one per desk in the office). `0` pauses the studio. |
+| `max_runs` | none, required | Agents running at once, from 1 to 9 (one per desk, set in the web UI's Company tab). `0` is an error: to pause the studio, run `studio close`; `studio open` starts it again. |
 
 ### `[[projects]]`
 
@@ -36,6 +39,7 @@ apply on the next run.
 | `integration_branch` | none | Branch work starts from. `studio project add` sets it to the branch checked out. |
 | `daily_usd` | none | Cap for this project over any rolling 24 hours. |
 | `watch_ci` | `false` | File a fix ticket when CI fails on the integration branch. Needs `gh`. |
+| `lead` | none | The id of the hire who leads this project (see [Project leads](concepts.md#project-leads)). The hire needs `tools: [file_ticket]` to plan goals. `studio lead <project> <hire>` sets it (the hire must exist) and `studio lead <project>` clears it; the project's page in the web UI does the same. `studio doctor` flags a lead that isn't a hire. |
 
 ### `[[packs]]`
 
@@ -43,15 +47,6 @@ apply on the next run.
 | --- | --- | --- |
 | `name` | required | Must match the pack's `pack.toml`. |
 | `path` | required | The pack folder. A relative path is read from the studio folder. |
-
-### `[providers.<name>]`
-
-Names an extra runtime that hires can use in `runtime:`. `claude-code` is
-always available without an entry.
-
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `kind` | required | Only `claude-code` today. |
 
 ### `[rules]`
 
@@ -106,6 +101,7 @@ path = "/Users/me/code/my-app"
 integration_branch = "master"
 daily_usd = 5.0
 watch_ci = true
+lead = "manager"
 
 [[packs]]
 name = "my-pack"
@@ -129,6 +125,7 @@ This file sits in a project's root. Every field is optional.
 | `gates` | `[]` | Critic gates, below. |
 | `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |
 | `env` | `{}` | Environment variables for the project's agents, checks and captures. `{repo}` in a value is the project's own checkout, so its worktrees can share a folder, such as one build folder instead of a build from scratch per ticket. `studio project add` sets one up for a Cargo project. |
+| `release` | `[]` | Commands that publish a release, each an array, run in order once you approve it: `["./publish.sh"]`. They get `VERSION` in their environment, besides the project's `env`, and 30 minutes each. Empty means the studio can't release the project. See [Releases](#releases). |
 
 Each `[[gates]]` entry:
 
@@ -164,6 +161,48 @@ prompt = "Judge the new screens against the screenshots."
 CARGO_TARGET_DIR = "{repo}/.studio/target"
 ```
 
+### Releases
+
+A project with `release` commands can be released from the studio:
+`studio release <project> <version>`, such as `studio release my-app 0.4`.
+
+```toml
+verify = [["cargo", "test", "--locked"]]
+release = [
+  ["./scripts/build-installers.sh"],
+  ["./scripts/publish.sh"],
+]
+```
+
+A release goes in four steps:
+
+1. **Final checks.** The project's `verify` commands run on the tip of its
+   integration branch, in a fresh checkout, with the project's `env` and the
+   same 30 minute limit as any check.
+2. **Your go-ahead.** The release waits for you and the studio tells you, as it
+   does for anything that needs you: a desktop notification when `[notify]`
+   is on, a bell on the project's sign, and a card in the For you tab.
+   `studio release approve <project>` gives it, or Approve in the web UI.
+   `studio release cancel <project>` stops a release that is still checking or
+   waiting. Once you approve, it can't be stopped.
+3. **The release commands** run in order in that same checkout, on the same
+   commit, with `VERSION` set to the version you gave and the project's `env`.
+4. **The tag.** The version is tagged `v<version>` (a version that already
+   starts with `v` keeps it) on that commit, as you. The studio never pushes
+   it; pushing the tag is yours to do.
+
+A version uses letters, digits, dots and dashes only. A release is refused
+when the project has no `release` commands, when one is already under way, or
+when the tag exists. A release whose checks or commands fail stops there as
+failed, with the command and the end of its output; nothing is tagged. A
+release under way when studiod stops is failed with "studiod stopped".
+
+`studio releases [project]` lists every release, newest first. Releases are
+kept in the data folder's `releases` folder, one file per project. The web UI
+shows each project's release under way, or one that failed or was cancelled in
+the last day, and the latest that published. It lets you start a release only
+for a project that has `release` commands.
+
 ## Hires
 
 One file per hire in `hires/` (or a pack's `hires/`). The file name, without
@@ -172,8 +211,8 @@ One file per hire in `hires/` (or a pack's `hires/`). The file name, without
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Display name. |
-| `role` | yes | Free text. `reviewer` and `producer` have meaning to the studio. |
-| `runtime` | yes | `claude-code`, or a provider name from `studio.toml`. |
+| `role` | yes | Free text. `reviewer`, `producer` and `lead` have meaning to the studio. |
+| `runtime` | yes | `claude-code`, the only runtime today. |
 | `model` | yes | Model id or alias, like `sonnet`. |
 | `escalate` | no | Stronger models to use after each failed attempt. The last one repeats. |
 | `budget_per_ticket_usd` | no | Cap for one ticket on this hire. |
@@ -198,99 +237,6 @@ A pack's hires are read-only. A studio hire with the same id wins.
 
 ## Rules
 
-One file per rule in `rules/` (studio-wide), a pack's `rules/`, or a project's
-`.studio/rules/`. The file name, without `.md`, is the rule's id, shown as
-`studio/<name>`, `pack/<pack>/<name>` or `project/<project>/<name>`. The body
-is the reason shown to the agent and to you.
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `id` | no | If set, it must match the file name. |
-| `kind` | yes | `protect`, `gate`, `lint`, `check`, `guide` or `review`. |
-| `level` | yes | `block`, `ask`, `warn` or `allow`. |
-| `when` | no | Limits where the rule applies, below. |
-| `pattern` | lint | A regex that must not appear in a change. |
-| `command` | check | A command that must pass, as an array. |
-| `action` | gate | A tool name like `Bash`, several like `Read\|Grep`, or a command prefix like `bash:git push`. |
-
-What each kind needs: `protect` needs `when.paths`; `lint` needs `pattern`;
-`check` needs `command`; `gate` needs `action`; `guide` and `review` need a
-non-empty body.
-
-`when` takes any of these lists. An empty list or `"*"` matches everything.
-
-- `projects`: project names.
-- `paths`: globs, relative to the repo root.
-- `hires`: hire ids.
-- `roles`: hire roles.
-
-```markdown
----
-kind: lint
-level: block
-pattern: "ca-app-pub-[0-9]+"
----
-Never commit live ad unit IDs.
-```
-
-When rules disagree, block beats ask beats allow.
-
-### Gates on paths
-
-A gate with `when.paths` covers only calls on those paths. An allow needs every
-path the call touches to match; a block or ask needs any, and also covers calls
-that name no path. Paths outside the project are absolute, and `~/` means your
-home folder:
-
-```markdown
----
-kind: gate
-level: allow
-action: "Read|Grep|Glob"
-when:
-  paths: ["~/.cargo/registry/**"]
----
-Agents may read dependency sources.
-```
-
-### Command prefixes
-
-A `bash:` gate that blocks or asks matches its prefix anywhere in the command,
-so `bash:git push` also catches `cd app && git push`.
-
-A `bash:` gate that allows is stricter. The command is split on `&&`, `||`,
-`;`, `|` and `&`, and every part must start with an allowed prefix. A part
-after a pipe may also be `head`, `tail`, `wc` or `grep` reading only the piped
-output (no file names). Any `$`, backtick, redirect other than `2>&1`,
-heredoc or subshell makes the command ask, because the split can't see into
-it.
-
-### Rules from corrections
-
-When you deny an ask, the web UI offers **Make this a rule**. It opens the
-rules editor with a draft you can change before you save it:
-
-- A denied command becomes a `bash:` gate that blocks that command's prefix in
-  the project. A command with `&&`, `|` or similar becomes a gate that asks for
-  the tool instead.
-- A denied file edit or read becomes a `protect` rule that asks before that
-  path is touched.
-- Any other tool becomes a gate that asks for it.
-- An agent's question is not a permission, so denying one offers no rule.
-- Your note on the denial is the rule's reason. If you left none, the draft
-  tells you to write one.
-
-When you send a ticket back, **Make it a rule for every ticket in** the project
-opens a draft `guide` rule with your feedback as its text.
-
-On the command line, `studio deny <ask> -m "why" --rule` and
-`studio changes <ticket> "feedback" --rule` save the draft as a new file in
-`rules/`. An existing file is never replaced; a second draft with the same
-name gets `-2`, `-3` and so on. `studio deny --rule` on a question is an error.
-
-A rule can be tried before you save it. The **Test** button in the rules
-editor, and `studio rule test <name-or-path> [--since 7d]`, replay it against
-the tool calls in the run logs since then (`<n>d` or `<n>h`; the default is 7
-days) and list the ones it would have acted on. Only `gate`, `protect` and
-`lint` rules act on tool calls, so only those can be tested. A rule with a bad
-regex or path glob is refused, as when saving.
+One Markdown file per rule, in the studio's `rules/`, a pack's `rules/` or a
+project's `.studio/rules/`. The kinds, fields, path globs, command prefixes
+and drafting a rule from a correction are in [rules](rules.md).

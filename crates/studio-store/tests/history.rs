@@ -19,6 +19,7 @@ fn land(store: &mut Store, id: &str, hire: &str, claimed: u64, landed: u64, usd:
         parent: None,
         detail: String::new(),
         source: None,
+        version: None,
     };
     store.append(&id, claimed - 10, &created).unwrap();
     store.append(&id, claimed, &Event::Claimed).unwrap();
@@ -74,6 +75,7 @@ fn landed_samples_are_per_hire_newest_first_and_limited() {
         parent: None,
         detail: String::new(),
         source: None,
+        version: None,
     };
     store.append(&open, 1, &created).unwrap();
 
@@ -143,6 +145,7 @@ fn created(store: &mut Store, id: &str, project: &str, kind: TicketKind) {
         parent: None,
         detail: String::new(),
         source: None,
+        version: None,
     };
     store.append(&id, 1, &event).unwrap();
 }

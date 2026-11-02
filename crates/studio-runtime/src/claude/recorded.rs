@@ -3,13 +3,12 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use super::{ClaudeCode, Parsed, parse_line};
+use crate::{Control, FailureKind, Outcome, RunEvent, RunSpec, Runtime};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use studio_runtime::{
-    ClaudeCode, Control, FailureKind, Outcome, Parsed, RunEvent, RunSpec, Runtime, parse_line,
-};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -56,6 +56,10 @@ enum Command {
     Down,
     /// What the studio is doing.
     Status,
+    /// Close the office: nothing new starts, and work already running carries on.
+    Close,
+    /// Open the office again after `studio close`.
+    Open,
     /// Give a hire a ticket on a project.
     Ticket {
         /// Project name from studio.toml.
@@ -83,9 +87,13 @@ enum Command {
         /// Project name from studio.toml.
         #[arg(short, long)]
         project: String,
-        /// Hire to plan it (default: the first with the producer role).
+        /// Hire to plan it (default: the project's lead, else the first with
+        /// the producer role).
         #[arg(long)]
         hire: Option<String>,
+        /// The version this goal is a milestone towards, such as 0.4.
+        #[arg(long)]
+        milestone: Option<String>,
         /// A short name for the goal; it also names the goal's branch.
         text: String,
         /// The full brief for the producer.
@@ -94,6 +102,15 @@ enum Command {
         /// Read the brief from a file instead.
         #[arg(long)]
         detail_file: Option<PathBuf>,
+    },
+    /// Name the hire who leads a project, or with no hire, clear its lead. A
+    /// lead plans the project's goals, assigns its tickets and answers its
+    /// team's routine questions.
+    Lead {
+        /// Project name from studio.toml.
+        project: String,
+        /// The lead's hire id (default: none, which clears the lead).
+        hire: Option<String>,
     },
     /// Every ticket and its state.
     Board,
@@ -169,6 +186,36 @@ enum Command {
     },
     /// Remove worktrees and branches that finished tickets left behind.
     Gc,
+    /// Release a project: its final checks run, then it waits for your
+    /// go-ahead (`studio release approve`), then the project's release
+    /// commands run and the version is tagged. Nothing is pushed.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    Release(ReleaseArgs),
+    /// Releases, newest first.
+    Releases {
+        /// Only this project's (default: every project's).
+        project: Option<String>,
+    },
+}
+
+#[derive(Args)]
+struct ReleaseArgs {
+    #[command(subcommand)]
+    action: Option<ReleaseAction>,
+    /// Project name from studio.toml.
+    #[arg(required = true)]
+    project: Option<String>,
+    /// The version to release, such as 0.4; it is tagged v0.4.
+    #[arg(required = true)]
+    version: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum ReleaseAction {
+    /// Give the go-ahead to the release that waits for you.
+    Approve { project: String },
+    /// Stop a release that is checking or waiting for you.
+    Cancel { project: String },
 }
 
 #[derive(Subcommand)]
@@ -250,11 +297,14 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
             pack,
         }) => return add_project(paths, &path, name, branch, daily_usd, pack),
         Command::Pack(PackCommand::Add { path }) => return add_pack(paths, &path),
+        Command::Lead { project, hire } => return set_lead(paths, &project, hire),
         Command::Rule(RuleCommand::Test { rule, since }) => {
             return test_rule(paths, &rule, &since, json);
         }
         Command::Up { .. } | Command::Down => return Ok(()),
         Command::Status => Request::Status,
+        Command::Close => Request::SetOpen { open: false },
+        Command::Open => Request::SetOpen { open: true },
         Command::Ticket {
             project,
             hire,
@@ -281,6 +331,7 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
         Command::Goal {
             project,
             hire,
+            milestone,
             text,
             detail,
             detail_file,
@@ -293,6 +344,7 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
                     .map_err(|e| format!("can't read {}: {e}", path.display()))?,
                 None => detail,
             },
+            version: milestone,
         },
         Command::Board => Request::Tickets,
         Command::Asks => Request::Asks,
@@ -342,12 +394,36 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
         Command::Resume { ticket } => Request::Resume { ticket },
         Command::Budget => Request::Budget,
         Command::Gc => Request::Gc,
+        Command::Release(ReleaseArgs {
+            action: Some(ReleaseAction::Approve { project }),
+            ..
+        }) => Request::ApproveRelease { project },
+        Command::Release(ReleaseArgs {
+            action: Some(ReleaseAction::Cancel { project }),
+            ..
+        }) => Request::CancelRelease { project },
+        Command::Release(ReleaseArgs {
+            project: Some(project),
+            version: Some(version),
+            ..
+        }) => Request::StartRelease { project, version },
+        Command::Release(_) => {
+            return Err("say which project and version: studio release <project> <version>".into());
+        }
+        Command::Releases { project } => Request::Releases { project },
     };
     let is_gc = matches!(request, Request::Gc);
     let is_board = matches!(request, Request::Tickets);
     let is_asks = matches!(request, Request::Asks);
     let is_budget = matches!(request, Request::Budget);
     let is_diff = matches!(request, Request::Diff { .. });
+    let is_release = matches!(
+        request,
+        Request::StartRelease { .. }
+            | Request::ApproveRelease { .. }
+            | Request::CancelRelease { .. }
+    );
+    let is_releases = matches!(request, Request::Releases { .. });
     let response = call(&socket, &request)
         .map_err(|e| format!("can't reach studiod at {}: {e}", socket.display()))?;
     if !response.ok {
@@ -378,6 +454,14 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
         print_budget(&response.data);
     } else if is_gc {
         print_gc(&response.data);
+    } else if is_release {
+        for line in release_lines(&response.data, now_ms()) {
+            println!("{line}");
+        }
+    } else if is_releases {
+        for line in releases_lines(&response.data, now_ms()) {
+            println!("{line}");
+        }
     } else {
         print_reply(&response.data);
     }
@@ -580,33 +664,75 @@ fn print_reply(data: &Value) {
             println!("follow it with `studio log {id}`, or `studio board`");
         }
     } else if data["running"].is_number() {
-        println!(
-            "{} running, {} waiting for you, ${:.2} of ${:.2} spent in 24h",
-            data["running"],
-            data["asks"],
-            data["spent_24h"].as_f64().unwrap_or_default(),
-            data["daily_usd"].as_f64().unwrap_or_default(),
-        );
-        let list = |key: &str| {
-            data[key]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default()
-        };
-        println!("projects: {}", list("projects"));
-        println!("hires: {}", list("hires"));
-        if let Some(states) = data["tickets"].as_object().filter(|t| !t.is_empty()) {
-            let counts: Vec<String> = states.iter().map(|(s, n)| format!("{n} {s}")).collect();
-            println!("tickets: {}", counts.join(", "));
+        for line in status_lines(data) {
+            println!("{line}");
         }
+    } else if let Some(closed) = data["closed"].as_bool() {
+        println!("{}", office_line(closed));
     } else {
         println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
     }
+}
+
+fn office_line(closed: bool) -> &'static str {
+    if closed {
+        "the office is closed: nothing new starts, and running work carries on; `studio open` starts it again"
+    } else {
+        "the office is open"
+    }
+}
+
+/// What `studio status` prints, a line each.
+fn status_lines(data: &Value) -> Vec<String> {
+    let releases: Vec<&str> = data["releases_waiting"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let waiting = data["asks"].as_u64().unwrap_or_default() + releases.len() as u64;
+    let mut lines = vec![format!(
+        "{} running, {waiting} waiting for you, ${:.2} of ${:.2} spent in 24h",
+        data["running"],
+        data["spent_24h"].as_f64().unwrap_or_default(),
+        data["daily_usd"].as_f64().unwrap_or_default(),
+    )];
+    for project in releases {
+        lines.push(format!(
+            "{project}'s release waits for your go-ahead: `studio release approve {project}`"
+        ));
+    }
+    if data["closed"] == true {
+        lines.push(office_line(true).to_string());
+    }
+    let list = |key: &str| {
+        data[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
+    let projects: Vec<String> = data["projects"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|name| match data["leads"][name].as_str() {
+            Some(lead) => format!("{name} (led by {lead})"),
+            None => name.to_string(),
+        })
+        .collect();
+    lines.push(format!("projects: {}", projects.join(", ")));
+    lines.push(format!("hires: {}", list("hires")));
+    if let Some(states) = data["tickets"].as_object().filter(|t| !t.is_empty()) {
+        let counts: Vec<String> = states.iter().map(|(s, n)| format!("{n} {s}")).collect();
+        lines.push(format!("tickets: {}", counts.join(", ")));
+    }
+    lines
 }
 
 fn now_ms() -> u64 {
@@ -629,6 +755,83 @@ fn eta_text(eta_ms: Option<u64>, now_ms: u64) -> String {
     }
 }
 
+/// How a release stands, then its steps, and what to do next.
+fn release_lines(release: &Value, now_ms: u64) -> Vec<String> {
+    let text = |key: &str| release[key].as_str().unwrap_or_default();
+    let (project, version) = (text("project"), text("version"));
+    let state = match text("state") {
+        "checking" => "running its final checks",
+        "waiting" => "waiting for your go-ahead",
+        "publishing" => "publishing",
+        "released" => "released",
+        "failed" => "failed",
+        "cancelled" => "cancelled",
+        other => other,
+    };
+    let mut lines = vec![format!("{project} {version}: {state}")];
+    for step in release["steps"].as_array().into_iter().flatten() {
+        let mark = if step["done"] == true { "x" } else { " " };
+        let name = step["name"].as_str().unwrap_or_default();
+        lines.push(format!("  [{mark}] {name}"));
+    }
+    if let Some(error) = release["error"].as_str() {
+        lines.push(format!("it failed: {error}"));
+    }
+    match text("state") {
+        "checking" | "waiting" => lines.push(format!(
+            "approve it with `studio release approve {project}` once it waits for you; \
+             stop it with `studio release cancel {project}`"
+        )),
+        "released" => lines.push(format!(
+            "tagged {}; nothing was pushed",
+            if version.starts_with('v') {
+                version.to_string()
+            } else {
+                format!("v{version}")
+            }
+        )),
+        _ => {}
+    }
+    if let Some(at) = release["started_at"].as_u64() {
+        lines.push(format!("started {}", ago(at, now_ms)));
+    }
+    lines
+}
+
+/// One line per release.
+fn releases_lines(releases: &Value, now_ms: u64) -> Vec<String> {
+    let all = releases.as_array().cloned().unwrap_or_default();
+    if all.is_empty() {
+        return vec![
+            "No releases yet. Start one with `studio release <project> <version>`.".into(),
+        ];
+    }
+    all.iter()
+        .map(|r| {
+            let text = |key: &str| r[key].as_str().unwrap_or_default();
+            let when = r["started_at"].as_u64().map(|at| ago(at, now_ms));
+            format!(
+                "{} {}  {}  {}",
+                text("project"),
+                text("version"),
+                text("state"),
+                when.unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+/// "5m ago" for a time `now_ms` is past.
+fn ago(at_ms: u64, now_ms: u64) -> String {
+    let minutes = now_ms.saturating_sub(at_ms) / 60_000;
+    match minutes {
+        0 => "just now".to_string(),
+        1..=59 => format!("{minutes}m ago"),
+        60..=1439 => format!("{}h ago", minutes / 60),
+        _ => format!("{}d ago", minutes / 1440),
+    }
+}
+
 fn print_board(tickets: &Value, etas: &Value, now_ms: u64) {
     let tickets = tickets.as_array().cloned().unwrap_or_default();
     if tickets.is_empty() {
@@ -642,7 +845,10 @@ fn print_board(tickets: &Value, etas: &Value, now_ms: u64) {
         };
         let mut title = t["title"].as_str().unwrap_or_default().to_string();
         if t["kind"] == "plan" {
-            title.push_str(" (plan)");
+            match t["version"].as_str() {
+                Some(version) => title.push_str(&format!(" (plan for {version})")),
+                None => title.push_str(" (plan)"),
+            }
         }
         if let Some(parent) = t["parent"].as_str() {
             title.push_str(&format!(" (from {parent})"));
@@ -847,6 +1053,56 @@ fn add_pack(paths: &StudioPaths, path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `studio lead`: names or clears a project's lead.
+fn set_lead(paths: &StudioPaths, project: &str, hire: Option<String>) -> Result<(), String> {
+    match put_project_lead(paths, project, hire)? {
+        Some(lead) => println!("{project} is led by {lead}"),
+        None => println!("{project} has no lead"),
+    }
+    Ok(())
+}
+
+/// Writes the project's lead into studio.toml and returns it. A running
+/// studiod is studio.toml's only writer, so it is asked to; without one,
+/// this checks the project and the hire and writes the file itself.
+fn put_project_lead(
+    paths: &StudioPaths,
+    project: &str,
+    hire: Option<String>,
+) -> Result<Option<String>, String> {
+    let socket = studiod::api::socket_path(&paths.data_dir);
+    let request = Request::SetProjectLead {
+        project: project.to_string(),
+        hire: hire.clone(),
+    };
+    match call(&socket, &request) {
+        Ok(response) if response.ok => {
+            return Ok(response.data["lead"].as_str().map(str::to_string));
+        }
+        Ok(response) => {
+            return Err(response.error.unwrap_or_else(|| "request failed".into()));
+        }
+        Err(e) if is_not_running(&e) => {}
+        Err(e) => return Err(format!("can't reach studiod at {}: {e}", socket.display())),
+    }
+    let config = studio_config::StudioConfig::load(paths).map_err(|e| e.to_string())?;
+    if !config.projects.iter().any(|p| p.name == project) {
+        return Err(format!("no project named {project} in studio.toml"));
+    }
+    let hire = hire.map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
+    if let Some(hire) = &hire {
+        let known = studio_config::load_pack_hires(&config)
+            .into_iter()
+            .chain(studio_config::load_hires(paths))
+            .any(|(_, found)| found.is_ok_and(|found| found.id.0 == *hire));
+        if !known {
+            return Err(format!("no hire named {hire}"));
+        }
+    }
+    studio_config::set_project_lead(paths, project, hire.as_deref()).map_err(|e| e.to_string())?;
+    Ok(hire)
+}
+
 fn add_project(
     paths: &StudioPaths,
     path: &std::path::Path,
@@ -855,25 +1111,7 @@ fn add_project(
     daily_usd: Option<f64>,
     pack: Option<String>,
 ) -> Result<(), String> {
-    let repo = studio_git::Repo::open(path).map_err(|e| e.to_string())?;
-    let branch = match branch {
-        Some(branch) => branch,
-        None => repo
-            .current_branch()
-            .map_err(|e| e.to_string())?
-            .ok_or("HEAD is detached; pass --branch")?,
-    };
-    let added = studio_config::add_project(
-        paths,
-        studio_config::NewProject {
-            path: repo.root(),
-            name: name.as_deref(),
-            integration_branch: Some(&branch),
-            daily_usd,
-            pack: pack.as_deref(),
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let (added, branch) = put_project_in_studio(paths, path, name, branch, daily_usd, pack)?;
     println!(
         "added {} ({}, work starts from {branch})",
         added.name,
@@ -886,10 +1124,458 @@ fn add_project(
     Ok(())
 }
 
+/// Adds the project to studio.toml and returns it with the branch work starts
+/// from. A running studiod is studio.toml's only writer, so it is asked to.
+fn put_project_in_studio(
+    paths: &StudioPaths,
+    path: &std::path::Path,
+    name: Option<String>,
+    branch: Option<String>,
+    daily_usd: Option<f64>,
+    pack: Option<String>,
+) -> Result<(studio_config::AddedProject, String), String> {
+    let repo = studio_git::Repo::open(path).map_err(|e| e.to_string())?;
+    let branch = match branch {
+        Some(branch) => branch,
+        None => repo
+            .current_branch()
+            .map_err(|e| e.to_string())?
+            .ok_or("HEAD is detached; pass --branch")?,
+    };
+    let socket = studiod::api::socket_path(&paths.data_dir);
+    let request = Request::AddProject {
+        path: repo.root().to_string_lossy().into_owned(),
+        name: name.clone(),
+        branch: Some(branch.clone()),
+        daily_usd,
+        pack: pack.clone(),
+        check: false,
+    };
+    match call(&socket, &request) {
+        Ok(response) if response.ok => {
+            let data = response.data;
+            let added = studio_config::AddedProject {
+                name: data["name"].as_str().unwrap_or_default().to_string(),
+                path: PathBuf::from(data["path"].as_str().unwrap_or_default()),
+                created_checks: data["checks"].as_str().map(PathBuf::from),
+            };
+            return Ok((added, branch));
+        }
+        Ok(response) => {
+            return Err(response.error.unwrap_or_else(|| "request failed".into()));
+        }
+        // No studiod is listening: nothing else writes studio.toml.
+        Err(e) if is_not_running(&e) => {}
+        Err(e) => return Err(format!("can't reach studiod at {}: {e}", socket.display())),
+    }
+    let added = studio_config::add_project(
+        paths,
+        studio_config::NewProject {
+            path: repo.root(),
+            name: name.as_deref(),
+            integration_branch: Some(&branch),
+            daily_usd,
+            pack: pack.as_deref(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok((added, branch))
+}
+
+/// Whether a failure to call studiod means no studiod is running.
+fn is_not_running(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Draft, draft_name, eta_text, parse_since, ruleable};
-    use serde_json::json;
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{
+        Command, Draft, draft_name, eta_text, parse_since, put_project_in_studio, put_project_lead,
+        release_lines, releases_lines, ruleable, run, status_lines,
+    };
+    use serde_json::{Value, json};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use studio_config::StudioPaths;
+    use studiod::api::{Request, Response, socket_path};
+
+    /// A studio home in the temp folder, removed when dropped.
+    struct Home {
+        dir: PathBuf,
+        paths: StudioPaths,
+    }
+
+    impl Home {
+        fn new(label: &str) -> Home {
+            let dir =
+                std::env::temp_dir().join(format!("studio-cli-{}-{label}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let paths = StudioPaths::resolve(Some(dir.join("home")));
+            std::fs::create_dir_all(&paths.config_dir).unwrap();
+            std::fs::create_dir_all(&paths.data_dir).unwrap();
+            Home { dir, paths }
+        }
+
+        fn studio_toml(&self) -> PathBuf {
+            self.paths.config_dir.join("studio.toml")
+        }
+
+        /// A git repository with one branch, `master`.
+        fn repo(&self) -> PathBuf {
+            let repo = self.dir.join("game");
+            std::fs::create_dir_all(&repo).unwrap();
+            let git = std::process::Command::new("git")
+                .args(["init", "-q", "-b", "master"])
+                .current_dir(&repo)
+                .status()
+                .unwrap();
+            assert!(git.success());
+            repo
+        }
+    }
+
+    impl Drop for Home {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// A studiod that answers one request with `reply` and hands the request
+    /// it got to the test.
+    fn fake_studiod(home: &Home, reply: Response) -> std::thread::JoinHandle<Value> {
+        let listener = UnixListener::bind(socket_path(&home.paths.data_dir)).unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let mut writer = &stream;
+            writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+            serde_json::from_str(&line).unwrap()
+        })
+    }
+
+    fn sent(request: Request) -> Value {
+        serde_json::to_value(request).unwrap()
+    }
+
+    #[test]
+    fn close_and_open_send_set_open() {
+        for (command, open) in [(Command::Close, false), (Command::Open, true)] {
+            let home = Home::new(&format!("office-{open}"));
+            let studiod = fake_studiod(&home, Response::ok(json!({ "closed": !open })));
+            run(&home.paths, command, false).unwrap();
+            assert_eq!(studiod.join().unwrap(), sent(Request::SetOpen { open }));
+        }
+    }
+
+    #[test]
+    fn release_commands_send_their_requests() {
+        use clap::Parser;
+        let parse = |args: &[&str]| {
+            let args = ["studio", "release"]
+                .into_iter()
+                .chain(args.iter().copied());
+            super::Cli::try_parse_from(args).map(|cli| cli.command)
+        };
+        let expected = [
+            (
+                vec!["game", "0.4"],
+                Request::StartRelease {
+                    project: "game".into(),
+                    version: "0.4".into(),
+                },
+            ),
+            (
+                vec!["approve", "game"],
+                Request::ApproveRelease {
+                    project: "game".into(),
+                },
+            ),
+            (
+                vec!["cancel", "game"],
+                Request::CancelRelease {
+                    project: "game".into(),
+                },
+            ),
+        ];
+        for (n, (args, request)) in expected.into_iter().enumerate() {
+            let home = Home::new(&format!("release-{n}"));
+            let studiod = fake_studiod(&home, Response::ok(json!({ "project": "game" })));
+            run(&home.paths, parse(&args).unwrap(), false).unwrap();
+            assert_eq!(studiod.join().unwrap(), sent(request));
+        }
+        assert!(parse(&["game"]).is_err());
+        assert!(parse(&[]).is_err());
+
+        let home = Home::new("releases-list");
+        let studiod = fake_studiod(&home, Response::ok(json!([])));
+        let list = super::Cli::try_parse_from(["studio", "releases", "game"])
+            .unwrap()
+            .command;
+        run(&home.paths, list, false).unwrap();
+        assert_eq!(
+            studiod.join().unwrap(),
+            sent(Request::Releases {
+                project: Some("game".into())
+            })
+        );
+    }
+
+    #[test]
+    fn a_release_is_told_step_by_step() {
+        let waiting = json!({
+            "project": "game", "version": "0.4", "state": "waiting",
+            "started_at": 0,
+            "steps": [
+                { "name": "Final checks", "done": true },
+                { "name": "Your go-ahead", "done": false },
+                { "name": "Tag v0.4", "done": false },
+            ],
+        });
+        let lines = release_lines(&waiting, 5 * 60_000);
+        assert_eq!(lines[0], "game 0.4: waiting for your go-ahead");
+        assert_eq!(lines[1], "  [x] Final checks");
+        assert_eq!(lines[2], "  [ ] Your go-ahead");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("studio release approve game"))
+        );
+        assert_eq!(lines.last().unwrap(), "started 5m ago");
+
+        let failed = json!({
+            "project": "game", "version": "0.4", "state": "failed",
+            "steps": [], "error": "`make` failed:\nno rule",
+        });
+        let lines = release_lines(&failed, 0);
+        assert_eq!(lines[0], "game 0.4: failed");
+        assert!(lines.iter().any(|l| l.starts_with("it failed: `make`")));
+
+        let done =
+            json!({ "project": "game", "version": "v1.0", "state": "released", "steps": [] });
+        assert!(release_lines(&done, 0).contains(&"tagged v1.0; nothing was pushed".to_string()));
+        assert_eq!(releases_lines(&json!([]), 0).len(), 1);
+        let listed = releases_lines(&json!([waiting]), 3_600_000);
+        assert_eq!(listed, ["game 0.4  waiting  1h ago"]);
+    }
+
+    #[test]
+    fn status_says_when_the_office_is_closed() {
+        let status = |closed: bool| {
+            status_lines(&json!({
+                "running": 1, "asks": 0, "spent_24h": 0.5, "daily_usd": 5.0,
+                "projects": ["game"], "hires": ["dev"], "closed": closed,
+            }))
+        };
+        assert!(status(true).iter().any(|line| line.contains("closed")));
+        assert!(status(false).iter().all(|line| !line.contains("closed")));
+    }
+
+    #[test]
+    fn project_add_goes_through_a_running_studiod() {
+        // No studio.toml exists, so a write from here would fail.
+        let home = Home::new("add-through");
+        let repo = home.repo();
+        let root = studio_git::Repo::open(&repo).unwrap().root().to_path_buf();
+        let studiod = fake_studiod(
+            &home,
+            Response::ok(json!({
+                "name": "game", "path": root, "branch": "master", "checks": null,
+            })),
+        );
+        let (added, branch) =
+            put_project_in_studio(&home.paths, &repo, None, None, None, None).unwrap();
+        assert_eq!(
+            studiod.join().unwrap(),
+            sent(Request::AddProject {
+                path: root.to_string_lossy().into_owned(),
+                name: None,
+                branch: Some("master".into()),
+                daily_usd: None,
+                pack: None,
+                check: false,
+            })
+        );
+        assert_eq!((added.name.as_str(), branch.as_str()), ("game", "master"));
+        assert_eq!(added.path, root);
+        assert!(added.created_checks.is_none());
+        assert!(!home.studio_toml().exists());
+    }
+
+    #[test]
+    fn project_add_shows_what_studiod_refused() {
+        let home = Home::new("add-refused");
+        let repo = home.repo();
+        let studiod = fake_studiod(&home, Response::err("a project is already named game"));
+        let err = put_project_in_studio(&home.paths, &repo, None, None, None, None)
+            .err()
+            .unwrap();
+        studiod.join().unwrap();
+        assert_eq!(err, "a project is already named game");
+    }
+
+    #[test]
+    fn project_add_writes_the_file_itself_when_studiod_is_not_running() {
+        let home = Home::new("add-alone");
+        let repo = home.repo();
+        std::fs::write(
+            home.studio_toml(),
+            "[budget]\ndaily_usd = 1.0\n\n[concurrency]\nmax_runs = 1\n",
+        )
+        .unwrap();
+        // A socket file nobody listens on, as a stopped studiod leaves.
+        drop(UnixListener::bind(socket_path(&home.paths.data_dir)).unwrap());
+        let (added, _) = put_project_in_studio(&home.paths, &repo, None, None, None, None).unwrap();
+        assert_eq!(added.name, "game");
+        let text = std::fs::read_to_string(home.studio_toml()).unwrap();
+        assert!(text.contains("name = \"game\""), "{text}");
+    }
+
+    #[test]
+    fn a_daily_cap_and_a_pack_go_through_a_running_studiod() {
+        let home = Home::new("add-cap");
+        let repo = home.repo();
+        let root = studio_git::Repo::open(&repo).unwrap().root().to_path_buf();
+        let studiod = fake_studiod(
+            &home,
+            Response::ok(json!({
+                "name": "game", "path": root, "branch": "master", "checks": null,
+            })),
+        );
+        put_project_in_studio(
+            &home.paths,
+            &repo,
+            None,
+            None,
+            Some(2.5),
+            Some("art".into()),
+        )
+        .unwrap();
+        let sent = studiod.join().unwrap();
+        assert_eq!(
+            (&sent["daily_usd"], &sent["pack"]),
+            (&json!(2.5), &json!("art"))
+        );
+        assert!(!home.studio_toml().exists());
+    }
+
+    #[test]
+    fn a_daily_cap_is_written_here_when_studiod_is_not_running() {
+        let home = Home::new("add-cap-alone");
+        let repo = home.repo();
+        std::fs::write(
+            home.studio_toml(),
+            "[budget]\ndaily_usd = 1.0\n\n[concurrency]\nmax_runs = 1\n",
+        )
+        .unwrap();
+        drop(UnixListener::bind(socket_path(&home.paths.data_dir)).unwrap());
+        put_project_in_studio(&home.paths, &repo, None, None, Some(2.5), None).unwrap();
+        let text = std::fs::read_to_string(home.studio_toml()).unwrap();
+        assert!(text.contains("daily_usd = 2.5"), "{text}");
+    }
+
+    #[test]
+    fn a_lead_goes_through_a_running_studiod() {
+        let home = Home::new("lead-through");
+        let studiod = fake_studiod(
+            &home,
+            Response::ok(json!({ "project": "game", "lead": "boss" })),
+        );
+        let lead = put_project_lead(&home.paths, "game", Some("boss".into())).unwrap();
+        assert_eq!(lead.as_deref(), Some("boss"));
+        assert_eq!(
+            studiod.join().unwrap(),
+            sent(Request::SetProjectLead {
+                project: "game".into(),
+                hire: Some("boss".into()),
+            })
+        );
+        assert!(!home.studio_toml().exists());
+    }
+
+    #[test]
+    fn a_lead_shows_what_studiod_refused() {
+        let home = Home::new("lead-refused");
+        let studiod = fake_studiod(&home, Response::err("no hire named boss"));
+        let err = put_project_lead(&home.paths, "game", Some("boss".into()))
+            .err()
+            .unwrap();
+        studiod.join().unwrap();
+        assert_eq!(err, "no hire named boss");
+    }
+
+    #[test]
+    fn a_lead_is_written_here_when_studiod_is_not_running() {
+        let home = Home::new("lead-alone");
+        std::fs::write(
+            home.studio_toml(),
+            "# mine\n[budget]\ndaily_usd = 1.0\n\n[concurrency]\nmax_runs = 1\n\n\
+             [[projects]]\nname = \"game\"\npath = \"/g\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.paths.config_dir.join("hires")).unwrap();
+        std::fs::write(
+            home.paths.config_dir.join("hires/boss.md"),
+            "---\nname: Boss\nrole: lead\nruntime: claude-code\nmodel: opus\n---\nYou lead.\n",
+        )
+        .unwrap();
+        // No socket file at all, as before the first `studio up`.
+        let lead = put_project_lead(&home.paths, "game", Some("boss".into())).unwrap();
+        assert_eq!(lead.as_deref(), Some("boss"));
+        let text = std::fs::read_to_string(home.studio_toml()).unwrap();
+        assert!(text.starts_with("# mine\n"), "{text}");
+        assert!(
+            text.contains("name = \"game\"\nlead = \"boss\"\n"),
+            "{text}"
+        );
+
+        let err = put_project_lead(&home.paths, "nope", Some("boss".into()));
+        assert_eq!(err, Err("no project named nope in studio.toml".into()));
+        let err = put_project_lead(&home.paths, "game", Some("ghost".into()));
+        assert_eq!(err, Err("no hire named ghost".into()));
+
+        assert_eq!(put_project_lead(&home.paths, "game", None), Ok(None));
+        let text = std::fs::read_to_string(home.studio_toml()).unwrap();
+        assert!(!text.contains("lead"), "{text}");
+    }
+
+    #[test]
+    fn status_shows_each_projects_lead() {
+        let lines = status_lines(&json!({
+            "running": 0, "asks": 0, "spent_24h": 0.0, "daily_usd": 5.0,
+            "projects": ["game", "site"], "leads": {"game": "boss"}, "hires": [],
+        }));
+        assert!(
+            lines.contains(&"projects: game (led by boss), site".to_string()),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_waiting_counts_as_waiting_for_you() {
+        let lines = status_lines(&json!({
+            "running": 1, "asks": 2, "spent_24h": 0.5, "daily_usd": 5.0,
+            "releases_waiting": ["site"], "projects": ["site"], "hires": [],
+        }));
+        assert_eq!(
+            lines[0],
+            "1 running, 3 waiting for you, $0.50 of $5.00 spent in 24h"
+        );
+        assert!(
+            lines.contains(
+                &"site's release waits for your go-ahead: `studio release approve site`"
+                    .to_string()
+            ),
+            "{lines:?}"
+        );
+    }
 
     fn draft(name: &str, text: &str) -> Draft {
         Draft {

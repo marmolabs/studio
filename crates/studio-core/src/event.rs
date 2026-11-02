@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// `Created` is one event per ticket and the rest are small and many; boxing
+// its fields would only complicate every place that reads them.
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Created {
         id: TicketId,
@@ -21,6 +24,10 @@ pub enum Event {
         detail: String,
         #[serde(default)]
         source: Option<String>,
+        /// On a goal's plan ticket: the version the goal is a milestone
+        /// towards.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
     Claimed,
     RunStarted {

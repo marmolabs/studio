@@ -3,9 +3,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use studio_core::ticket::Ticket;
+
+pub use studio_store::StoredEvent;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -34,6 +38,9 @@ pub enum Request {
         /// The owner's full brief for the producer.
         #[serde(default)]
         detail: String,
+        /// The version this goal is a milestone towards, such as `0.4`.
+        #[serde(default)]
+        version: Option<String>,
     },
     Tickets,
     Events {
@@ -61,6 +68,14 @@ pub enum Request {
     Activity {
         since_ms: u64,
     },
+    /// Everything the office shows, read at one moment, as an `OfficeView`:
+    /// what `Status`, `Tickets`, `Asks`, `RecentEvents` (of `OFFICE_KINDS`,
+    /// for the last 24 hours), `TicketSpends`, `MergedTickets` and
+    /// `HiresToday` answer, the size of each ready ticket's change, and who
+    /// is judging each ticket in review, what each live run is doing and
+    /// which ready tickets the owner must review. One request instead of eight, for
+    /// pages that stay open all day.
+    Office,
     /// When each running ticket's latest run began and each held ticket was
     /// held, by ticket id.
     StateSince,
@@ -204,8 +219,7 @@ pub enum Request {
         since: u64,
     },
     /// Closes or reopens the office. While it is closed the scheduler starts
-    /// nothing new (as `max_runs = 0` does) and work already running carries
-    /// on. The choice is the file `closed` in the data folder, so it survives
+    /// nothing new and work already running carries on. The choice is the file `closed` in the data folder, so it survives
     /// a restart. Answers `{"closed": bool}`; `Status` reports it too.
     SetOpen {
         open: bool,
@@ -236,20 +250,123 @@ pub enum Request {
     /// starts, to the branch checked out there. Written to `studio.toml`,
     /// keeping its comments, and applied at once. Answers `{"name", "path",
     /// "branch", "checks"}`, where `checks` is the `.studio.toml` this wrote
-    /// with guessed checks, or null when the project had one.
+    /// with guessed checks, or null when the project had one. With `check`,
+    /// everything is validated the same way and the answer is the same, but
+    /// nothing is written: `checks` is the file that would be.
     AddProject {
         path: String,
         #[serde(default)]
         name: Option<String>,
         #[serde(default)]
         branch: Option<String>,
+        /// A daily limit of the project's own, in USD.
+        #[serde(default)]
+        daily_usd: Option<f64>,
+        /// A pack whose project template becomes the project's `.studio.toml`.
+        #[serde(default)]
+        pack: Option<String>,
+        /// Only check: answer what would be added, and write nothing.
+        #[serde(default)]
+        check: bool,
+    },
+    /// Makes `hire` the lead of `project` (none clears it), written to the
+    /// project's entry in `studio.toml` and applied at once.
+    SetProjectLead {
+        project: String,
+        #[serde(default)]
+        hire: Option<String>,
+    },
+    /// Starts releasing `project` as `version`: the final checks run, then
+    /// the release waits for the owner's `ApproveRelease` before the
+    /// project's `release` commands run and the version is tagged. Answers
+    /// the `ReleaseView`.
+    StartRelease {
+        project: String,
+        version: String,
+    },
+    /// The owner's go-ahead for the release waiting on them in `project`.
+    ApproveRelease {
+        project: String,
+    },
+    /// Stops the release under way in `project`, before it publishes.
+    CancelRelease {
+        project: String,
+    },
+    /// Every release, newest first, of `project` or of all projects.
+    Releases {
+        #[serde(default)]
+        project: Option<String>,
     },
 }
+
+/// A project as the office shows it beyond its tickets: who leads it and
+/// how its releases stand.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProjectView {
+    pub name: String,
+    /// The project's folder.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub lead: Option<String>,
+    /// Whether the project has release commands.
+    #[serde(default)]
+    pub releasable: bool,
+    /// The release under way, if any.
+    #[serde(default)]
+    pub release: Option<ReleaseView>,
+    /// The latest release that published.
+    #[serde(default)]
+    pub last_release: Option<ReleaseView>,
+}
+
+/// One release of a project.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseView {
+    pub project: String,
+    pub version: String,
+    pub state: ReleaseState,
+    /// In order: the final checks, the owner's go-ahead, each release
+    /// command, and the tag.
+    pub steps: Vec<ReleaseStep>,
+    pub started_at: u64,
+    #[serde(default)]
+    pub finished_at: Option<u64>,
+    /// Why it failed, in a line.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseState {
+    /// The final checks are running.
+    Checking,
+    /// It waits for the owner's go-ahead.
+    Waiting,
+    /// The release commands are running.
+    Publishing,
+    Released,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseStep {
+    pub name: String,
+    pub done: bool,
+    #[serde(default)]
+    pub at: Option<u64>,
+}
+
+/// Where a project's tickets work, under its repository: a tool call's path
+/// holds this just before the ticket's own folder.
+pub const WORKTREES_DIR: &str = ".studio/worktrees/";
 
 /// The most agents that work at once, one at each desk the office holds.
 /// `Request::SetMaxRuns` allows up to this, and a larger `max_runs` in
 /// `studio.toml` runs this many.
-pub const MAX_RUNS_LIMIT: u64 = 9;
+pub const MAX_RUNS_LIMIT: u64 = studio_config::config::MAX_RUNS_LIMIT;
 
 /// Something the studio has achieved. A trophy with `earned_at` is won; one
 /// with `progress` is the next milestone, `(done, needed)` of the way there.
@@ -405,7 +522,7 @@ pub struct EvidenceFile {
 /// What history says about one open ticket. Both are `None` without history
 /// for its hire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Estimate {
+pub(crate) struct Estimate {
     pub ticket: String,
     pub quote_usd: Option<f64>,
     /// Expected finish, in epoch milliseconds.
@@ -424,11 +541,125 @@ pub struct DaySpend {
     pub usd: f64,
 }
 
+/// The events the office reads: work starting, asking, going to checks,
+/// being sent back, held or ended.
+pub const OFFICE_KINDS: [&str; 10] = [
+    "claimed",
+    "ask_opened",
+    "ask_resolved",
+    "checks_started",
+    "checks_failed",
+    "review_failed",
+    "held",
+    "landed",
+    "failed",
+    "cancelled",
+];
+
+/// The answer to `Request::Office`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OfficeView {
+    /// As `Request::Status` answers.
+    pub status: Value,
+    pub tickets: Vec<Ticket>,
+    pub asks: Vec<AskView>,
+    /// The `OFFICE_KINDS` events of the last 24 hours, oldest first: the
+    /// newest `RECENT_EVENTS` of them.
+    pub events: Vec<StoredEvent>,
+    /// What each ticket has cost, as `Request::TicketSpends` answers.
+    pub spend: BTreeMap<String, f64>,
+    /// Landed work tickets whose goal branch is merged.
+    pub merged: Vec<String>,
+    /// Lines added and removed by each ready ticket, by ticket id; one
+    /// without a worktree or a change is left out.
+    pub sizes: BTreeMap<String, (u64, u64)>,
+    /// As `Request::HiresToday` answers, except that what the run logs say
+    /// (reviews, critiques, approvals) is at most 30 seconds old.
+    pub today: BTreeMap<String, HireDay>,
+    /// Who is judging each ticket in review, by ticket id; a review whose
+    /// judge hasn't started has none.
+    pub judges: BTreeMap<String, JudgeView>,
+    /// What each ticket with a run under way (claimed, working, in checks,
+    /// in review or asking) is doing, by ticket id, from the end of its run
+    /// log. The office's panel for the picked ticket reads its live steps
+    /// here.
+    #[serde(default)]
+    pub runs: BTreeMap<String, RunView>,
+    /// Ready tickets that no reviewer on another model read, so they are the
+    /// owner's to review.
+    #[serde(default)]
+    pub unreviewed: Vec<String>,
+    /// Every project in `studio.toml` order, with its lead and releases.
+    #[serde(default)]
+    pub projects: Vec<ProjectView>,
+    /// When this was read, in epoch milliseconds.
+    pub now: u64,
+}
+
+/// What a ticket's run is doing, from the end of its run log.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunView {
+    /// Its latest tool call or message.
+    #[serde(default)]
+    pub latest: Option<StepView>,
+    /// Its latest tool calls, oldest first: at most `RUN_CALLS`.
+    #[serde(default)]
+    pub calls: Vec<StepView>,
+    /// The agent's latest words, on one line.
+    #[serde(default)]
+    pub said: Option<String>,
+    /// For a ticket in checks: the project checks started so far, oldest
+    /// first.
+    #[serde(default)]
+    pub checks: Vec<CheckView>,
+}
+
+/// One step of a run: a tool call or a message.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepView {
+    /// The tool's name, or `None` for a message.
+    pub tool: Option<String>,
+    /// A tool call's input, with each text field cut to 400 characters and
+    /// a part over 2000 bytes left out (null). Null for a message.
+    #[serde(default)]
+    pub input: Value,
+    /// A message's words on one line, cut to 400 characters; empty for a
+    /// tool call.
+    #[serde(default)]
+    pub text: String,
+    /// When it was logged, in epoch milliseconds.
+    pub at: u64,
+}
+
+/// A project check a ticket's checks started.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CheckView {
+    /// The command with its arguments.
+    pub command: String,
+    /// When it started, in epoch milliseconds.
+    pub at: u64,
+}
+
+/// The most tool calls a `RunView` lists.
+pub const RUN_CALLS: usize = 3;
+
+/// Who is judging a ticket in review: its reviewer, or a gate's critic.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct JudgeView {
+    pub hire: String,
+    pub model: String,
+    /// The gate, for a critic.
+    #[serde(default)]
+    pub gate: Option<String>,
+    /// When the judge started, in epoch milliseconds.
+    pub at: u64,
+}
+
 /// The most events `Request::RecentEvents` returns.
 pub const RECENT_EVENTS: usize = 2000;
 
 /// The most calls `Request::ApproverCalls` returns.
-pub const APPROVER_CALLS: usize = 500;
+pub(crate) const APPROVER_CALLS: usize = 500;
 
 fn default_limit() -> usize {
     200

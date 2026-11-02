@@ -3,11 +3,11 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
+use crate::Store;
 use rusqlite::Connection;
 use studio_core::event::Event;
 use studio_core::ids::{HireId, ProjectId, RunId, TicketId};
 use studio_core::ticket::{HeldReason, Ticket, TicketState};
-use studio_store::Store;
 
 fn tid(id: &str) -> TicketId {
     TicketId::new(id)
@@ -34,6 +34,7 @@ fn created_event(id: &str, project: &str, created_at: u64) -> Event {
         parent: None,
         detail: String::new(),
         source: None,
+        version: None,
     }
 }
 
@@ -499,6 +500,7 @@ fn migrates_from_schema_version_1() {
             parent: None,
             detail: String::new(),
             source: None,
+            version: None,
         };
         let json = serde_json::to_string(&ticket).unwrap();
         conn.execute(

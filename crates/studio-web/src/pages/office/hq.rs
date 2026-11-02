@@ -1,34 +1,27 @@
-//! The home page's pieces: the top bar's projects and figures, the floor
-//! with its pins, the two corners and the side panel's frame. Each piece that
-//! changes has an `id` and is re-sent whole by the live stream.
+//! The home page's pieces: the top bar's counters and spend, the company
+//! floor with a sign for each project, and the side panel's frame. Each
+//! piece that changes has an `id` and is re-sent whole by the live stream.
 
-use studio_core::event::Event as TicketEvent;
-use studio_core::ticket::{HeldReason, Ticket, TicketKind};
 use topcoat::view::{BoxView, Child, Unescaped, View, ViewExt, component, view};
 
+use super::hq_scene::{self, phase_key};
 use super::inspector::Detail;
-use super::model::{Doing, Floor, Pin, PinWhat, Scene, TINTS, Turn};
+use super::iso::looks;
+use super::model::{Doing, Hq, Phase, Pin, PinWhat, Role, Scene, Team, Turn};
 use super::panel::{self, Extra};
-use super::{Office, ago, plan, safe};
+use super::{Office, facts, plan, safe};
 use crate::ui;
 
-/// The newest events the live corner shows.
-const FEED_SHOWN: usize = 4;
 /// Zoom steps and limits; 1 is the whole floor.
 const ZOOM_MAX: &str = "2.6";
 const ZOOM_STEP: &str = "0.4";
+/// The most faces a sign shows before it counts the rest.
+const FACES: usize = 4;
 
-/// Sets the tab and shows it: a picked ticket, hire or goal is put away.
+/// Sets the tab and shows it: a picked task, hire, goal or project is put
+/// away.
 fn go(tab: &str) -> String {
     format!("$tab = '{tab}'; if ($sel) {{ $sel = ''; @get('/office/panel') }}")
-}
-
-/// Focuses one project (or `all`) and shows the Projects tab.
-fn focus(tint: Option<usize>) -> String {
-    match tint {
-        Some(n) => format!("$focus = {n}; {}", go("projects")),
-        None => "$focus = 'all'".to_string(),
-    }
 }
 
 /// One click handler for everything on the floor with a `data-sel`.
@@ -39,89 +32,42 @@ const PICK_KEY: &str = "const t = evt.target.closest('.iso [data-sel]'); if (t &
 /// The top bar's figures.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hud {
-    /// Open asks plus tickets held for the owner, as on the board.
-    pub needs_you: u64,
-    /// Tickets at work: not paused on an ask.
-    pub running: u64,
-    /// Tickets that landed in the last 24 hours.
-    pub shipped: u64,
-    /// Runs holding a desk, and how many desks there are.
-    pub desks_used: u64,
-    pub desks: u64,
+    pub projects: usize,
+    /// Projects with a release under way: checking, waiting or publishing.
+    pub releasing: usize,
+    /// Everything that waits on the owner, across the projects.
+    pub needs_you: usize,
+    /// Spent in the last 24 hours.
     pub spent: f64,
-    pub daily: f64,
+    /// Agents at work, and how many may be at once.
+    pub working: u64,
+    pub slots: u64,
 }
 
 impl Hud {
-    pub fn of(office: &Office) -> Hud {
-        let held = office
-            .tickets
-            .iter()
-            .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
-            .count();
-        let shipped = super::floor::shipped(office)
-            .iter()
-            .filter(|(t, _)| t.state.kind() == "landed")
-            .count();
+    pub fn of(office: &Office, hq: &Hq) -> Hud {
         Hud {
-            needs_you: office.status.asks + held as u64,
-            running: office.status.at_work(),
-            shipped: shipped as u64,
-            desks_used: office.status.running,
-            desks: office.status.max_runs,
+            projects: hq.teams.len(),
+            releasing: office
+                .projects
+                .iter()
+                .filter(|p| p.release.as_ref().is_some_and(facts::is_releasing))
+                .count(),
+            needs_you: hq.owner_needs,
             spent: office.status.spent_24h,
-            daily: office.status.daily_usd,
+            working: office.status.running,
+            slots: office.status.max_runs,
         }
     }
-}
-
-/// One project: its tint is its place in the studio's list of projects.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ProjectRow {
-    pub name: String,
-    pub tint: usize,
-    /// Tickets in progress or waiting: not landed, failed or cancelled.
-    pub open: u64,
-    /// Open asks and tickets held for the owner.
-    pub needs: u64,
-    /// Tickets at work.
-    pub working: u64,
-    /// Tickets landed and filed over the project's open goals.
-    pub landed: usize,
-    pub total: usize,
-}
-
-impl ProjectRow {
-    /// The share of the project's goals' tickets that landed, in percent.
-    fn percent(&self) -> usize {
-        (self.landed * 100).checked_div(self.total).unwrap_or(0)
-    }
-}
-
-/// A line of the live corner.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FeedLine {
-    /// How long ago, short: "now", "2m".
-    pub ago: String,
-    /// `run`, `ok`, `bad`, `needs` or `held`, as `.dot` takes it.
-    pub tone: &'static str,
-    /// What comes before the ticket's id, which is set in bold: "dev is
-    /// checking".
-    pub before: String,
-    pub id: String,
-    /// What follows it: " landed". Short enough to leave the id in view.
-    pub after: String,
 }
 
 /// Everything the page draws apart from the side panel.
 #[derive(Clone, Debug)]
 pub struct Parts {
     pub hud: Hud,
-    pub rows: Vec<ProjectRow>,
     pub scene: Scene,
     pub projects: Vec<String>,
     pub closed: bool,
-    pub feed: Vec<FeedLine>,
     /// The corner the floor is drawn from.
     pub turn: Turn,
 }
@@ -129,172 +75,45 @@ pub struct Parts {
 impl Parts {
     /// Everything but the panel, with the floor seen from `turn`.
     pub fn of(office: &Office, extra: &Extra, turn: Turn) -> Parts {
-        let floor = plan::floor(office, extra);
+        let hq = plan::hq(office, extra);
         Parts {
-            hud: Hud::of(office),
-            rows: project_rows(office, &floor),
-            scene: super::scene::render(&floor, turn),
-            projects: floor.projects.clone(),
-            closed: floor.closed,
-            feed: feed(office),
+            hud: Hud::of(office, &hq),
+            scene: hq_scene::render(&hq, turn),
+            projects: hq.teams.iter().map(|t| t.project.clone()).collect(),
+            closed: hq.closed,
             turn,
         }
     }
 }
 
-fn project_rows(office: &Office, floor: &Floor) -> Vec<ProjectRow> {
-    floor
-        .projects
-        .iter()
-        .enumerate()
-        .map(|(tint, name)| {
-            let own = |t: &&Ticket| t.project.to_string() == *name;
-            let open = office
-                .tickets
-                .iter()
-                .filter(own)
-                .filter(|t| !matches!(t.state.kind(), "landed" | "failed" | "cancelled"))
-                .count() as u64;
-            let working = office
-                .tickets
-                .iter()
-                .filter(own)
-                .filter(|t| {
-                    matches!(
-                        t.state.kind(),
-                        "claimed" | "working" | "checking" | "reviewing"
-                    )
-                })
-                .count() as u64;
-            let held = office
-                .tickets
-                .iter()
-                .filter(own)
-                .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
-                .count() as u64;
-            let asks = office
-                .asks
-                .iter()
-                .filter(|a| {
-                    office
-                        .ticket(&a.ticket)
-                        .is_some_and(|t| t.project.to_string() == *name)
-                })
-                .count() as u64;
-            let (landed, total) = floor
-                .goals
-                .iter()
-                .filter(|g| g.project == *name)
-                .fold((0, 0), |(l, t), g| (l + g.landed, t + g.total));
-            ProjectRow {
-                name: name.clone(),
-                tint: tint % TINTS,
-                open,
-                needs: asks + held,
-                working,
-                landed,
-                total,
-            }
-        })
-        .collect()
-}
-
-/// The newest events in plain words, newest first.
-fn feed(office: &Office) -> Vec<FeedLine> {
-    office
-        .recent
-        .iter()
-        .rev()
-        .take(FEED_SHOWN)
-        .map(|e| {
-            let ticket = office.ticket(&e.ticket_id);
-            let who = ticket.map_or_else(|| "A ticket".to_string(), |t| t.hire.to_string());
-            let plan = ticket.is_some_and(|t| t.kind == TicketKind::Plan);
-            let (tone, before, after) = match &e.event {
-                TicketEvent::Claimed => ("run", format!("{who} started"), String::new()),
-                TicketEvent::AskOpened { .. } => {
-                    ("needs", String::new(), " needs your say".to_string())
-                }
-                TicketEvent::AskResolved { approved, .. } => (
-                    if *approved { "ok" } else { "bad" },
-                    "A call on".to_string(),
-                    format!(" was {}", decided(*approved)),
-                ),
-                TicketEvent::ChecksStarted => ("run", format!("{who} is checking"), String::new()),
-                TicketEvent::ChecksFailed { .. } => {
-                    ("bad", String::new(), " failed its checks".to_string())
-                }
-                TicketEvent::ReviewFailed { .. } => (
-                    "bad",
-                    String::new(),
-                    " was sent back from review".to_string(),
-                ),
-                TicketEvent::Held { reason } => {
-                    ("held", String::new(), format!(" on hold: {}", why(reason)))
-                }
-                // A plan lands when its tickets are filed.
-                TicketEvent::Landed if plan => ("ok", format!("{who} planned"), String::new()),
-                TicketEvent::Landed => ("ok", String::new(), " landed".to_string()),
-                TicketEvent::Failed { .. } => ("bad", String::new(), " failed".to_string()),
-                TicketEvent::Cancelled => ("held", String::new(), " was cancelled".to_string()),
-                _ => ("held", String::new(), " changed".to_string()),
-            };
-            FeedLine {
-                ago: ago(office.now.saturating_sub(e.at_ms)),
-                tone,
-                before,
-                id: e.ticket_id.clone(),
-                after,
-            }
-        })
-        .collect()
-}
-
-fn decided(approved: bool) -> &'static str {
-    if approved { "allowed" } else { "denied" }
-}
-
-fn why(reason: &HeldReason) -> &'static str {
-    match reason {
-        HeldReason::Budget => "budget",
-        HeldReason::Quota => "quota",
-        HeldReason::Auth => "login",
-        HeldReason::Conflict => "conflict",
-        HeldReason::Paused => "paused",
-    }
-}
-
-/// The projects strip: every project, and the way back to all of them.
-#[component]
-pub async fn projects_strip(rows: Vec<ProjectRow>) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div id="hq-projects" class="contents">
-            <div class="flex min-w-0 gap-1 overflow-x-auto rounded-[10px] border border-line bg-bg-3 p-[3px] [scrollbar-width:none] max-[900px]:order-5 max-[900px]:w-full" role="group" aria-label="Projects">
-                <button type="button" class="pj-btn on" data-class:on="$focus === 'all'" data-on:click=(focus(None))>"All projects"</button>
-                for row in rows {
-                    <button type="button" class="pj-btn" data-class:on=(format!("$focus === {}", row.tint)) data-on:click=(focus(Some(row.tint))) title=(format!("{}: {} in progress or waiting", row.name, row.open))>
-                        <i class=(format!("pjd pj-{}", row.tint))></i>
-                        (row.name.clone())
-                        <span class="n">(row.open)</span>
-                    </button>
-                }
-            </div>
-        </div>
-    })
-}
-
-/// What needs you, what is at work, what shipped, and the money meter.
+/// What the owner is told of the company, and what they have spent.
 #[component]
 pub async fn figures(hud: Hud) -> topcoat::Result<impl View> {
     let needs = hud.needs_you > 0;
-    let desks = if hud.desks > 0 {
-        format!("{} of {} desks in use", hud.desks_used, hud.desks)
+    let projects = if hud.projects == 1 {
+        "project"
     } else {
-        "At work now".to_string()
+        "projects"
+    };
+    let spent = if hud.slots > 0 {
+        format!(
+            "Spent in the last 24 hours. {} of {} agents at work.",
+            hud.working, hud.slots
+        )
+    } else {
+        "Spent in the last 24 hours".to_string()
     };
     Ok(view! {
         <div id="hq-figures" class="contents">
-            <div class="stats">
+            <div class="stats" aria-label="The company today">
+                <button type="button" class="stat" data-on:click=(go("projects"))>
+                    <b>(hud.projects)</b>
+                    <span class="lbl">(projects)</span>
+                </button>
+                <button type="button" class="stat" data-on:click=(go("projects"))>
+                    <b>(hud.releasing)</b>
+                    <span class="lbl">"releasing"</span>
+                </button>
                 <button type="button" class=(if needs { "stat needs" } else { "stat" }) data-on:click=(go("needs"))>
                     if needs {
                         <span class="ping"></span>
@@ -302,28 +121,12 @@ pub async fn figures(hud: Hud) -> topcoat::Result<impl View> {
                         <span class="dot ok"></span>
                     }
                     <b>(hud.needs_you)</b>
-                    <span class="lbl max-[520px]:hidden">"need you"</span>
-                </button>
-                <button type="button" class="stat max-[900px]:hidden!" title=(desks) data-on:click=(super::select("elements/add-desk"))>
-                    <span class="dot run"></span>
-                    <b>(hud.running)</b>
-                    "at work"
-                </button>
-                <button type="button" class="stat max-[1320px]:hidden!" title="Landed in the last 24 hours" data-on:click=(super::select("elements/crates"))>
-                    ui::icon(name: "circle-check", small: true)
-                    <b>(hud.shipped)</b>
-                    "shipped"
+                    <span class="lbl">"need you"</span>
                 </button>
             </div>
-            <a href="/budget" class="ml-auto flex min-w-[140px] flex-col gap-[5px] max-[900px]:min-w-0 max-[900px]:flex-1" title="Spent in the last 24 hours, of the daily limit">
-                <span class="flex items-baseline justify-between gap-2.5 whitespace-nowrap text-[12px] text-fg-3">
-                    <span class="max-[1100px]:hidden">"Last 24 hours"</span>
-                    <span>
-                        <b class="text-[15px] font-semibold tabular-nums text-fg">(ui::usd(hud.spent))</b>
-                        <span class="max-[520px]:hidden">" of " (ui::limit(hud.daily))</span>
-                    </span>
-                </span>
-                ui::meter(value: hud.spent, max: hud.daily)
+            <a href="/?tab=money" class="ml-auto flex items-baseline gap-2 whitespace-nowrap text-[12.5px] text-fg-3 hover:text-fg-2" title=(spent)>
+                <span class="max-[520px]:hidden">"Spent today"</span>
+                <b class="text-[17px] font-semibold tabular-nums text-fg">(ui::usd(hud.spent))</b>
             </a>
         </div>
     })
@@ -403,9 +206,23 @@ pub async fn view_controls() -> topcoat::Result<impl View> {
     })
 }
 
-/// The floor: the drawing, the labels pinned over it, and the closed sign,
-/// with `sel` marked. Zoom, focus and hints come from the page's signals and
-/// are put back by Datastar whenever a patch changes the element.
+/// What the props on a team's area mean, under the floor.
+#[component]
+pub async fn legend() -> topcoat::Result<impl View> {
+    Ok(view! {
+        <div class="world-foot" aria-label="What the props mean">
+            <span><i class="ph-building"></i>"Building: people at desks"</span>
+            <span><i class="ph-testing"></i>"Testing: test bench"</span>
+            <span><i class="ph-releasing"></i>"Releasing: launch crate"</span>
+            <span><i class="ph-live"></i>"Live: plaque"</span>
+        </div>
+    })
+}
+
+/// The floor: the drawing, the signs and labels pinned over it, and the
+/// closed sign, with `sel` marked. When a project is picked, the rest of the
+/// floor fades back. Zoom and hints come from the page's signals and are put
+/// back by Datastar whenever a patch changes the element.
 #[component]
 pub async fn floor_scene(
     scene: Scene,
@@ -416,9 +233,14 @@ pub async fn floor_scene(
 ) -> topcoat::Result<impl View> {
     let style = format!("--ar: {} / {}", scene.width, scene.height);
     let class = if closed { "scene closed" } else { "scene" };
+    let focus = sel
+        .strip_prefix("projects/")
+        .and_then(|id| projects.iter().position(|p| safe(p) == id))
+        .map_or_else(|| "all".to_string(), |at| facts::wrap(at).to_string());
     let svg = Unescaped::new_unchecked(picked(scene.svg, &sel));
+    let [f0, f1, f2, f3] = scene.forms.map(|f| f.to_string());
     Ok(view! {
-        <div id="hq-scene" class=(class) style=(style) data-turn=(turn.index().to_string()) data-style="{'--zoom': $zoom}" data-attr:data-focus="$focus" data-class:show-hints="$hints" data-on:click=(PICK) data-on:keydown=(PICK_KEY)>
+        <div id="hq-scene" class=(class) style=(style) data-turn=(turn.index().to_string()) data-focus=(focus) data-f0=(f0) data-f1=(f1) data-f2=(f2) data-f3=(f3) data-style="{'--zoom': $zoom}" data-class:show-hints="$hints" data-on:click=(PICK) data-on:keydown=(PICK_KEY)>
             (svg)
             <div class="ov">
                 for pin in scene.pins {
@@ -442,18 +264,254 @@ fn picked(svg: String, sel: &str) -> String {
     svg.replace(&at, &format!(r#"{at} data-picked="""#))
 }
 
-fn tint(projects: &[String], project: &str) -> usize {
-    projects.iter().position(|p| p == project).unwrap_or(0) % TINTS
+/// What a sign's phase is called in a style: a release that failed blocks
+/// the project.
+fn phase_class(team: &Team) -> &'static str {
+    if team.release.as_ref().is_some_and(|r| r.failed) {
+        "blocked"
+    } else {
+        phase_key(team.phase)
+    }
+}
+
+/// What a phase is called on a sign.
+fn phase_word(team: &Team) -> &'static str {
+    if team.release.as_ref().is_some_and(|r| r.failed) {
+        return "Release failed";
+    }
+    match team.phase {
+        Phase::Idle => "Idle",
+        Phase::Planning => "Planning",
+        Phase::Building => "Building",
+        Phase::Testing => "Testing",
+        Phase::Releasing => "Releasing",
+        Phase::Live => "Live",
+        Phase::Paused => "Paused",
+    }
+}
+
+/// What a project is up to, in a line: "Releasing v1.2 · 4 of 5", "v1.2 waits
+/// for you", "Live · v2.0", else its milestone's progress.
+pub fn sign_line(team: &Team) -> String {
+    if let Some(r) = &team.release {
+        if r.failed {
+            return format!("v{} failed", r.version);
+        }
+        if r.waiting {
+            return format!("v{} waits for you", r.version);
+        }
+        return format!("Releasing v{} · {} of {}", r.version, r.done, r.total);
+    }
+    if team.phase == Phase::Live
+        && let Some(v) = &team.live
+    {
+        return format!("Live · v{v}");
+    }
+    match &team.milestone {
+        Some(m) if m.total > 0 => {
+            let what = match &m.version {
+                Some(v) => format!("v{v} {}", m.title),
+                None => m.title.clone(),
+            };
+            format!("{what} · {} of {}", m.done, m.total)
+        }
+        Some(m) => m.title.clone(),
+        None => phase_word(team).to_string(),
+    }
+}
+
+/// How far along the sign's bar is, in percent, and the words by it.
+fn progress(team: &Team) -> (usize, String) {
+    let share = |done: usize, total: usize| (done * 100).checked_div(total).unwrap_or(0);
+    if let Some(r) = &team.release {
+        let words = if r.failed {
+            format!("v{} failed", r.version)
+        } else if r.waiting {
+            format!("v{} waits for you", r.version)
+        } else {
+            format!("{} of {} steps", r.done, r.total)
+        };
+        return (share(r.done, r.total), words);
+    }
+    if team.phase == Phase::Live {
+        let words = team
+            .live
+            .as_ref()
+            .map_or_else(|| "Live".to_string(), |v| format!("Live · v{v}"));
+        return (100, words);
+    }
+    match &team.milestone {
+        Some(m) if m.total > 0 => (
+            share(m.done, m.total),
+            format!("{} of {} tasks", m.done, m.total),
+        ),
+        Some(_) => (0, "Planning the tasks".to_string()),
+        None => (0, "Nothing open".to_string()),
+    }
+}
+
+/// What a role is called to the owner.
+fn role_word(role: Role) -> &'static str {
+    match role {
+        Role::Engineer => "coder",
+        Role::Writer => "writer",
+        Role::Designer => "designer",
+        Role::Producer => "planner",
+        Role::Reviewer => "reviewer",
+        Role::Critic => "critic",
+        Role::Approver | Role::Router => "front desk",
+        Role::Lead => "lead",
+        Role::Owner => "owner",
+        Role::Other => "teammate",
+    }
+}
+
+/// Who is on a project, as (hire, name, role): its lead, then everyone at a
+/// desk, once each.
+fn faces(team: &Team) -> Vec<(String, String, Role)> {
+    let mut people: Vec<(String, String, Role)> = Vec::new();
+    let lead = team
+        .lead
+        .iter()
+        .map(|p| (p.hire.clone(), p.name.clone(), Role::Lead));
+    let rest = team
+        .members
+        .iter()
+        .map(|w| (w.hire.clone(), w.name.clone(), w.role));
+    for who in lead.chain(rest) {
+        if !people.iter().any(|(hire, _, _)| *hire == who.0) {
+            people.push(who);
+        }
+    }
+    people
+}
+
+/// A person's small face: their shirt, skin and hair, and who they are.
+#[component]
+async fn face(hire: String, name: String, role: Role) -> topcoat::Result<impl View> {
+    let (skin, hair) = looks(&hire);
+    let class = format!("face {} s-{skin} h-{hair}", role.class());
+    let title = format!("{name}, {}", role_word(role));
+    Ok(view! { <span class=(class) title=(title)></span> })
+}
+
+/// The small faces of who is on a project, or a dashed one when nobody is.
+#[component]
+async fn faces_of(team: Team) -> topcoat::Result<impl View> {
+    let people = faces(&team);
+    let more = people.len().saturating_sub(FACES);
+    Ok(view! {
+        <span class="avs">
+            if people.is_empty() {
+                <span class="face none" title="Nobody on it"></span>
+            }
+            for (hire, name, role) in people.into_iter().take(FACES) {
+                face(hire: hire, name: name, role: role)
+            }
+            if more > 0 {
+                <span class="face more" title=(format!("{more} more"))>"+" (more)</span>
+            }
+        </span>
+    })
+}
+
+/// A project's sign: its name, phase, milestone and who is on it, a control
+/// that picks the project, with a bell on it when it needs the owner.
+#[component]
+async fn sign_card(team: Team, selected: bool) -> topcoat::Result<impl View> {
+    let phase = phase_class(&team);
+    let (percent, words) = progress(&team);
+    let line = sign_line(&team);
+    let label = format!("{}: {line}", team.project);
+    let initial = team
+        .project
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    let key = super::key("projects", &team.project);
+    let pill = format!("pill ph-{phase}");
+    let dot = format!("pdot ph-{phase}");
+    let bar = format!("width:{percent}%");
+    let version = team
+        .milestone
+        .as_ref()
+        .and_then(|m| m.version.clone())
+        .or_else(|| team.live.clone().filter(|_| team.phase == Phase::Live));
+    let title = team
+        .milestone
+        .as_ref()
+        .map(|m| m.title.clone())
+        .unwrap_or_default();
+    let word = phase_word(&team);
+    let needs = team.needs;
+    let bell = format!("{needs} waiting for you");
+    Ok(view! {
+        <div class=(if selected { "sign-card is-on" } else { "sign-card" })>
+            <button type="button" class="sign-open" data-sel=(key) title=(line) aria-label=(label) aria-pressed=(if selected { "true" } else { "false" })>
+                <span class="s-r1">
+                    <i class=(facts::dot_class(team.tint))></i>
+                    <b class="s-name">(team.project.clone())</b>
+                    <i class=(dot)></i>
+                </span>
+                <span class="s-init" aria-hidden="true">(initial)</span>
+                <span class="s-full">
+                    <span class="s-r2">
+                        <span class=(pill.clone())><i></i>(word)</span>
+                        <span class="s-mile">
+                            if let Some(v) = version { <b>"v" (v)</b> " " }
+                            (title)
+                        </span>
+                    </span>
+                    <span class="s-r3">
+                        <span class="bar"><i style=(bar.clone())></i></span>
+                        <span class="s-num">(words)</span>
+                        faces_of(team: team.clone())
+                    </span>
+                </span>
+                <span class="s-compact">
+                    <span class=(pill)><i></i>(word)</span>
+                    <span class="bar"><i style=(bar)></i></span>
+                    faces_of(team: team.clone())
+                </span>
+            </button>
+            if needs > 0 {
+                <button type="button" class="bell" aria-label=(bell.clone()) title=(bell) data-on:click=(go("needs"))>
+                    <svg class="bell-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7.5 2 7.5H4S6 15 6 9z"></path><path d="M10 20a2 2 0 0 0 4 0"></path></svg>
+                    <b>(needs)</b>
+                </button>
+            }
+        </div>
+    })
 }
 
 /// One label over the floor, placed in percent of the floor's box.
 #[component]
 async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Result<impl View> {
-    let place = format!("left:{:.2}%;top:{:.2}%", pin.left, pin.top);
+    // A label with places for each width of the page hangs by those; the
+    // style sheet picks one.
+    let mut place = if pin.spots.is_empty() {
+        format!("left:{:.2}%;top:{:.2}%", pin.left, pin.top)
+    } else {
+        let mut vars = String::new();
+        for (i, at) in pin.spots.iter().enumerate() {
+            vars.push_str(&format!(
+                "--p{i}:{:.2}% auto auto {:.2}%;--a{i}:{:.0}% {:.0}%;",
+                at.top,
+                at.left,
+                -at.across * 100.0,
+                -at.down * 100.0
+            ));
+        }
+        vars.pop();
+        vars
+    };
+    let hung = !pin.spots.is_empty();
     let mut hint: Option<&'static str> = None;
+    let mut sign: Option<(usize, &'static str)> = None;
     let body: BoxView = match pin.what {
         PinWhat::Ticket(w) => {
-            let n = tint(&projects, &w.project);
+            let n = facts::tint(&projects, &w.project);
             let (tone, state) = match &w.doing {
                 Doing::Working => ("run", "at work".to_string()),
                 Doing::Asking(what) => ("needs", format!("waiting for you: {what}")),
@@ -462,7 +520,7 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
             let label = format!("{}: {}, {state}", w.ticket, w.title);
             let ring = format!("--p:{:.2}", w.progress);
             let key = format!("tickets/{}", safe(&w.ticket));
-            // The picked ticket's label stays open, with its title.
+            // The picked task's label stays open, with its title.
             let open = key == sel;
             let tone_class = if open {
                 format!("tagc {tone} is-open")
@@ -479,96 +537,43 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
                     } else {
                         <span class="ring" style=(ring)></span>
                     }
-                    <i class=(format!("pjd pj-{n}"))></i>
+                    <i class=(facts::dot_class(n))></i>
                     <b>(w.ticket.clone())</b>
                     <span class="t">(w.title.clone())</span>
                 </button>
             }
             .boxed()
         }
-        PinWhat::Ready(c) => {
-            let n = tint(&projects, &c.project);
-            let land = format!("@post('/tickets/{}/land')", safe(&c.ticket));
-            let label = format!("Land {}", c.ticket);
-            view! {
-                <div class="ready" data-pj=(n)>
-                    <i class=(format!("pjd pj-{n}"))></i>
-                    <span><b>(c.ticket.clone())</b>" ready"</span>
-                    <button type="button" class=(ui::PRIMARY_SM) aria-label=(label) data-on:click=(land)>"Land"</button>
-                </div>
-            }
-            .boxed()
-        }
-        PinWhat::Queue(n) => view! {
-            <button type="button" class="tagc quiet" data-sel="elements/queue"><b>(n)</b>" up next"</button>
-        }
-        .boxed(),
-        PinWhat::Planning(n) => view! {
-            <button type="button" class="tagc quiet" data-sel="elements/board">"Planning "<b>(n)</b></button>
-        }
-        .boxed(),
-        // What a game element is, shown on hover or with "What's what", and
+        // What a floor element is, shown on hover or with "What's what", and
         // kept up while it is picked.
         PinWhat::Hint(e) => {
             hint = Some(e.key());
             view! { <span>(e.hint())</span> }.boxed()
         }
+        PinWhat::Sign(team) => {
+            let tint = facts::wrap(team.tint);
+            let selected = sel == super::key("projects", &team.project);
+            sign = Some((tint, phase_class(&team)));
+            place = format!("{place};--pj:var(--pj-{tint})");
+            let team = *team;
+            view! { sign_card(team: team, selected: selected) }.boxed()
+        }
     };
-    let class = match hint {
-        Some(key) if sel.strip_prefix("elements/") == Some(key) => "pin hint on",
-        Some(_) => "pin hint",
-        None => "pin",
+    let class = match (hint, sign) {
+        (Some(key), _) if sel.strip_prefix("elements/") == Some(key) => "pin hint on",
+        (Some(_), _) => "pin hint",
+        (None, Some(_)) => "pin sign",
+        (None, None) => "pin",
     };
+    let class = if hung {
+        format!("{class} at")
+    } else {
+        class.to_string()
+    };
+    let (pj, phase) = sign.unzip();
     Ok(view! {
-        <div class=(class) data-for=(hint) style=(place)>
+        <div class=(class) data-for=(hint) data-pj=(pj.map(|n| n.to_string())) data-phase=(phase) style=(place)>
             (body)
-        </div>
-    })
-}
-
-/// The two corners over the floor, or under it on a phone.
-#[component]
-pub async fn corners(rows: Vec<ProjectRow>, feed: Vec<FeedLine>) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <div id="hq-corners" class="max-[900px]:grid max-[900px]:gap-2.5 max-[900px]:px-4 max-[900px]:pb-3.5 max-[900px]:pt-2.5">
-            <div class="corner left">
-                <h4><span>"Projects"</span><span>"tickets landed"</span></h4>
-                if rows.is_empty() {
-                    <p class="text-[12px] text-fg-3">"No projects yet."</p>
-                }
-                for row in rows {
-                    <button type="button" class="trk" data-on:click=(focus(Some(row.tint)))>
-                        <i class=(format!("pjd pj-{}", row.tint))></i>
-                        <span class="name">(row.name.clone())</span>
-                        <span class="bar"><i style=(format!("width: {}%; background: var(--pj-{})", row.percent(), row.tint))></i></span>
-                        <span class="num">
-                            if row.total > 0 { (row.landed) "/" (row.total) }
-                        </span>
-                        <span class="flags">
-                            if row.needs > 0 { <span class="flag needs" title="Need you">(row.needs)</span> }
-                            if row.working > 0 { <span class="flag run" title="At work">(row.working)</span> }
-                        </span>
-                    </button>
-                }
-            </div>
-            <div class="corner right">
-                <h4>
-                    <span class="live">"Live"</span>
-                    <button type="button" class=(ui::GHOST_SM) data-on:click=(go("log"))>"All"</button>
-                </h4>
-                if feed.is_empty() {
-                    <p class="text-[12px] text-fg-3">"Nothing has happened in the last 24 hours."</p>
-                }
-                <ol class="mini-feed">
-                    for line in feed {
-                        <li>
-                            <time>(line.ago.clone())</time>
-                            <span class=(format!("dot {}", line.tone))></span>
-                            <span>(line.before.clone()) if !line.before.is_empty() { " " } <b>(line.id.clone())</b>(line.after.clone())</span>
-                        </li>
-                    }
-                </ol>
-            </div>
         </div>
     })
 }
@@ -581,10 +586,11 @@ pub async fn side(
     extra: Extra,
     sel: String,
     tab: String,
+    history: usize,
 ) -> topcoat::Result<impl View> {
     Ok(view! {
-        <aside id="hq-panel" class="panel overflow-y-auto max-[900px]:overflow-visible max-[900px]:border-l-0! max-[900px]:border-t! max-[900px]:border-line" aria-label="What needs you, projects and team">
-            panel::panel(office: office, detail: detail, extra: extra, sel: sel, tab: tab)
+        <aside id="hq-panel" class="panel overflow-y-auto max-[900px]:overflow-visible max-[900px]:border-l-0! max-[900px]:border-t! max-[900px]:border-line" aria-label="What needs you, projects and the company">
+            panel::panel(office: office, detail: detail, extra: extra, sel: sel, tab: tab, history: history)
         </aside>
     })
 }
@@ -592,110 +598,168 @@ pub async fn side(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client;
-    use serde_json::json;
+    use crate::pages::office::model::{Launch, Milestone, Person, Worker};
 
-    fn ticket(id: &str, project: &str, state: serde_json::Value) -> Ticket {
-        serde_json::from_value(json!({
-            "id": id, "project": project, "title": id, "goal": "", "hire": "dev",
-            "state": state, "attempts": 0, "base_branch": "main", "created_at": 0,
-        }))
-        .unwrap()
+    fn team(phase: Phase) -> Team {
+        Team {
+            project: "shop".into(),
+            tint: 1,
+            phase,
+            needs: 0,
+            lead: Some(Person {
+                hire: "nora".into(),
+                name: "Nora".into(),
+                role: Role::Lead,
+                idle_minutes: None,
+            }),
+            members: Vec::new(),
+            milestone: None,
+            release: None,
+            live: None,
+        }
+    }
+
+    fn goal() -> Milestone {
+        Milestone {
+            key: "goals/P-1".into(),
+            title: "Boss fight".into(),
+            version: Some("0.4".into()),
+            done: 6,
+            total: 10,
+        }
+    }
+
+    fn launch(waiting: bool, failed: bool) -> Launch {
+        Launch {
+            version: "1.2".into(),
+            done: 4,
+            total: 5,
+            waiting,
+            failed,
+        }
+    }
+
+    fn at_desk(hire: &str, task: &str) -> Worker {
+        Worker {
+            ticket: task.into(),
+            project: "shop".into(),
+            title: task.into(),
+            hire: hire.into(),
+            name: hire.into(),
+            role: Role::Engineer,
+            doing: Doing::Working,
+            progress: 0.25,
+        }
     }
 
     #[test]
-    fn the_hud_counts_what_needs_you_and_what_runs_as_the_board_does() {
-        // Four runs hold a slot, but one of them waits on an ask.
-        let status: client::Status = serde_json::from_value(json!({
-            "asks": 2, "running": 4,
-            "tickets": {"held": 2, "ready": 4, "working": 2, "reviewing": 1, "asking": 1},
-            "daily_usd": 100.0, "spent_24h": 34.12,
-        }))
-        .unwrap();
-        // A budget hold starts again by itself; a pause waits for the owner.
-        let tickets = vec![
-            ticket("G-1", "game", json!({"held": {"reason": "budget"}})),
-            ticket("G-2", "game", json!({"held": {"reason": "paused"}})),
-        ];
-        let office = Office {
-            status,
-            tickets,
-            ..Office::default()
+    fn a_sign_says_what_the_project_is_up_to() {
+        let mut t = team(Phase::Building);
+        assert_eq!(sign_line(&t), "Building");
+        t.milestone = Some(goal());
+        assert_eq!(sign_line(&t), "v0.4 Boss fight · 6 of 10");
+        assert_eq!(progress(&t), (60, "6 of 10 tasks".to_string()));
+
+        t.phase = Phase::Releasing;
+        t.release = Some(launch(false, false));
+        assert_eq!(sign_line(&t), "Releasing v1.2 · 4 of 5");
+        assert_eq!(progress(&t), (80, "4 of 5 steps".to_string()));
+        t.release = Some(launch(true, false));
+        assert_eq!(sign_line(&t), "v1.2 waits for you");
+        assert_eq!(progress(&t).1, "v1.2 waits for you");
+        t.release = Some(launch(false, true));
+        assert_eq!(sign_line(&t), "v1.2 failed");
+        assert_eq!(phase_word(&t), "Release failed");
+
+        let live = Team {
+            live: Some("2.0".into()),
+            ..team(Phase::Live)
         };
+        assert_eq!(sign_line(&live), "Live · v2.0");
+        assert_eq!(progress(&live), (100, "Live · v2.0".to_string()));
+        assert_eq!(phase_word(&live), "Live");
+        assert_eq!(progress(&team(Phase::Idle)).1, "Nothing open");
+    }
+
+    #[test]
+    fn a_sign_shows_the_lead_and_each_person_once() {
+        let mut t = team(Phase::Building);
         assert_eq!(
-            Hud::of(&office),
-            Hud {
-                needs_you: 3,
-                running: 3,
-                shipped: 0,
-                desks_used: 4,
-                desks: 0,
-                spent: 34.12,
-                daily: 100.0
-            }
+            faces(&t),
+            [("nora".to_string(), "Nora".to_string(), Role::Lead)]
+        );
+        t.members = vec![
+            at_desk("kit", "S-1"),
+            at_desk("kit", "S-2"),
+            at_desk("nora", "S-3"),
+        ];
+        assert_eq!(
+            faces(&t),
+            [
+                ("nora".to_string(), "Nora".to_string(), Role::Lead),
+                ("kit".to_string(), "kit".to_string(), Role::Engineer)
+            ]
         );
     }
 
-    #[test]
-    fn each_project_counts_its_open_work_and_what_needs_you() {
-        let status: client::Status = serde_json::from_value(json!({
-            "projects": ["shop", "api"], "asks": 1,
-        }))
-        .unwrap();
-        let tickets = vec![
-            ticket("S-1", "shop", json!("working")),
-            ticket("S-2", "shop", json!("queued")),
-            ticket("S-3", "shop", json!("landed")),
-            ticket("S-4", "shop", json!({"held": {"reason": "paused"}})),
-            ticket("A-1", "api", json!("checking")),
-        ];
-        let asks = serde_json::from_value(json!([{
-            "id": "ASK-1", "ticket": "A-1", "hire": "dev", "kind": "permission",
-            "tool": "Bash", "input": {}, "reasons": [],
-        }]))
-        .unwrap();
-        let office = Office {
-            status,
-            tickets,
-            asks,
-            ..Office::default()
-        };
-        let floor = plan::floor(&office, &Extra::default());
-        let rows = project_rows(&office, &floor);
-        let seen: Vec<_> = rows
-            .iter()
-            .map(|r| (r.name.as_str(), r.tint, r.open, r.needs, r.working))
-            .collect();
-        assert_eq!(seen, [("shop", 0, 3, 1, 1), ("api", 1, 1, 1, 1)]);
+    fn project(name: &str, release: Option<&str>) -> studiod::api::ProjectView {
+        let release = release.map(|state| {
+            serde_json::json!({
+                "project": name, "version": "1.2", "state": state, "steps": [], "started_at": 0,
+            })
+        });
+        studiod::api::ProjectView {
+            name: name.into(),
+            release: release.map(|r| serde_json::from_value(r).unwrap()),
+            ..studiod::api::ProjectView::default()
+        }
     }
 
     #[test]
-    fn the_live_corner_tells_the_latest_events_in_words() {
-        let at = |id: &str, ms: u64, event: serde_json::Value| -> client::Happened {
-            serde_json::from_value(json!({"ticket_id": id, "at_ms": ms, "event": event})).unwrap()
-        };
-        let office = Office {
-            tickets: vec![ticket("G-1", "game", json!("working"))],
-            recent: vec![
-                at("G-1", 1_000, json!({"type": "claimed"})),
-                at("G-1", 2_000, json!({"type": "checks_started"})),
-                at("G-1", 3_000, json!({"type": "ask_opened", "ask": "A-1"})),
-                at("G-1", 4_000, json!({"type": "landed"})),
-                at("G-1", 5_000, json!({"type": "held", "reason": "budget"})),
+    fn the_hud_counts_projects_releases_and_what_waits() {
+        let hq = Hq {
+            teams: vec![
+                team(Phase::Releasing),
+                team(Phase::Building),
+                team(Phase::Live),
             ],
-            now: 125_000,
+            owner_needs: 2,
+            ..Hq::default()
+        };
+        let mut office = Office {
+            status: serde_json::from_value(serde_json::json!({"spent_24h": 6.4})).unwrap(),
+            projects: vec![
+                project("shop", Some("checking")),
+                project("docs", None),
+                project("api", Some("released")),
+            ],
             ..Office::default()
         };
-        let lines = feed(&office);
-        // Newest first, four of them.
-        assert_eq!(lines.len(), 4);
-        assert_eq!(lines[0].after, " on hold: budget");
-        assert_eq!(lines[0].tone, "held");
-        assert_eq!(lines[0].ago, "2m");
-        assert_eq!(lines[1].after, " landed");
-        assert_eq!(lines[2].after, " needs your say");
-        assert_eq!(lines[2].tone, "needs");
-        assert_eq!(lines[3].before, "dev is checking");
-        assert!(lines.iter().all(|l| l.id == "G-1"));
+        let hud = |office: &Office| Hud::of(office, &hq);
+        assert_eq!(
+            hud(&office),
+            Hud {
+                projects: 3,
+                releasing: 1,
+                needs_you: 2,
+                spent: 6.4,
+                working: 0,
+                slots: 0
+            }
+        );
+        // Every release under way counts, whatever phase its project shows:
+        // checking, waiting for the go-ahead or publishing, the office
+        // closed or not; one that finished, failed or was cancelled doesn't.
+        office.projects = vec![
+            project("a", Some("checking")),
+            project("b", Some("waiting")),
+            project("c", Some("publishing")),
+            project("d", Some("failed")),
+            project("e", Some("cancelled")),
+            project("f", Some("released")),
+        ];
+        assert_eq!(hud(&office).releasing, 3);
+        office.status.closed = true;
+        assert_eq!(hud(&office).releasing, 3);
     }
 }

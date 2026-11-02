@@ -30,6 +30,11 @@ pub struct ProjectConfig {
     /// own checkout.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Commands that publish a release once the owner approves it, run in
+    /// order with `VERSION` in their environment. Empty means the project
+    /// can't be released from the studio.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -27,6 +27,10 @@ pub struct Ticket {
     /// What made the studio file this ticket itself, e.g. `ci:<run id>`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source: Option<String>,
+    /// On a goal's plan ticket: the version the goal is a milestone towards,
+    /// such as `0.4`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub version: Option<String>,
 }
 
 /// A plan ticket's run files tickets instead of changing code, so it skips

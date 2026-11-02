@@ -170,7 +170,7 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn new(events: mpsc::Receiver<RunEvent>, control: mpsc::Sender<Control>) -> Run {
+    pub(crate) fn new(events: mpsc::Receiver<RunEvent>, control: mpsc::Sender<Control>) -> Run {
         Run { events, control }
     }
 

@@ -3,7 +3,9 @@
 
 use crate::api::{Request, call, socket_path};
 use std::process::Command;
-use studio_config::{ProjectConfig, StudioConfig, StudioPaths, load_hires, load_rules};
+use studio_config::{
+    ProjectConfig, StudioConfig, StudioPaths, load_hires, load_pack_hires, load_rules,
+};
 use studio_git::Repo;
 
 pub struct Check {
@@ -87,11 +89,7 @@ pub fn check_home(paths: &StudioPaths) -> Vec<Check> {
         }
     }
 
-    let built = crate::runtimes::build(config.as_ref());
-    for problem in built.problems {
-        checks.push(fail(problem, "fix the provider in studio.toml"));
-    }
-    for (name, runtime) in &built.runtimes {
+    for (name, runtime) in &crate::runtimes::build() {
         let report = runtime.check_env();
         checks.push(match report.problem {
             None => pass(format!(
@@ -105,8 +103,24 @@ pub fn check_home(paths: &StudioPaths) -> Vec<Check> {
         });
     }
 
+    let hire_ids: Vec<String> = config
+        .iter()
+        .flat_map(load_pack_hires)
+        .chain(load_hires(paths))
+        .filter_map(|(_, hire)| Some(hire.ok()?.id.0))
+        .collect();
     for project in config.iter().flat_map(|c| &c.projects) {
         let name = &project.name;
+        if let Some(lead) = &project.lead {
+            checks.push(if hire_ids.contains(lead) {
+                pass(format!("project {name}: lead {lead}"))
+            } else {
+                fail(
+                    format!("project {name}: lead {lead} is not a hire"),
+                    "fix `lead` in studio.toml, or add the hire to hires/ (`studio lead` sets it)",
+                )
+            });
+        }
         let repo = match Repo::open(&project.path) {
             Ok(repo) => {
                 checks.push(pass(format!(
@@ -256,6 +270,29 @@ mod tests {
         assert!(failures(&checks).is_empty(), "{:?}", failures(&checks));
         assert!(checks.iter().any(|c| c.label == "hire dev"));
         assert!(checks.iter().any(|c| c.label.contains("branch master")));
+    }
+
+    #[test]
+    fn a_lead_must_be_a_hire() {
+        let project = repo();
+        let home = home(project.path(), "master", HIRE);
+        let file = home.path().join("studio.toml");
+        let text = fs::read_to_string(&file).unwrap();
+        let paths = StudioPaths::resolve(Some(home.path().to_path_buf()));
+
+        fs::write(&file, format!("{text}lead = \"dev\"\n")).unwrap();
+        let checks = check_home(&paths);
+        assert!(failures(&checks).is_empty(), "{:?}", failures(&checks));
+        assert!(checks.iter().any(|c| c.label == "project game: lead dev"));
+
+        fs::write(&file, format!("{text}lead = \"boss\"\n")).unwrap();
+        let checks = check_home(&paths);
+        assert_eq!(failures(&checks), ["project game: lead boss is not a hire"]);
+        let bad = checks
+            .iter()
+            .find(|c| !c.ok && c.label.contains("lead"))
+            .unwrap();
+        assert!(bad.fix.contains("studio.toml"));
     }
 
     #[test]

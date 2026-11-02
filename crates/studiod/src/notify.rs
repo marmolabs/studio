@@ -44,6 +44,16 @@ impl Notifier {
     }
 }
 
+impl Notifier {
+    /// Tells the owner something that is not about a ticket, such as a
+    /// release waiting for their go-ahead.
+    pub fn tell(&self, body: String) {
+        if self.enabled {
+            send(body);
+        }
+    }
+}
+
 /// What to say about a ticket, or `None` for states that don't need you.
 fn message(ticket: &Ticket) -> Option<String> {
     let what = match ticket.state.kind() {
@@ -112,6 +122,7 @@ mod tests {
             parent: None,
             detail: String::new(),
             source: None,
+            version: None,
         }
     }
 

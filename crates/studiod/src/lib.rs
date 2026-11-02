@@ -15,6 +15,7 @@ mod router;
 mod ruletest;
 mod runlog;
 pub mod runtimes;
+mod runview;
 mod server;
 mod studio;
 mod today;

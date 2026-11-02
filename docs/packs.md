@@ -39,7 +39,7 @@ studio project add ~/code/my-app --pack my-pack
 
 `pack add` appends a `[[packs]]` entry to `studio.toml`. `--pack` copies the
 pack's `project.toml` to the project's `.studio.toml`, but only if the repo
-has none yet. Restart `studiod` to pick up a new pack.
+has none yet. The daemon picks up a new pack within a second.
 
 ## What a pack changes
 

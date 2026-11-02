@@ -1,11 +1,11 @@
 //! How an ask and an agent's latest action read, so they say the same on
-//! the office, the board, the ticket page and the asks page.
+//! the office and the ticket page.
 
 use serde_json::Value;
 use studiod::api::AskView;
 
 use crate::pages::ask_card::questions;
-use crate::summary::{Action, file_path, project_path, truncate};
+use crate::summary::{Action, file_path, project_path};
 
 /// What an ask wants, in parts every page words the same way.
 #[derive(Debug, PartialEq)]
@@ -82,25 +82,6 @@ pub fn ask_head(ask: &AskView) -> String {
     }
 }
 
-/// An ask in one line: "Wants to run" and the command, cut to `max`, or the
-/// question itself.
-pub fn ask_line(ask: &AskView, max: usize) -> (String, Option<String>) {
-    match of(ask) {
-        Wanted {
-            verb: "ask",
-            target: Some(question),
-            ..
-        } => (truncate(&question, max), None),
-        Wanted { verb: "ask", .. } => ("Has a question".into(), None),
-        Wanted {
-            verb,
-            target: Some(target),
-            ..
-        } => (format!("Wants to {verb}"), Some(truncate(&target, max))),
-        Wanted { verb, what, .. } => (format!("Wants to {verb} {what}"), None),
-    }
-}
-
 /// An ask in a list of what happened, after the ticket's id: "asked to run
 /// a command".
 pub fn asked(ask: &AskView) -> String {
@@ -173,17 +154,6 @@ pub fn action_text(action: &Action) -> String {
     }
 }
 
-/// A running ticket's line: what its agent is doing now, from its state
-/// and latest action.
-pub fn now_line(kind: &str, action: Option<Action>) -> (String, Option<String>) {
-    match action {
-        _ if kind == "checking" => ("Running the checks".into(), None),
-        Some(action) => action_line(&action),
-        None if kind == "reviewing" => ("Under review".into(), None),
-        None => ("Starting".into(), None),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,25 +189,13 @@ mod tests {
         );
         assert_eq!(ask_title(&run), "Run a command");
         assert_eq!(ask_head(&run), "Wants to run a command");
-        assert_eq!(
-            ask_line(&run, 80),
-            (
-                "Wants to run".into(),
-                Some("cargo run --example waves".into())
-            )
-        );
         assert_eq!(asked(&run), "asked to run a command");
 
         let edit = ask("permission", "Edit", json!({"file_path": "src/a.rs"}));
         assert_eq!(ask_title(&edit), "Edit a file");
-        assert_eq!(ask_line(&edit, 80).1.as_deref(), Some("src/a.rs"));
 
         let gate = ask("gate", "design", json!({"rounds": 3}));
         assert_eq!(ask_title(&gate), "Pass the design gate");
-        assert_eq!(
-            ask_line(&gate, 80),
-            ("Wants to pass the design gate".into(), None)
-        );
 
         let change = ask(
             "change",
@@ -245,7 +203,6 @@ mod tests {
             json!({"message": "Add waves\n\nMore.", "files": []}),
         );
         assert_eq!(ask_head(&change), "Wants to commit a change");
-        assert_eq!(ask_line(&change, 80).1.as_deref(), Some("Add waves"));
 
         let question = ask(
             "question",
@@ -254,11 +211,7 @@ mod tests {
         );
         assert_eq!(ask_title(&question), "Ask a question");
         assert_eq!(ask_head(&question), "Has a question");
-        assert_eq!(ask_line(&question, 80), ("Which palette?".into(), None));
         assert_eq!(asked(&question), "asked a question");
-
-        let other = ask("permission", "WebFetch", json!({"url": "https://x"}));
-        assert_eq!(ask_line(&other, 80), ("Wants to use WebFetch".into(), None));
     }
 
     #[test]
@@ -278,10 +231,5 @@ mod tests {
             "Reading the rules"
         );
         assert_eq!(said(None, "Looking around"), "Looking around");
-        assert_eq!(
-            now_line("checking", Some(action(None, "x"))),
-            ("Running the checks".into(), None)
-        );
-        assert_eq!(now_line("reviewing", None), ("Under review".into(), None));
     }
 }

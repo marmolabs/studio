@@ -12,13 +12,13 @@ use studio_core::ids::TicketId;
 /// adding worktrees at once can fail each other. This keeps them in turn.
 static WORKTREE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn worktree_lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn worktree_lock() -> std::sync::MutexGuard<'static, ()> {
     WORKTREE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-const EXCLUDE_LINE: &str = ".studio/";
+pub(crate) const EXCLUDE_LINE: &str = ".studio/";
 /// Longest goal part of a goal branch name.
 const GOAL_NAME_MAX: usize = 60;
 /// Where a ticket's capture output goes; never committed.

@@ -1,6 +1,6 @@
 /// Removes AI attribution lines (co-author trailers, "Generated with Claude"
 /// footers, session links) from a commit message.
-pub fn strip_attribution(message: &str) -> String {
+pub(crate) fn strip_attribution(message: &str) -> String {
     let kept: Vec<&str> = message
         .lines()
         .filter(|line| !is_attribution(line))

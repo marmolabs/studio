@@ -32,6 +32,13 @@ impl RunLog {
         self.write(json!({ "at": crate::now_ms(), "note": text }));
     }
 
+    /// A note from the studio that also says which hire decided it, such as
+    /// a lead allowing a call or assigning a ticket. The hire is a field of
+    /// its own, so the note's words read the same as any other.
+    pub(crate) fn note_by(&self, text: &str, hire: &str) {
+        self.write(json!({ "at": crate::now_ms(), "note": text, "by": hire }));
+    }
+
     /// The session id of the most recent run, to resume it.
     pub(crate) fn last_session(&self) -> Option<String> {
         let text = fs::read_to_string(&self.path).ok()?;

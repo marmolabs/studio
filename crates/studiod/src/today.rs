@@ -1,6 +1,8 @@
 //! What each hire did in the last 24 hours: tickets that passed review or
 //! landed, from the event store, and reviews, critiques, approvals and
-//! routings, from the studio's notes in the run logs.
+//! routings, from the studio's notes in the run logs. A call or a routing
+//! counts for the hire its note says decided it: a project's lead, or else the
+//! studio's approver or router.
 
 use crate::api::{ApproverCall, HireDay};
 use crate::ruletest;
@@ -64,9 +66,17 @@ fn fresh_logs(runs: &Path, since: u64) -> impl Iterator<Item = (String, String)>
         })
 }
 
+/// One note of the studio's, with the hire that decided it when the log says
+/// (the line's `by` field: a lead or the studio's approver or router).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Note {
+    pub text: String,
+    pub by: Option<String>,
+}
+
 /// The studio's notes written at or after `since` (epoch ms), from every run
 /// log changed since then.
-pub(crate) fn notes_since(runs: &Path, since: u64) -> Vec<String> {
+pub(crate) fn notes_since(runs: &Path, since: u64) -> Vec<Note> {
     let mut notes = Vec::new();
     for (_, text) in fresh_logs(runs, since) {
         for line in text.lines().filter(|l| l.contains("\"note\"")) {
@@ -76,7 +86,10 @@ pub(crate) fn notes_since(runs: &Path, since: u64) -> Vec<String> {
             if let (Some(at), Some(note)) = (value["at"].as_u64(), value["note"].as_str())
                 && at >= since
             {
-                notes.push(note.to_string());
+                notes.push(Note {
+                    text: note.to_string(),
+                    by: value["by"].as_str().map(str::to_string),
+                });
             }
         }
     }
@@ -144,20 +157,22 @@ fn approver_note(note: &str) -> Option<(&'static str, &str, &str)> {
 }
 
 /// Counts reviews and critiques by the hire the notes name. The approver's
-/// and the router's notes don't name one, so they count for `approver` and
-/// `router`, the hires that do those jobs now.
+/// and the router's notes say who decided (a project's lead decides for its
+/// project); an older note that doesn't counts for `approver` and `router`,
+/// the hires that do those jobs now.
 pub(crate) fn from_notes(
-    notes: &[String],
+    notes: &[Note],
     approver: Option<&str>,
     router: Option<&str>,
     days: &mut BTreeMap<String, HireDay>,
 ) {
-    for note in notes {
+    for Note { text: note, by } in notes {
+        let by = by.as_deref();
         if let Some(hire) = reviewer(note) {
             days.entry(hire.to_string()).or_default().reviews += 1;
         } else if let Some(hire) = critic(note) {
             days.entry(hire.to_string()).or_default().critiques += 1;
-        } else if let (Some(hire), Some((verdict, _, _))) = (approver, approver_note(note)) {
+        } else if let (Some(hire), Some((verdict, _, _))) = (by.or(approver), approver_note(note)) {
             let day = days.entry(hire.to_string()).or_default();
             match verdict {
                 "allowed" => day.allowed += 1,
@@ -166,7 +181,7 @@ pub(crate) fn from_notes(
             }
         }
         // A router that failed leaves the ticket to the first engineer.
-        if let (Some(hire), Some(rest)) = (router, note.strip_prefix("routed to "))
+        if let (Some(hire), Some(rest)) = (by.or(router), note.strip_prefix("routed to "))
             && !rest.ends_with("the first engineer")
         {
             days.entry(hire.to_string()).or_default().routed += 1;
@@ -236,7 +251,7 @@ mod tests {
 
     #[test]
     fn notes_count_reviews_critiques_approvals_and_routings() {
-        let notes: Vec<String> = [
+        let notes: Vec<Note> = [
             "review by critic (opus)",
             "review passed",
             "gate art by designer (sonnet)",
@@ -250,7 +265,7 @@ mod tests {
             "routed to dev: game logic",
             "routed to dev: no router; the first engineer",
         ]
-        .map(String::from)
+        .map(plain)
         .to_vec();
         let mut days = BTreeMap::new();
         from_notes(&notes, Some("approver"), Some("router"), &mut days);
@@ -282,8 +297,89 @@ mod tests {
         .join("\n");
         std::fs::write(dir.path().join("GAME-1.jsonl"), lines).unwrap();
         std::fs::write(dir.path().join("GAME-1.mcp.json"), "{\"note\": 1}").unwrap();
-        assert_eq!(notes_since(dir.path(), 200), ["review by new (x)"]);
+        assert_eq!(notes_since(dir.path(), 200), [plain("review by new (x)")]);
         assert!(notes_since(&dir.path().join("missing"), 0).is_empty());
+    }
+
+    fn plain(text: &str) -> Note {
+        Note {
+            text: text.to_string(),
+            by: None,
+        }
+    }
+
+    fn by(text: &str, hire: &str) -> Note {
+        Note {
+            text: text.to_string(),
+            by: Some(hire.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_leads_goals_count_under_the_lead() {
+        let tickets = [
+            ticket("GAME-1", "nora", "plan"),
+            ticket("GAME-2", "approver", "work"),
+        ];
+        let events = [
+            stored("GAME-1", Event::Landed),
+            stored("GAME-2", Event::ReviewPassed),
+        ];
+        let mut days = BTreeMap::new();
+        from_events(&tickets, &events, &mut days);
+        assert_eq!(days["nora"].planned, 1);
+        assert_eq!(days["approver"].planned, 0);
+    }
+
+    #[test]
+    fn a_leads_decisions_and_routings_count_under_the_lead() {
+        let notes = [
+            by("approver allowed Bash: runs the tests", "nora"),
+            by("approver denied Bash: not needed", "nora"),
+            by("approver left Bash to the owner: pushes code", "nora"),
+            by("routed to dev: game logic", "nora"),
+            by(
+                "routed to dev: the router failed; the first engineer",
+                "nora",
+            ),
+            // The studio's own approver and router, and notes from before
+            // the log said who decided.
+            by("approver allowed Read: reads", "approver"),
+            by("routed to art: textures", "router"),
+            plain("approver allowed Bash: old note"),
+            plain("routed to dev: old note"),
+        ];
+        let mut days = BTreeMap::new();
+        from_notes(&notes, Some("approver"), Some("router"), &mut days);
+        let lead = &days["nora"];
+        assert_eq!(
+            (lead.allowed, lead.denied, lead.to_owner, lead.routed),
+            (1, 1, 1, 1)
+        );
+        let approver = &days["approver"];
+        assert_eq!(
+            (approver.allowed, approver.denied, approver.to_owner),
+            (2, 0, 0)
+        );
+        assert_eq!(days["router"].routed, 2);
+        assert_eq!(days["approver"].routed, 0);
+        assert_eq!(days["router"].allowed, 0);
+    }
+
+    #[test]
+    fn the_run_log_keeps_who_decided_in_its_own_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = crate::runlog::RunLog::new(dir.path(), "GAME-1");
+        log.note_by("approver allowed Bash: runs the tests", "nora");
+        log.note("review by critic (x)");
+        let text = std::fs::read_to_string(dir.path().join("runs/GAME-1.jsonl")).unwrap();
+        let first: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        // The note's words are the same as ever, so the activity feed reads it.
+        assert_eq!(first["note"], "approver allowed Bash: runs the tests");
+        let notes = notes_since(&dir.path().join("runs"), 0);
+        assert_eq!(notes.len(), 2);
+        assert!(notes.contains(&by("approver allowed Bash: runs the tests", "nora")));
+        assert!(notes.contains(&plain("review by critic (x)")));
     }
 
     #[test]

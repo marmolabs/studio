@@ -1,28 +1,34 @@
-//! The office: the whole studio as one isometric floor with labels pinned
-//! over it, a top bar and a side panel, on one page. `plan` decides who is
-//! where, `scene` draws the floor, `hq` draws the page's pieces and `panel`
+//! The home page: the whole company as one isometric floor with a sign for
+//! each project's team, a top bar and a side panel. `plan` decides who is
+//! where, `hq_scene` draws the floor, `hq` draws the page's pieces and `panel`
 //! the side panel for whatever the owner picks.
 
+mod facts;
 mod floor;
 mod hq;
+mod hq_scene;
 mod inspector;
+mod iso;
 mod model;
 mod panel;
+mod pins;
 mod plan;
-mod scene;
 
 use futures_util::Stream;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::Ticket;
-use studiod::api::{AskView, FileKind, HireDay, MAX_RUNS_LIMIT, RECENT_EVENTS, Request};
+use studiod::api::{
+    AskView, FileKind, HireDay, MAX_RUNS_LIMIT, OfficeView, ProjectView, RECENT_EVENTS, Request,
+    RunView,
+};
 use topcoat::{
     context::{Cx, app_context},
-    datastar::{PatchElements, Signals},
+    datastar::{PatchElements, PatchSignals, Signals},
     router::{
         content::{
             Form,
@@ -30,33 +36,15 @@ use topcoat::{
         },
         error::redirect_permanent,
         page, query_params,
-        response::Response,
+        response::{IntoResponse, Response},
         route,
     },
     view::{BoxView, View, ViewExt, component, view},
 };
 
-use super::ticket::{log_path, log_tail, merged_ids};
 use super::timeline::relative;
-use crate::summary::{Judge, review_line};
-use crate::{AppConfig, client, diffstat, layout, live, ui};
-
-/// How far back "recent" reaches: the same 24 hours as the spend.
-const WINDOW_MS: u64 = 24 * 3_600_000;
-/// The events the office reads: work starting, asking, going to checks,
-/// being sent back, held or ended.
-const KINDS: [&str; 10] = [
-    "claimed",
-    "ask_opened",
-    "ask_resolved",
-    "checks_started",
-    "checks_failed",
-    "review_failed",
-    "held",
-    "landed",
-    "failed",
-    "cancelled",
-];
+use crate::summary::Judge;
+use crate::{AppConfig, client, layout, live, ui};
 
 /// Everything the floor and the inspector show, read from studiod at once.
 #[derive(Clone, Debug, Default)]
@@ -64,7 +52,8 @@ pub struct Office {
     pub status: client::Status,
     pub tickets: Vec<Ticket>,
     pub asks: Vec<AskView>,
-    /// Every ticket's `KINDS` events over the last 24 hours, oldest first.
+    /// Every ticket's `OFFICE_KINDS` events over the last 24 hours, oldest
+    /// first.
     pub recent: Vec<client::Happened>,
     /// When `recent` starts, if studiod cut it short of the 24 hours.
     pub cut_at: Option<u64>,
@@ -72,12 +61,18 @@ pub struct Office {
     pub spend: BTreeMap<String, f64>,
     /// Lines added and removed by each ready ticket, by id.
     pub sizes: HashMap<String, (u64, u64)>,
-    /// Who is judging each ticket in review, from its whole run log.
+    /// Who is judging each ticket in review.
     pub judges: HashMap<String, Judge>,
+    /// What each ticket with a run under way is doing, by id.
+    pub runs: HashMap<String, RunView>,
+    /// Ready tickets that no reviewer on another model read.
+    pub unreviewed: Vec<String>,
     /// Landed tickets whose goal branch is merged.
     pub merged: Vec<String>,
     /// What each hire did in the last 24 hours, by id.
     pub today: BTreeMap<String, HireDay>,
+    /// Every project with its lead and its releases, in the studio's order.
+    pub projects: Vec<ProjectView>,
     pub now: u64,
 }
 
@@ -112,161 +107,133 @@ impl Office {
         }
     }
 
+    /// The studio's projects in the order of `studio.toml`.
+    pub fn project_names(&self) -> Vec<String> {
+        let mut names = self.status.projects.clone();
+        for view in &self.projects {
+            if !names.contains(&view.name) {
+                names.push(view.name.clone());
+            }
+        }
+        names
+    }
+
+    /// What studiod says of a project's lead and releases.
+    pub fn project(&self, name: &str) -> Option<&ProjectView> {
+        self.projects.iter().find(|p| p.name == name)
+    }
+
     /// A hire's role and model, when it is loaded.
     pub fn member(&self, hire: &str) -> Option<&client::Member> {
         self.status.team.iter().find(|m| m.id == hire)
     }
+
+    /// What a hire is called: the name in its file, else its id.
+    pub fn name_of(&self, hire: &str) -> String {
+        self.member(hire)
+            .map(|m| m.name.trim())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(hire)
+            .to_string()
+    }
 }
 
-/// Reads what the office shows. Only the status and the tickets must come
-/// back; anything else studiod can't say right now is left empty.
+/// How long streams share one read of studiod: every open office asks
+/// each second, and they all use the one that is at most this old.
+const SHARED_FOR: Duration = Duration::from_secs(1);
+
+/// What studiod last said about the office to one socket.
+struct Read {
+    at: Instant,
+    /// Counts up whenever what studiod said changes, apart from its clock.
+    version: u64,
+    /// The reply with its clock zeroed and its runs left out, to tell whether
+    /// the next differs: a run's steps change all the time, and only the
+    /// panel of the ticket they belong to shows them.
+    said: OfficeView,
+    office: Office,
+}
+
+type Slot = Arc<tokio::sync::Mutex<Option<Read>>>;
+
+/// Reads what the office shows, in one request to studiod. Only the status
+/// and the tickets must come back; anything else studiod can't say right now
+/// is left empty.
 async fn gather(config: &AppConfig) -> topcoat::Result<Office> {
-    let socket = &config.socket;
-    let status: client::Status = client::call(socket, Request::Status).await?;
-    let tickets: Vec<Ticket> = client::call(socket, Request::Tickets).await?;
-    let now = ui::now_ms();
-    let since_ms = now.saturating_sub(WINDOW_MS);
-    let mut judges = HashMap::new();
-    for ticket in &tickets {
-        let id = ticket.id.to_string();
-        if floor::room(ticket) == floor::Room::Review
-            && let Some(judge) = judge_now(&config.data_dir, &id).await
-        {
-            judges.insert(id.clone(), judge);
-        }
+    Ok(shared(config, Duration::ZERO).await?.1)
+}
+
+/// The office as studiod last said it, if that is under `max_age` old, else
+/// as it says now. With the number that changes whenever the office does,
+/// apart from the time. Streams of every open page share one read, and
+/// those who wait for it use it rather than asking again.
+async fn shared(config: &AppConfig, max_age: Duration) -> topcoat::Result<(u64, Office)> {
+    static READS: Mutex<BTreeMap<PathBuf, Slot>> = Mutex::new(BTreeMap::new());
+    let slot = READS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(config.socket.clone())
+        .or_default()
+        .clone();
+    let mut read = slot.lock().await;
+    if let Some(read) = read.as_ref()
+        && read.at.elapsed() < max_age
+    {
+        return Ok((read.version, read.office.clone()));
     }
-    let ready: Vec<&Ticket> = tickets
-        .iter()
-        .filter(|t| t.state.kind() == "ready")
-        .collect();
-    let recent: Vec<client::Happened> = client::call(
-        socket,
-        Request::RecentEvents {
-            since_ms,
-            limit: None,
-            kinds: KINDS.map(String::from).to_vec(),
-        },
-    )
-    .await
-    .unwrap_or_default();
+    let mut said: OfficeView = client::call(&config.socket, Request::Office).await?;
+    let now = std::mem::take(&mut said.now);
+    let runs = std::mem::take(&mut said.runs);
+    let version = match read.as_ref() {
+        Some(last) if last.said == said => last.version,
+        Some(last) => last.version + 1,
+        None => 0,
+    };
+    let office = office_of(said.clone(), runs, now)?;
+    *read = Some(Read {
+        at: Instant::now(),
+        version,
+        said,
+        office: office.clone(),
+    });
+    Ok((version, office))
+}
+
+/// `Office` from what studiod said at `now`, with `runs` as it said them.
+fn office_of(
+    said: OfficeView,
+    runs: BTreeMap<String, RunView>,
+    now: u64,
+) -> topcoat::Result<Office> {
+    let status = serde_json::from_value(said.status)
+        .map_err(|e| client::error(format!("bad reply: {e}")))?;
+    let recent: Vec<client::Happened> = said.events.into_iter().map(Into::into).collect();
     Ok(Office {
-        asks: client::call(socket, Request::Asks)
-            .await
-            .unwrap_or_default(),
+        status,
+        tickets: said.tickets,
+        asks: said.asks,
         cut_at: (recent.len() >= RECENT_EVENTS)
             .then(|| recent.first().map(|e| e.at_ms))
             .flatten(),
         recent,
-        sizes: diffstat::sizes(socket, &ready).await,
-        judges,
-        spend: client::call(socket, Request::TicketSpends)
-            .await
-            .unwrap_or_default(),
-        merged: merged_ids(socket).await,
-        today: hires_today(socket, now).await,
-        status,
-        tickets,
+        spend: said.spend,
+        sizes: said.sizes.into_iter().collect(),
+        judges: said
+            .judges
+            .into_iter()
+            .map(|(id, judge)| (id, judge.into()))
+            .collect(),
+        runs: runs.into_iter().collect(),
+        unreviewed: said.unreviewed,
+        merged: said.merged,
+        today: said.today,
+        projects: said.projects,
         now,
     })
 }
 
-/// What each hire did in the last 24 hours. studiod reads every fresh run
-/// log for it, so it is asked at most every `TODAY_EVERY` ms, not on every
-/// tick of every open office.
-async fn hires_today(socket: &Path, now: u64) -> BTreeMap<String, HireDay> {
-    type Days = BTreeMap<String, HireDay>;
-    const TODAY_EVERY: u64 = 30_000;
-    static SEEN: Mutex<BTreeMap<PathBuf, (u64, Days)>> = Mutex::new(BTreeMap::new());
-    let known = SEEN.lock().ok().and_then(|seen| seen.get(socket).cloned());
-    if let Some((at, today)) = &known
-        && now.saturating_sub(*at) < TODAY_EVERY
-    {
-        return today.clone();
-    }
-    let Ok(today) = client::call::<Days>(socket, Request::HiresToday).await else {
-        return known.map(|(_, today)| today).unwrap_or_default();
-    };
-    if let Ok(mut seen) = SEEN.lock() {
-        seen.insert(socket.to_path_buf(), (now, today.clone()));
-    }
-    today
-}
-
-/// Who is judging a ticket in review now, from its run log. The log is read
-/// back once; after that only what it gained since is read.
-pub async fn judge_now(data_dir: &Path, id: &str) -> Option<Judge> {
-    static SEEN: Mutex<BTreeMap<PathBuf, (u64, Option<Judge>)>> = Mutex::new(BTreeMap::new());
-    let path = log_path(data_dir, id);
-    let len = tokio::fs::metadata(&path).await.ok()?.len();
-    // A log shorter than before was started again: read it all.
-    let known = SEEN
-        .lock()
-        .ok()
-        .and_then(|seen| seen.get(&path).cloned())
-        .filter(|(read, _)| *read <= len);
-    let from = known.as_ref().map_or(0, |(read, _)| *read);
-    let judge = match find_back(data_dir, id, from..len, review_line).await {
-        Some(found) => found,
-        None => known.and_then(|(_, judge)| judge),
-    };
-    if let Ok(mut seen) = SEEN.lock() {
-        seen.insert(path, (len, judge.clone()));
-    }
-    judge
-}
-
-/// The latest line in `range` of a ticket's run log that `pick` takes, with
-/// `range` starting at a line's start. Reads back from the end a chunk at a
-/// time, so a line far back in a long log is still found without reading
-/// the whole log for a recent one.
-pub async fn find_back<T>(
-    data_dir: &Path,
-    id: &str,
-    range: std::ops::Range<u64>,
-    pick: impl Fn(&str) -> Option<T>,
-) -> Option<T> {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-    const CHUNK: u64 = 64 * 1024;
-    /// Gives up this far back from the end.
-    const FURTHEST: u64 = 16 * 1024 * 1024;
-    let mut file = tokio::fs::File::open(log_path(data_dir, id)).await.ok()?;
-    let len = file.metadata().await.ok()?.len().min(range.end);
-    let stop = len.saturating_sub(FURTHEST).max(range.start);
-    let mut end = len;
-    // The start of the line the later chunk began in the middle of.
-    let mut rest: Vec<u8> = Vec::new();
-    while end > stop {
-        let start = end.saturating_sub(CHUNK).max(stop);
-        file.seek(std::io::SeekFrom::Start(start)).await.ok()?;
-        let mut bytes = vec![0; usize::try_from(end - start).ok()?];
-        file.read_exact(&mut bytes).await.ok()?;
-        bytes.append(&mut rest);
-        // A chunk read from the middle starts mid-line: keep that part for
-        // the next chunk back.
-        let cut = if start == range.start {
-            0
-        } else {
-            bytes
-                .iter()
-                .position(|b| *b == b'\n')
-                .map_or(bytes.len(), |i| i + 1)
-        };
-        let whole = bytes.split_off(cut);
-        rest = bytes;
-        if let Some(found) = String::from_utf8_lossy(&whole)
-            .lines()
-            .rev()
-            .find_map(&pick)
-        {
-            return Some(found);
-        }
-        end = start;
-    }
-    None
-}
-
-/// What the owner picked on the floor: `tickets/<id>`, `hires/<id>`,
-/// `goals/<plan id>`, or empty for the overview.
+/// What the owner picked on the floor: `projects/<name>`, `tickets/<id>`,
+/// `hires/<id>`, `goals/<plan id>`, or empty for the overview.
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Pick {
     #[serde(default)]
@@ -277,11 +244,18 @@ struct Pick {
     /// The corner the floor is seen from, in quarter turns.
     #[serde(default)]
     turn: i64,
+    /// How many rows of the Projects tab's History are shown.
+    #[serde(default)]
+    history: usize,
 }
 
 impl Pick {
     fn turn(&self) -> model::Turn {
         model::Turn::new(self.turn)
+    }
+
+    fn history(&self) -> usize {
+        panel::history_rows(self.history)
     }
 }
 
@@ -298,11 +272,16 @@ pub fn key(kind: &str, id: &str) -> String {
     format!("{kind}/{}", safe(id))
 }
 
-/// `key` checked: anything else selects nothing.
-fn clean(sel: &str) -> String {
+/// `key` checked: anything else selects nothing. A project is only picked
+/// when the studio has it.
+fn clean(sel: &str, projects: &[String]) -> String {
     match sel.split_once('/') {
         Some((kind @ ("tickets" | "hires" | "goals"), id)) => key(kind, id),
         Some(("elements", id)) if model::Element::from_key(id).is_some() => key("elements", id),
+        Some(("projects", id)) => projects
+            .iter()
+            .find(|p| safe(p) == id)
+            .map_or_else(String::new, |p| key("projects", p)),
         _ => String::new(),
     }
 }
@@ -330,68 +309,77 @@ struct Opened {
 async fn office_page(cx: &Cx) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
     let opened = query_params::<Opened>(cx)?;
-    let sel = clean(&opened.sel.clone().unwrap_or_default());
+    let office = gather(config).await?;
+    let sel = clean(
+        &opened.sel.clone().unwrap_or_default(),
+        &office.project_names(),
+    );
     let tab = panel::tab(opened.tab.as_deref().unwrap_or_default());
     let turn = model::Turn::new(opened.turn.unwrap_or_default());
-    let office = gather(config).await?;
     let detail = inspector::detail(config, &office, &sel, &mut inspector::Memo::default()).await;
     let extra = panel::Extra::gather(config).await;
     let hq::Parts {
         hud,
-        rows,
         scene,
         projects: tints,
         closed,
-        feed,
         ..
     } = hq::Parts::of(&office, &extra, turn);
     let scene_sel = sel.clone();
-    let projects = office.status.projects.clone();
+    // Each project, and whether it has a lead to plan new work.
+    let projects: Vec<(String, bool)> = office
+        .status
+        .projects
+        .iter()
+        .map(|p| {
+            (
+                p.clone(),
+                office.project(p).is_some_and(|v| v.lead.is_some()),
+            )
+        })
+        .collect();
+    let task_projects = office.status.projects.clone();
     let team = office.status.team.clone();
     let switches = layout::theme_switches(cx);
     let signals = format!(
-        "{{sel: '{sel}', tab: '{tab}', focus: 'all', zoom: 1, hints: false, turn: {}, pick: '', _dragging: false}}",
-        turn.index()
+        "{{sel: '{sel}', tab: '{tab}', zoom: 1, hints: false, turn: {}, history: {}, pick: '', _dragging: false, _found: {{path: '', name: '', branch: '', checks: ''}}}}",
+        turn.index(),
+        panel::HISTORY_STEP
     );
     Ok(view! {
         <div id="office" class="grid h-dvh grid-rows-[auto_minmax(0,1fr)] max-[900px]:h-auto" data-signals=(signals)>
             // Restarts the live stream whenever the selection or the corner the
             // floor is seen from changes, so it keeps the picked panel up to
             // date and draws the floor from that corner.
-            <div hidden="" data-effect="$sel; $turn; @get('/office/stream')"></div>
+            <div hidden="" data-effect="$sel; $turn; $history; @get('/office/stream')"></div>
             <header class="flex min-w-0 items-center gap-3 border-b border-line bg-bg-2 px-4 py-[9px] max-[900px]:flex-wrap max-[900px]:gap-y-2">
-                <a href="/" class="flex items-center gap-2.5" aria-label="studio, the office">
+                <a href="/" class="flex items-center gap-2.5" aria-label="studio, the company">
                     <span class="grid size-[26px] shrink-0 place-items-center rounded-[7px] bg-primary text-on-primary">
                         <svg class="size-4" aria-hidden="true"><use href="#logo"></use></svg>
                     </span>
                     <b class="text-[15px] font-semibold tracking-[-0.01em] max-[520px]:hidden">"studio"</b>
                 </a>
-                hq::projects_strip(rows: rows.clone())
                 hq::figures(hud: hud)
                 <div class="flex items-center gap-2">
-                    <button type="button" class=(ui::BUTTON) popovertarget="office-new-ticket" aria-label="New ticket" data-on:click=(NO_PICK)>
+                    <button type="button" class=(ui::PRIMARY) popovertarget="office-new-goal" aria-label="New work" data-on:click=(NO_PICK)>
                         ui::icon(name: "plus")
-                        <span class=(ui::LABEL)>"Ticket"</span>
-                    </button>
-                    <button type="button" class=(ui::PRIMARY) popovertarget="office-new-goal" aria-label="New goal" data-on:click=(NO_PICK)>
-                        ui::icon(name: "target")
-                        <span class=(ui::LABEL)>"New goal"</span>
+                        <span class=(ui::LABEL)>"New work"</span>
                     </button>
                     layout::theme_form(switches: switches)
                 </div>
             </header>
             <main class="grid min-h-0 grid-cols-[minmax(0,1fr)_384px] max-[1100px]:grid-cols-[minmax(0,1fr)_340px] max-[900px]:grid-cols-[minmax(0,1fr)]">
-                <section class="world" aria-label="The studio floor, live">
+                <section class="world" aria-label="The company floor, live">
                     hq::view_controls()
                     hq::wrap(
                         hq::floor_scene(scene: scene, projects: tints, closed: closed, sel: scene_sel, turn: turn)
                     )
-                    hq::corners(rows: rows, feed: feed)
+                    hq::legend()
                 </section>
-                hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab.to_string())
+                hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab.to_string(), history: panel::HISTORY_STEP)
             </main>
-            new_ticket(projects: projects.clone(), team: team.clone())
-            new_goal(projects: projects, team: team)
+            new_ticket(projects: task_projects, team: team.clone())
+            new_goal(projects: projects)
         </div>
     })
 }
@@ -399,7 +387,10 @@ async fn office_page(cx: &Cx) -> topcoat::Result<impl View> {
 /// Where the office was before it became the home page.
 #[route(GET "/office")]
 async fn old_office(cx: &Cx) -> topcoat::Result<Response> {
-    let sel = clean(&query_params::<Opened>(cx)?.sel.clone().unwrap_or_default());
+    let sel = clean(
+        &query_params::<Opened>(cx)?.sel.clone().unwrap_or_default(),
+        &[],
+    );
     let to = match sel.as_str() {
         "" => "/".to_string(),
         sel => format!("/?sel={sel}"),
@@ -413,6 +404,29 @@ async fn old_live() -> topcoat::Result<Response> {
     Err(redirect_permanent("/").into())
 }
 
+/// The Board and Goals pages are gone; the Projects tab has them.
+#[route(GET "/board")]
+async fn old_board() -> topcoat::Result<Response> {
+    Err(redirect_permanent("/?tab=projects").into())
+}
+
+#[route(GET "/goals")]
+async fn old_goals() -> topcoat::Result<Response> {
+    Err(redirect_permanent("/?tab=projects").into())
+}
+
+/// The Asks page is gone; the Needs you tab has it.
+#[route(GET "/asks")]
+async fn old_asks() -> topcoat::Result<Response> {
+    Err(redirect_permanent("/?tab=needs").into())
+}
+
+/// The Budget page is gone; the Money tab has it.
+#[route(GET "/budget")]
+async fn old_budget() -> topcoat::Result<Response> {
+    Err(redirect_permanent("/?tab=money").into())
+}
+
 /// The top bar's figures, the floor, the corners and the panel, re-sent as
 /// they change, for the selection the stream was opened with.
 #[route(GET "/office/stream")]
@@ -424,14 +438,26 @@ async fn office_stream(
     let cx = cx.clone();
     let pick = signals.map(|s| s.0).unwrap_or_default();
     let turn = pick.turn();
-    let (sel, tab) = (clean(&pick.sel), panel::tab(&pick.tab));
+    let (tab, history) = (panel::tab(&pick.tab), pick.history());
+    let sel = pick.sel.clone();
     let kept = Arc::new(tokio::sync::Mutex::new(Kept::default()));
-    Ok(live::watch(move || {
+    Ok(live::watch_changes(move || {
         let config = config.clone();
         let cx = cx.clone();
         let sel = sel.clone();
         let kept = kept.clone();
-        async move { render_all(&cx, &config, &sel, tab, turn, &mut *kept.lock().await).await }
+        async move {
+            render_all(
+                &cx,
+                &config,
+                &sel,
+                tab,
+                history,
+                turn,
+                &mut *kept.lock().await,
+            )
+            .await
+        }
     }))
 }
 
@@ -447,17 +473,43 @@ struct Kept {
     memo: inspector::Memo,
     /// The panel's extra reads, and when they were made.
     extra: Option<(Instant, panel::Extra)>,
+    /// What the last render was drawn from, and when.
+    drawn: Option<(Instant, Drawn)>,
 }
 
+/// What a render is drawn from, to tell whether the next would differ.
+#[derive(Clone, Copy, PartialEq)]
+struct Drawn {
+    /// As `shared` numbers what studiod said.
+    office: u64,
+    /// Fingerprints of the picked ticket's live detail and the panel's
+    /// extra reads.
+    detail: u64,
+    extra: u64,
+}
+
+/// A number that is the same for values that print the same.
+fn fingerprint(value: &impl std::fmt::Debug) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    format!("{value:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Draws the office, unless what it is drawn from is what the last render
+/// drew it from, and under `live::QUIET_MAX` has passed since. Then only
+/// the ages ("5m ago") would be newer.
 async fn render_all(
     cx: &Cx,
     config: &AppConfig,
     sel: &str,
     tab: &str,
+    history: usize,
     turn: model::Turn,
     kept: &mut Kept,
-) -> topcoat::Result<String> {
-    let office = gather(config).await?;
+) -> topcoat::Result<Option<String>> {
+    let (version, office) = shared(config, SHARED_FOR).await?;
+    let sel = &clean(sel, &office.project_names());
     let detail = inspector::detail(config, &office, sel, &mut kept.memo).await;
     let extra = match &kept.extra {
         Some((at, extra)) if at.elapsed() < EXTRA_FRESH => extra.clone(),
@@ -467,9 +519,33 @@ async fn render_all(
             extra
         }
     };
+    let drawn = Drawn {
+        office: version,
+        detail: fingerprint(&detail),
+        extra: fingerprint(&extra),
+    };
+    if let Some((at, last)) = &kept.drawn
+        && *last == drawn
+        && at.elapsed() < live::QUIET_MAX
+    {
+        return Ok(None);
+    }
+    kept.drawn = Some((Instant::now(), drawn));
     let parts = hq::Parts::of(&office, &extra, turn);
-    let (sel, tab) = (sel.to_string(), tab.to_string());
-    ui::html(cx, live_parts(cx, parts, office, detail, extra, sel, tab)).await
+    let shown = Shown {
+        sel: sel.to_string(),
+        tab: tab.to_string(),
+        history,
+    };
+    let html = ui::html(cx, live_parts(cx, parts, office, detail, extra, shown)).await?;
+    Ok(Some(html))
+}
+
+/// What the panel shows: the selection, the tab and how much History.
+struct Shown {
+    sel: String,
+    tab: String,
+    history: usize,
 }
 
 /// Every piece of the page that changes, boxed so their futures live on the
@@ -480,15 +556,13 @@ fn live_parts(
     office: Office,
     detail: inspector::Detail,
     extra: panel::Extra,
-    sel: String,
-    tab: String,
+    shown: Shown,
 ) -> BoxView<'_> {
+    let Shown { sel, tab, history } = shown;
     view! { cx =>
-        hq::projects_strip(rows: parts.rows.clone())
         hq::figures(hud: parts.hud)
         hq::floor_scene(scene: parts.scene, projects: parts.projects, closed: parts.closed, sel: sel.clone(), turn: parts.turn)
-        hq::corners(rows: parts.rows, feed: parts.feed)
-        hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab)
+        hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab, history: history)
     }
     .boxed()
 }
@@ -498,12 +572,14 @@ fn live_parts(
 async fn office_panel(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Result<PatchElements> {
     let config = app_context::<AppConfig>(cx);
     let pick = signals.map(|s| s.0).unwrap_or_default();
-    let (sel, tab) = (clean(&pick.sel), panel::tab(&pick.tab).to_string());
+    let tab = panel::tab(&pick.tab).to_string();
+    let history = pick.history();
     let office = gather(config).await?;
+    let sel = clean(&pick.sel, &office.project_names());
     let detail = inspector::detail(config, &office, &sel, &mut inspector::Memo::default()).await;
     let extra = panel::Extra::gather(config).await;
     let side =
-        view! { cx => hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab) }
+        view! { cx => hq::side(office: office, detail: detail, extra: extra, sel: sel, tab: tab, history: history) }
             .boxed();
     let html = ui::html(cx, view! { cx => (side) }).await?;
     Ok(PatchElements::new(html))
@@ -515,8 +591,8 @@ async fn office_panel(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Resul
 async fn office_scene(cx: &Cx, signals: Option<Signals<Pick>>) -> topcoat::Result<PatchElements> {
     let config = app_context::<AppConfig>(cx);
     let pick = signals.map(|s| s.0).unwrap_or_default();
-    let sel = clean(&pick.sel);
     let office = gather(config).await?;
+    let sel = clean(&pick.sel, &office.project_names());
     let extra = panel::Extra::gather(config).await;
     let hq::Parts {
         scene,
@@ -658,41 +734,80 @@ fn absent(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
+#[query_params(error = bad_request)]
+struct Confirmed {
+    /// `yes` once the owner has seen what would be added.
+    add: Option<String>,
+}
+
 /// Adds a git repository on this computer as a project; studiod fills in
-/// what is left out.
+/// what is left out. The first submit only asks studiod what would be added
+/// and shows it for the owner to confirm; the Add it button then sends the
+/// same fields with `?add=yes`, and only that writes anything.
 #[route(POST "/office/projects")]
-async fn add_project(cx: &Cx, Form(form): Form<NewProject>) -> topcoat::Result<PatchElements> {
+async fn add_project(cx: &Cx, Form(form): Form<NewProject>) -> topcoat::Result<Response> {
     let config = app_context::<AppConfig>(cx);
+    let confirmed = query_params::<Confirmed>(cx)?.add.as_deref() == Some("yes");
     let Some(path) = absent(&form.path) else {
         let words = "Enter the folder of a git repository.";
-        return ui::notice(cx, words.into(), true).await;
+        return ui::notice(cx, words.into(), true).await?.into_response(cx);
     };
     let name = absent(&form.name);
     let request = Request::AddProject {
-        path,
+        path: path.clone(),
         name: name.clone(),
         branch: absent(&form.branch),
+        daily_usd: None,
+        pack: None,
+        check: !confirmed,
     };
-    match client::call::<serde_json::Value>(&config.socket, request).await {
-        Ok(added) => {
-            let name = added["name"]
-                .as_str()
-                .map(str::to_string)
-                .or(name)
-                .unwrap_or_else(|| "the project".into());
-            let words = match added["checks"].as_str() {
-                Some(checks) => format!("Added {name}. Its checks: {checks}"),
-                None => format!("Added {name}."),
-            };
-            ui::notice(cx, words, false).await
+    let added = match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(added) => added,
+        Err(err) => {
+            return ui::notice(cx, err.to_string(), true)
+                .await?
+                .into_response(cx);
         }
-        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    };
+    let named = added["name"]
+        .as_str()
+        .map(str::to_string)
+        .or(name)
+        .unwrap_or_else(|| "the project".into());
+    if !confirmed {
+        return found(&added, &named, &path)?.into_response(cx);
     }
+    let words = match added["checks"].as_str() {
+        Some(checks) => format!("Added {named}. Its checks: {checks}"),
+        None => format!("Added {named}."),
+    };
+    ui::notice(cx, words, false).await?.into_response(cx)
+}
+
+/// What adding a project would do, for the panel to show before the owner
+/// confirms: the name, the full folder, the branch and the checks.
+fn found(added: &serde_json::Value, name: &str, typed_path: &str) -> topcoat::Result<PatchSignals> {
+    let text = |key: &str| added[key].as_str().map(str::to_string);
+    let checks = match text("checks") {
+        Some(checks) => {
+            format!("Its checks will be guessed and written to {checks}, for you to look over.")
+        }
+        None => "It already has its own checks.".to_string(),
+    };
+    PatchSignals::json(&serde_json::json!({
+        "_found": {
+            "name": name,
+            "path": text("path").unwrap_or_else(|| typed_path.to_string()),
+            "branch": text("branch").unwrap_or_else(|| "its current branch".to_string()),
+            "checks": checks,
+        }
+    }))
 }
 
 /// The roles the Hire form offers, and the models.
-pub const ROLES: [&str; 8] = [
-    "engineer", "designer", "writer", "producer", "reviewer", "critic", "approver", "router",
+pub const ROLES: [&str; 9] = [
+    "engineer", "designer", "writer", "producer", "lead", "reviewer", "critic", "approver",
+    "router",
 ];
 pub const MODELS: [&str; 3] = ["sonnet", "opus", "haiku"];
 /// The longest name a hire may have.
@@ -769,8 +884,8 @@ async fn hire_someone(cx: &Cx, Form(form): Form<NewHire>) -> topcoat::Result<Pat
 /// Opening a form from the top bar picks no hire, whatever a panel picked.
 const NO_PICK: &str = "$pick = ''";
 
-/// The New ticket form, with the hire picked by `$pick` when a panel's
-/// "Give it a ticket" opened it. The approver and router take no tickets.
+/// The New task form, with the hire picked by `$pick` when a panel's "Give
+/// it a task" opened it. The approver and router take no tasks.
 #[component]
 async fn new_ticket(
     projects: Vec<String>,
@@ -782,7 +897,7 @@ async fn new_ticket(
         .map(|m| m.id)
         .collect();
     Ok(view! {
-        ui::dialog(id: "office-new-ticket", title: "New ticket",
+        ui::dialog(id: "office-new-ticket", title: "New task",
             <form data-on:submit="@post('/tickets', {contentType: 'form'}); el.closest('[popover]').hidePopover()">
                 <div class=(ui::DIALOG_BODY)>
                     <div class="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
@@ -793,7 +908,7 @@ async fn new_ticket(
                             </select>
                         </label>
                         <label class=(ui::FIELD)>
-                            <span class=(ui::FIELD_LABEL)>"Hire"</span>
+                            <span class=(ui::FIELD_LABEL)>"Who does it"</span>
                             <select name="hire" class=(ui::INPUT) data-bind:pick="">
                                 <option value="">"Pick for me"</option>
                                 for h in hires { <option value=(h.clone())>(h)</option> }
@@ -810,56 +925,53 @@ async fn new_ticket(
                     </label>
                     <label class=(ui::FIELD)>
                         <span class=(ui::FIELD_LABEL)>"Goal"</span>
-                        <input name="goal" class=(ui::INPUT) placeholder="Optional. Tickets with the same goal land on one branch.">
+                        <input name="goal" class=(ui::INPUT) placeholder="Optional. Tasks with the same goal ship together.">
                     </label>
                 </div>
                 <div class=(ui::DIALOG_FOOT)>
                     <span class="spacer"></span>
                     <button type="button" class=(ui::GHOST) popovertarget="office-new-ticket" popovertargetaction="hide">"Cancel"</button>
-                    <button type="submit" class=(ui::PRIMARY)>"Create ticket"</button>
+                    <button type="submit" class=(ui::PRIMARY)>"Create task"</button>
                 </div>
             </form>
         )
     })
 }
 
-/// The New goal form; a producer turns the goal into tickets, so only
-/// producers are offered.
+/// The New work form: a goal for a project, with the version it is a
+/// milestone towards if it has one. The project's lead plans the tasks, and
+/// a project without one has a planner do it; the form says which. A link
+/// leads to the form for one single task.
 #[component]
-async fn new_goal(projects: Vec<String>, team: Vec<client::Member>) -> topcoat::Result<impl View> {
-    let producers: Vec<String> = team
-        .into_iter()
-        .filter(|m| m.role == "producer")
-        .map(|m| m.id)
-        .collect();
+async fn new_goal(projects: Vec<(String, bool)>) -> topcoat::Result<impl View> {
     Ok(view! {
-        ui::dialog(id: "office-new-goal", title: "New goal",
+        ui::dialog(id: "office-new-goal", title: "New work",
             <form data-on:submit="@post('/goals', {contentType: 'form'}); el.closest('[popover]').hidePopover()">
                 <div class=(ui::DIALOG_BODY)>
                     <div class="grid grid-cols-2 gap-3 max-[760px]:grid-cols-1">
                         <label class=(ui::FIELD)>
                             <span class=(ui::FIELD_LABEL)>"Project"</span>
                             <select name="project" required="" class=(ui::INPUT)>
-                                for p in projects { <option value=(p.clone())>(p)</option> }
+                                for (p, led) in projects { <option value=(p.clone()) data-lead=(led.then_some(""))>(p)</option> }
                             </select>
                         </label>
                         <label class=(ui::FIELD)>
-                            <span class=(ui::FIELD_LABEL)>"Producer"</span>
-                            <select name="hire" class=(ui::INPUT) data-bind:pick="">
-                                <option value="">"The studio's producer"</option>
-                                for h in producers { <option value=(h.clone())>(h)</option> }
-                            </select>
+                            <span class=(ui::FIELD_LABEL)>"Version"</span>
+                            <input name="version" class=(ui::INPUT) placeholder="Optional, such as 0.4" autocomplete="off" maxlength="40">
                         </label>
                     </div>
                     <label class=(ui::FIELD)>
-                        <span class=(ui::FIELD_LABEL)>"Goal"</span>
-                        <textarea name="text" required="" class=(ui::TEXTAREA) placeholder="What should be achieved. A producer files the tickets."></textarea>
+                        <span class=(ui::FIELD_LABEL)>"What should be achieved"</span>
+                        <textarea name="text" required="" class=(ui::TEXTAREA) placeholder="Say what you want done."></textarea>
+                        <span class="goal-by goal-lead text-[12.5px] text-fg-3">"The project's lead plans the tasks and hands them out."</span>
+                        <span class="goal-by goal-planner text-[12.5px] text-fg-3">"This project has no lead yet, so a planner breaks the work into tasks. A lead can do that instead: hire one."</span>
                     </label>
                 </div>
                 <div class=(ui::DIALOG_FOOT)>
+                    <button type="button" class="text-[13px] text-fg-3 underline decoration-line-3 underline-offset-2 hover:text-fg" popovertarget="office-new-ticket" data-on:click=(format!("{NO_PICK}; el.closest('[popover]').hidePopover()"))>"Just one task"</button>
                     <span class="spacer"></span>
                     <button type="button" class=(ui::GHOST) popovertarget="office-new-goal" popovertargetaction="hide">"Cancel"</button>
-                    <button type="submit" class=(ui::PRIMARY)>"Start goal"</button>
+                    <button type="submit" class=(ui::PRIMARY)>"Start"</button>
                 </div>
             </form>
         )
@@ -880,60 +992,14 @@ mod tests {
 
     #[test]
     fn selections_are_safe_to_quote() {
-        assert_eq!(clean("tickets/GAME-3"), "tickets/GAME-3");
-        assert_eq!(clean("hires/dev'; alert(1)"), "hires/devalert1");
-        assert_eq!(clean("other/x"), "");
-        assert_eq!(clean(""), "");
+        assert_eq!(clean("tickets/GAME-3", &[]), "tickets/GAME-3");
+        assert_eq!(clean("hires/dev'; alert(1)", &[]), "hires/devalert1");
+        assert_eq!(clean("other/x", &[]), "");
+        assert_eq!(clean("", &[]), "");
         assert_eq!(
             select("goals/EDIT-1"),
             format!("$sel = 'goals/EDIT-1'; @get('/office/panel'); {SHOW_PANEL}")
         );
-    }
-
-    #[tokio::test]
-    async fn the_judge_is_found_behind_a_long_run_log() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("runs")).unwrap();
-        let output = "x".repeat(40 * 1024);
-        let mut log = vec![
-            r#"{"at":1,"note":"review by old (opus)"}"#.to_string(),
-            r#"{"at":2,"note":"checks passed"}"#.to_string(),
-            r#"{"at":3,"note":"review by reviewer (opus)"}"#.to_string(),
-        ];
-        // Far more tool output after the note than a tail or a chunk holds.
-        for at in 4..10 {
-            log.push(format!(
-                r#"{{"at":{at},"event":{{"type":"tool_result","output":"{output}"}}}}"#
-            ));
-        }
-        std::fs::write(dir.path().join("runs/G-1.jsonl"), log.join("\n")).unwrap();
-        let all = 0..u64::MAX;
-        let judge = find_back(dir.path(), "G-1", all.clone(), review_line).await;
-        assert_eq!(
-            judge.flatten().map(|j| (j.hire, j.at)),
-            Some(("reviewer".into(), 3))
-        );
-        // Before its reviewer starts, a review has no judge, not the last one.
-        let early = log[..2].join("\n");
-        std::fs::write(dir.path().join("runs/G-2.jsonl"), &early).unwrap();
-        let judge = find_back(dir.path(), "G-2", all.clone(), review_line).await;
-        assert_eq!(judge, Some(None));
-        assert_eq!(find_back(dir.path(), "G-3", all, review_line).await, None);
-        // Read once, then only what the log gained: a critic taking over.
-        assert_eq!(judge_now(dir.path(), "G-2").await, None);
-        let critic = format!(
-            "{early}\n{}\n",
-            r#"{"at":12,"note":"gate art by critic (sonnet)"}"#
-        );
-        std::fs::write(dir.path().join("runs/G-2.jsonl"), critic).unwrap();
-        let judge = judge_now(dir.path(), "G-2").await.unwrap();
-        assert_eq!(
-            (judge.hire.as_str(), judge.gate.as_deref()),
-            ("critic", Some("art"))
-        );
-        // Nothing new: the judge stands.
-        let again = judge_now(dir.path(), "G-2").await.unwrap();
-        assert_eq!(again.hire, "critic");
     }
 
     #[test]
@@ -1004,12 +1070,29 @@ mod tests {
     }
 
     #[test]
+    fn a_project_can_be_picked_only_when_the_studio_has_it() {
+        let projects = vec!["shop".to_string(), "pocket-garden".to_string()];
+        assert_eq!(clean("projects/shop", &projects), "projects/shop");
+        assert_eq!(
+            clean("projects/pocket-garden", &projects),
+            "projects/pocket-garden"
+        );
+        assert_eq!(clean("projects/api", &projects), "");
+        assert_eq!(clean("projects/", &projects), "");
+        assert_eq!(clean("projects/shop", &[]), "");
+        // Unsafe characters are dropped from a name, as they are from its key.
+        let odd = vec!["my shop".to_string()];
+        assert_eq!(clean("projects/myshop", &odd), "projects/myshop");
+        assert_eq!(clean("projects/shop'; alert(1)", &projects), "");
+    }
+
+    #[test]
     fn game_elements_can_be_selected() {
         for element in model::Element::ALL {
             let sel = format!("elements/{}", element.key());
-            assert_eq!(clean(&sel), sel);
+            assert_eq!(clean(&sel, &[]), sel);
         }
-        assert_eq!(clean("elements/nope"), "");
-        assert_eq!(clean("elements/"), "");
+        assert_eq!(clean("elements/nope", &[]), "");
+        assert_eq!(clean("elements/", &[]), "");
     }
 }

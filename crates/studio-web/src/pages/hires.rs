@@ -3,13 +3,12 @@
 //! the studio rather than on tickets, so they get a table of their own.
 
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use studio_core::ticket::Ticket;
-use studiod::api::{FileView, HireDay, Request};
+use studiod::api::{FileView, HireDay, OfficeView, Request};
 use topcoat::view::{View, component, view};
 
-use super::office::judge_now;
 use crate::{client, ui};
 
 /// Roles that work for the studio itself.
@@ -54,17 +53,6 @@ pub struct Hire {
     spent_today: Option<f64>,
 }
 
-/// The names of the hires in `files` that work for the studio.
-pub fn studio_hires(files: &[FileView]) -> BTreeSet<String> {
-    files
-        .iter()
-        .filter(|f| {
-            parse(&f.text).is_ok_and(|(info, _)| STUDIO_ROLES.contains(&info.role.as_str()))
-        })
-        .map(|f| f.name.clone())
-        .collect()
-}
-
 impl Hire {
     fn works_for_studio(&self) -> bool {
         self.info
@@ -91,20 +79,21 @@ async fn spent_by_hire(socket: &Path) -> Option<BTreeMap<String, f64>> {
 }
 
 /// The rows for `files`, with the daemon's tickets, spend and today's work.
-pub async fn hires_for(socket: &Path, data_dir: &Path, files: &[FileView]) -> Vec<Hire> {
-    let tickets: Vec<Ticket> = client::call(socket, Request::Tickets)
-        .await
+pub async fn hires_for(socket: &Path, files: &[FileView]) -> Vec<Hire> {
+    // The tickets, and who judges each one in review, as the office has them.
+    let office: Option<OfficeView> = client::call(socket, Request::Office).await.ok();
+    let tickets = office
+        .as_ref()
+        .map(|o| o.tickets.clone())
         .unwrap_or_default();
     let spent = spent_by_hire(socket).await;
     let today: Option<BTreeMap<String, HireDay>> =
         client::call(socket, Request::HiresToday).await.ok();
-    let mut reviewers = HashMap::new();
-    for ticket in tickets.iter().filter(|t| t.state.kind() == "reviewing") {
-        let id = ticket.id.to_string();
-        if let Some(judge) = judge_now(data_dir, &id).await {
-            reviewers.insert(id, judge.hire);
-        }
-    }
+    let reviewers: HashMap<String, String> = office
+        .into_iter()
+        .flat_map(|o| o.judges)
+        .map(|(id, judge)| (id, judge.hire))
+        .collect();
     hires_of(files, &tickets, spent.as_ref(), today.as_ref(), &reviewers)
 }
 
@@ -133,12 +122,7 @@ fn hires_of(
             },
             now: tickets
                 .iter()
-                .filter(|t| {
-                    matches!(
-                        t.state.kind(),
-                        "claimed" | "working" | "checking" | "reviewing" | "asking"
-                    )
-                })
+                .filter(|t| ui::run_under_way(t.state.kind()))
                 .filter(|t| on(t) == file.name)
                 .map(|t| (t.id.to_string(), t.state.kind()))
                 .collect(),
