@@ -11,7 +11,15 @@
 //! The busy studio is a company of four projects, each with a lead and each
 //! in a different phase: the shop is building (a milestone under way and asks
 //! for the owner), the editor is testing, the admin tool is releasing (its
-//! release waits for the owner's go-ahead) and the docs are live.
+//! release waits for the owner's go-ahead) and the docs are live. A lead's
+//! turns can't run here, so what the leads said is written into the studio's
+//! data folder before it is served: the shop's conversation and every lead's
+//! standup.
+//!
+//! The starting studio has five projects that were just added through
+//! `/new`, one in each state a setup can be in: its lead reading the
+//! repository, the studio trying the checks it proposed, its proposal ready,
+//! the setup failed, and the owner's choice accepted.
 
 use crate::Result;
 use serde_json::{Value, json};
@@ -26,7 +34,10 @@ use studio_runtime::{
     RuntimeError,
 };
 use studiod::Studio;
-use studiod::api::{Request, Response};
+use studiod::api::{
+    FirstGoal, NewLead, PlanTask, ProposedCommand, ProtectedPath, Request, Response, SetupChoice,
+    SetupProposal, SetupState, TalkCard, TalkFrom, TalkMessage,
+};
 use tokio::sync::Notify;
 
 /// A studio the gallery serves.
@@ -39,13 +50,12 @@ pub struct Live {
 pub struct Ids {
     pub working: String,
     pub asking: String,
-    pub checks: String,
-    pub review: String,
     pub ready: String,
-    pub held: String,
     pub failed: String,
-    pub planner: String,
-    pub goal: String,
+    /// A goal whose every task is done and checked, which waits to ship.
+    pub ready_goal: String,
+    /// The checkout goal, whose plan the shop's lead put in the conversation.
+    pub checkout_goal: String,
     pub landed: String,
     pub landed_merged: String,
 }
@@ -56,6 +66,12 @@ pub struct Studios {
     pub empty: Live,
     /// A studio with one project and a release that waits for the owner.
     pub waiting: Live,
+    /// A studio whose one project has no lead yet, with the leads of the
+    /// others' to pick from.
+    pub leadless: Live,
+    /// A studio with a project in each state a setup through its lead can be
+    /// in, named by `SETUPS`.
+    pub starting: Live,
     pub ids: Ids,
 }
 
@@ -75,7 +91,11 @@ pub async fn open(dir: &Path) -> Result<Studios> {
     ];
 
     // The idle studio has the first two projects, each with its lead.
-    let (idle_paths, idle_studio) = home(dir, "idle", &repos[..2], Brain::new(), true)?;
+    let (idle_paths, idle_studio) = home(dir, "idle", &repos[..2], Brain::new(), true, &[])?;
+    // The leadless one has the shop, which nobody leads; the hires are the
+    // same, so there are leads to pick.
+    let (leadless_paths, leadless_studio) =
+        home(dir, "leadless", &repos[..1], Brain::new(), false, &[])?;
     let empty_paths = StudioPaths::resolve(Some(dir.join("empty")));
     studio_config::init(&empty_paths)?;
     let empty = Studio::open(empty_paths.clone(), Brain::new().runtimes())?;
@@ -89,15 +109,27 @@ pub async fn open(dir: &Path) -> Result<Studios> {
     )?;
     let waiting_repos = [("admin", waiting_repo)];
     let brain = Brain::new();
-    let (waiting_paths, waiting_studio) =
-        home(dir, "waiting", &waiting_repos, brain.clone(), true)?;
+    let (waiting_paths, waiting_studio) = home(
+        dir,
+        "waiting",
+        &waiting_repos,
+        brain.clone(),
+        true,
+        &[(
+            "admin",
+            "v1.2 passed its final checks. It waits for your go-ahead.",
+        )],
+    )?;
     let mut waiting = Driver::new(Arc::clone(&waiting_studio), brain, &waiting_repos);
     waiting.release("admin", "1.2", false).await?;
 
+    let starting = starting(dir).await?;
+
     let brain = Brain::new();
-    let (busy_paths, busy_studio) = home(dir, "busy", &repos, brain.clone(), false)?;
+    let (busy_paths, busy_studio) = home(dir, "busy", &repos, brain.clone(), false, STANDUPS)?;
     let mut driver = Driver::new(Arc::clone(&busy_studio), brain, &repos);
     let ids = driver.busy_office().await?;
+    seed_shop_talk(&busy_paths, &ids)?;
     Ok(Studios {
         busy: Live {
             studio: busy_studio,
@@ -115,6 +147,11 @@ pub async fn open(dir: &Path) -> Result<Studios> {
             studio: waiting_studio,
             data_dir: waiting_paths.data_dir,
         },
+        leadless: Live {
+            studio: leadless_studio,
+            data_dir: leadless_paths.data_dir,
+        },
+        starting,
         ids,
     })
 }
@@ -220,7 +257,8 @@ fn git(dir: &Path, args: &[&str]) -> Result<()> {
 }
 
 /// A repository on `main` holding `files`, with the project's checks beside
-/// them (not committed, as a project keeps its own `.studio.toml`).
+/// them (not committed, as a project keeps its own `.studio.toml`); with no
+/// checks it has no such file.
 fn repo(dir: &Path, name: &str, files: &[(&str, &str)], checks: &str) -> Result<PathBuf> {
     let path = dir.join(name);
     std::fs::create_dir_all(&path)?;
@@ -238,7 +276,9 @@ fn repo(dir: &Path, name: &str, files: &[(&str, &str)], checks: &str) -> Result<
     }
     git(&path, &["add", "-A"])?;
     git(&path, &["commit", "-q", "-m", "Start the project"])?;
-    write(&path.join(".studio.toml"), checks)?;
+    if !checks.is_empty() {
+        write(&path.join(".studio.toml"), checks)?;
+    }
     Ok(path)
 }
 
@@ -300,13 +340,16 @@ fn earlier_days(paths: &StudioPaths) -> Result<()> {
 
 /// A studio home with the starter files, then the gallery's own hires, rules
 /// and projects, opened on `brain`. With `led`, each project names its lead
-/// in `studio.toml`; otherwise the leads are set afterwards.
+/// in `studio.toml`; otherwise the leads are set afterwards. `standups` are
+/// what the leads said of their projects (project and words), kept before the
+/// studio opens, as a lead's one-turn call can't run here.
 fn home(
     dir: &Path,
     name: &str,
     repos: &[(&str, PathBuf)],
     brain: Brain,
     led: bool,
+    standups: &[(&str, &str)],
 ) -> Result<(StudioPaths, Arc<Studio>)> {
     let paths = StudioPaths::resolve(Some(dir.join(name)));
     studio_config::init(&paths)?;
@@ -457,8 +500,328 @@ fn home(
         }
     }
     write(&paths.config_dir.join("studio.toml"), &config)?;
+    if !standups.is_empty() {
+        let at = now_ms() - 40 * MINUTE;
+        let kept: serde_json::Map<String, Value> = standups
+            .iter()
+            .map(|(project, text)| ((*project).to_string(), json!({"at": at, "text": text})))
+            .collect();
+        write(
+            &paths.data_dir.join("talk/standups.json"),
+            &serde_json::to_string_pretty(&kept)?,
+        )?;
+    }
     let studio = Studio::open(paths.clone(), brain.runtimes())?;
     Ok((paths, studio))
+}
+
+/// What the leads of the busy studio said of their projects.
+const STANDUPS: &[(&str, &str)] = &[
+    (
+        "shop",
+        "The logo is done. The product cards went back: nine colours is too many, so Designer is redoing them with three.",
+    ),
+    (
+        "editor",
+        "The new-item form is in. Undo and redo is in review.",
+    ),
+    (
+        "admin",
+        "v1.2 passed its final checks. It is ready to go out.",
+    ),
+    ("docs", "v1.0 is live. The new home page links every guide."),
+];
+
+const MINUTE: u64 = 60_000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+// ---- what the leads said ---------------------------------------------------
+
+/// Writes the shop's conversation with its lead into its data folder: what
+/// the owner asked and what Nora answered, with a plan and an action as
+/// cards. What waits for the owner and what is ready to ship comes from the
+/// studio itself, as the newest of it all.
+fn seed_shop_talk(paths: &StudioPaths, ids: &Ids) -> Result<()> {
+    let nora = || TalkFrom::Lead {
+        hire: "shop-lead".into(),
+    };
+    let plan = TalkCard::Plan {
+        goal: ids.checkout_goal.clone(),
+        title: "Checkout flow".into(),
+        version: Some("0.5".into()),
+        tasks: [
+            ("Count the items in the cart", "dev"),
+            ("Add a cart drawer", "dev"),
+            ("Validate the payment form", "dev"),
+            ("Design the order confirmation page", "designer"),
+        ]
+        .iter()
+        .map(|(title, hire)| PlanTask {
+            title: (*title).into(),
+            hire: Some((*hire).into()),
+        })
+        .collect(),
+    };
+    let told = TalkCard::Acted {
+        task: ids.asking.clone(),
+        title: "Add a cart drawer".into(),
+        action: "told".into(),
+        note: "Close the drawer when the shopper clicks outside it.".into(),
+    };
+    // (seconds ago, who, words, card): the first exchange is hours old, the
+    // rest comes after everything the studio itself shows in the thread.
+    let turns = [
+        (
+            11_400,
+            TalkFrom::Owner,
+            "How is the store look coming along?",
+            None,
+        ),
+        (
+            11_280,
+            nora(),
+            "The logo is done. The product cards went back: nine colours is too many, so Designer is redoing them with three. The launch email waits for your go-ahead.",
+            None,
+        ),
+        (4, TalkFrom::Owner, "Plan the checkout flow for 0.5.", None),
+        (
+            3,
+            nora(),
+            "Here is the plan for \"Checkout flow\": 4 tasks. Dev starts with the cart.",
+            Some(plan),
+        ),
+        (
+            2,
+            TalkFrom::Owner,
+            "Tell Dev the cart drawer should close when you click outside it.",
+            None,
+        ),
+        (
+            1,
+            nora(),
+            "Done. Dev has it and will add it before handing the drawer over.",
+            Some(told),
+        ),
+    ];
+    let now = now_ms();
+    let mut lines = Vec::new();
+    for (n, (seconds_ago, from, text, card)) in turns.into_iter().enumerate() {
+        lines.push(serde_json::to_string(&TalkMessage {
+            id: n as u64 + 1,
+            at: now - seconds_ago * 1000,
+            from,
+            text: text.into(),
+            card,
+        })?);
+    }
+    write(
+        &paths.data_dir.join("talk/shop.jsonl"),
+        &format!("{}\n", lines.join("\n")),
+    )
+}
+
+// ---- projects being set up --------------------------------------------------
+
+/// How far a project's setup through its lead has got.
+#[derive(Clone, Copy, PartialEq)]
+enum Stage {
+    /// The lead is reading the repository.
+    Reading,
+    /// The studio is trying the checks the lead proposed.
+    Checking,
+    /// The lead's proposal waits for the owner's choice.
+    Ready,
+    /// The lead ended without a proposal.
+    Failed,
+    /// The owner took the proposal.
+    Accepted,
+}
+
+/// The starting studio's projects, each with the name of its new lead and how
+/// far its setup has got.
+const SETUPS: [(&str, &str, Stage); 5] = [
+    ("wiki", "Kit", Stage::Reading),
+    ("ledger", "Ada", Stage::Checking),
+    ("garden", "Mira", Stage::Ready),
+    ("tracker", "Leo", Stage::Failed),
+    ("journal", "Iris", Stage::Accepted),
+];
+
+const SETUP_FILES: &[(&str, &str)] = &[
+    ("README.md", "A small web app, with tests.\n"),
+    (
+        "scripts/test.sh",
+        "#!/bin/sh\necho \"running 112 tests\"\necho \"test result: ok. 112 passed; 0 failed\"\n",
+    ),
+    (
+        "scripts/lint.sh",
+        "#!/bin/sh\necho \"checked 48 files\"\necho \"clean\"\n",
+    ),
+    (
+        "scripts/capture.sh",
+        "#!/bin/sh\nmkdir -p \"$1\"\nfor n in 1 2 3 4; do echo page > \"$1/page-$n.txt\"; done\n",
+    ),
+    ("scripts/package.sh", PACKAGE_SCRIPT),
+    ("scripts/upload.sh", PUBLISH_SCRIPT),
+];
+
+/// Tests that wait for the gallery to let them finish, as a run the studio is
+/// still trying does.
+const SLOW_SETUP_FILES: &[(&str, &str)] = &[
+    ("README.md", "A small ledger app.\n"),
+    (
+        "scripts/test.sh",
+        "#!/bin/sh\nwhile [ -e \"$(git rev-parse --path-format=absolute --git-common-dir)/hold\" ]; do sleep 0.2; done\necho \"test result: ok. 31 passed; 0 failed\"\n",
+    ),
+    (
+        "scripts/lint.sh",
+        "#!/bin/sh\necho \"checked 20 files\"\necho \"clean\"\n",
+    ),
+];
+
+/// What the lead of `project` proposes. A `slow` project has no pictures and
+/// no release.
+fn proposal(project: &str, slow: bool) -> SetupProposal {
+    let command = |args: &[&str], why: &str| ProposedCommand {
+        command: args.iter().map(|a| (*a).to_string()).collect(),
+        why: why.into(),
+        tried: None,
+    };
+    let release = |script: &str| vec!["sh".to_string(), script.to_string()];
+    SetupProposal {
+        summary: format!(
+            "{project} is a small web app with tests, a lint and a release script in its CI."
+        ),
+        verify: vec![
+            command(
+                &["sh", "scripts/test.sh"],
+                "The tests, as your CI runs them.",
+            ),
+            command(&["sh", "scripts/lint.sh"], "The lint, as your CI runs it."),
+        ],
+        capture: (!slow).then(|| {
+            command(
+                &["sh", "scripts/capture.sh", "{out}"],
+                "Takes a picture of each page.",
+            )
+        }),
+        release: if slow {
+            Vec::new()
+        } else {
+            vec![release("scripts/package.sh"), release("scripts/upload.sh")]
+        },
+        release_source: if slow {
+            String::new()
+        } else {
+            "your CI".into()
+        },
+        protected: vec![
+            ProtectedPath {
+                glob: "saves/**".into(),
+                why: "Holds what people saved.".into(),
+            },
+            ProtectedPath {
+                glob: ".env*".into(),
+                why: "Holds secrets.".into(),
+            },
+        ],
+        daily_usd: Some(5.0),
+        first_goal: Some(FirstGoal {
+            text: "Fix the three crashes in TODO.md".into(),
+            version: Some("0.9".into()),
+            why: "They block every page.".into(),
+        }),
+    }
+}
+
+/// A studio whose projects were just added through their leads, one in each
+/// state a setup can be in.
+async fn starting(dir: &Path) -> Result<Live> {
+    let brain = Brain::new();
+    let (paths, studio) = home(dir, "starting", &[], brain.clone(), false, &[])?;
+    let repos = dir.join("starting-repos");
+    let driver = Driver::new(Arc::clone(&studio), brain.clone(), &[]);
+    for (project, lead, stage) in SETUPS {
+        let slow = stage == Stage::Checking;
+        let files = if slow { SLOW_SETUP_FILES } else { SETUP_FILES };
+        let path = repo(&repos, project, files, "")?;
+        if slow {
+            write(&path.join(".git/hold"), "")?;
+        }
+        // What the lead says at the end, and when it ends.
+        let words = format!(
+            "{project} is a small web app with tests, a lint and a release script in its CI. \
+             I'd run the tests and the lint on every change, and ask you before anything \
+             touches saved plans or secrets. Then I'd start on the three crashes in TODO.md."
+        );
+        let (runtime, hold) = match stage {
+            Stage::Failed => (FakeRuntime::new(vec![reply("")]), None),
+            _ => {
+                let (runtime, hold) = FakeRuntime::new(vec![reply(&words)]).held();
+                (runtime, Some(hold))
+            }
+        };
+        lock(&brain.0).setups.insert(project.into(), runtime);
+        driver
+            .call(Request::SetupProject {
+                path: path.display().to_string(),
+                name: Some(project.into()),
+                lead: None,
+                new_lead: Some(NewLead {
+                    name: lead.into(),
+                    model: "opus".into(),
+                }),
+            })
+            .await?;
+        if matches!(stage, Stage::Checking | Stage::Ready | Stage::Accepted) {
+            driver
+                .call(Request::ProposeSetup {
+                    project: project.into(),
+                    proposal: proposal(project, slow),
+                })
+                .await?;
+        }
+        // Held for good while the lead is still reading.
+        if stage != Stage::Reading
+            && let Some(hold) = hold
+        {
+            hold.notify_one();
+        }
+        let until = match stage {
+            Stage::Reading => None,
+            Stage::Checking => Some(SetupState::Checking),
+            Stage::Ready | Stage::Accepted => Some(SetupState::Ready),
+            Stage::Failed => Some(SetupState::Failed),
+        };
+        if let Some(until) = until {
+            driver.setup_reaches(project, until).await?;
+        }
+        if stage == Stage::Accepted {
+            let command = |script: &str| vec!["sh".to_string(), script.to_string()];
+            driver
+                .call(Request::AcceptSetup {
+                    project: project.into(),
+                    choice: SetupChoice {
+                        verify: vec![command("scripts/test.sh"), command("scripts/lint.sh")],
+                        capture: vec!["sh".into(), "scripts/capture.sh".into(), "{out}".into()],
+                        release: vec![command("scripts/package.sh"), command("scripts/upload.sh")],
+                        protected: vec!["saves/**".into(), ".env*".into()],
+                        daily_usd: Some(5.0),
+                        plan_first: false,
+                    },
+                })
+                .await?;
+        }
+    }
+    Ok(Live {
+        studio,
+        data_dir: paths.data_dir,
+    })
 }
 
 // ---- the scripted runtime --------------------------------------------------
@@ -474,6 +837,8 @@ struct Tables {
     reviews: HashMap<String, FakeRuntime>,
     gates: HashMap<String, FakeRuntime>,
     approvals: Vec<(String, FakeRuntime)>,
+    /// What a lead says when it sets a project up, by project.
+    setups: HashMap<String, FakeRuntime>,
     /// What runs nobody scripted do: an author, a reviewer or gate that
     /// passes, an approver that allows.
     author: FakeRuntime,
@@ -512,6 +877,7 @@ impl Brain {
             reviews: HashMap::new(),
             gates: HashMap::new(),
             approvals: Vec::new(),
+            setups: HashMap::new(),
             author: FakeRuntime::new(vec![RunEvent::Finished {
                 outcome: Outcome::Success,
                 session: None,
@@ -551,7 +917,12 @@ impl Runtime for Brain {
             .unwrap_or_default();
         let prompt = spec.prompt.as_str();
         let tables = lock(&self.0);
-        let fake = (if prompt.contains("Decide whether the agent may make this tool call.") {
+        let setting_up = prompt
+            .strip_prefix("You are setting up the project ")
+            .and_then(|rest| rest.split(' ').next());
+        let fake = (if let Some(project) = setting_up {
+            tables.setups.get(project).unwrap_or(&tables.pass)
+        } else if prompt.contains("Decide whether the agent may make this tool call.") {
             tables
                 .approvals
                 .iter()
@@ -675,6 +1046,8 @@ struct Job {
     beats: Vec<Beat>,
     /// What the agent leaves in its worktree.
     files: Vec<(&'static str, &'static str)>,
+    /// What it leaves there when the work is sent back, if it is.
+    revised: Vec<(&'static str, &'static str)>,
     /// What one run costs, in USD.
     usd: f64,
 }
@@ -687,6 +1060,7 @@ fn job(title: &'static str, hire: &'static str, fate: Fate) -> Job {
         fate,
         beats: vec![Beat::Say("Working through the ticket.")],
         files: Vec::new(),
+        revised: Vec::new(),
         usd: 0.15,
     }
 }
@@ -704,6 +1078,11 @@ impl Job {
 
     fn files(mut self, files: &[(&'static str, &'static str)]) -> Job {
         self.files = files.to_vec();
+        self
+    }
+
+    fn revised(mut self, files: &[(&'static str, &'static str)]) -> Job {
+        self.revised = files.to_vec();
         self
     }
 
@@ -798,6 +1177,23 @@ impl Driver {
             }
             self.is(id, state).await
         })
+        .await
+    }
+
+    /// Waits until the setup of `project` is in `state`.
+    async fn setup_reaches(&self, project: &str, state: SetupState) -> Result<()> {
+        let want = serde_json::to_value(state)?;
+        self.until(
+            &format!("the setup of {project} to be {want}"),
+            async || {
+                let view = self
+                    .call(Request::SetupStatus {
+                        project: project.into(),
+                    })
+                    .await?;
+                Ok(view["state"] == want)
+            },
+        )
         .await
     }
 
@@ -962,6 +1358,8 @@ impl Driver {
                 self.plant(project, id, files).await?;
                 self.finish_until(id, "ready").await?;
                 if let Fate::Revised(notes) = job.fate {
+                    // The agent's second run leaves the page with the change.
+                    self.plant(project, id, &job.revised).await?;
                     self.call(Request::RequestChanges {
                         ticket: id.into(),
                         feedback: notes.into(),
@@ -1048,11 +1446,11 @@ impl Driver {
         for (needle, decision) in [
             (
                 "cargo run -- --port 8080",
-                "Starting the store opens port 8080 on this machine, so it is yours to decide.\nDECISION: OWNER: starting the store opens port 8080 on this machine, so it is yours to decide",
+                "Starting the store opens port 8080 on this machine, so it is yours to decide.\nQUESTION: Start the store on port 8080?\nDECISION: OWNER: starting the store opens port 8080 on this machine, so it is yours to decide",
             ),
             (
                 "cargo run --bin mailer",
-                "Sending mail reaches outside the project.\nDECISION: OWNER: sending the launch email goes to a real address, so it is yours to decide",
+                "Sending mail reaches outside the project.\nQUESTION: Send the launch email?\nDECISION: OWNER: sending the launch email goes to a real address, so it is yours to decide",
             ),
             (
                 "rm -rf ~/.cargo/registry/cache",
@@ -1165,8 +1563,7 @@ impl Driver {
         })
         .await?;
 
-        let (look, _) = self
-            .plan(
+        self.plan(
                 "shop",
                 "Give the store its look: logo, product cards, launch email",
                 Some("0.4"),
@@ -1194,19 +1591,26 @@ impl Driver {
             )
             .await?;
 
-        self.plan(
-            "shop",
-            "Save carts between sessions",
-            Some("0.4"),
-            vec![
-                job("Store carts in the database", "dev", Fate::Landed)
-                    .files(&[("src/carts.rs", "pub fn save() {}\n")])
-                    .usd(0.2),
-            ],
-        )
-        .await?;
+        let (ready_goal, _) = self
+            .plan(
+                "shop",
+                "Save carts between sessions",
+                Some("0.4"),
+                vec![
+                    job("Store carts in the database", "dev", Fate::Landed)
+                        .files(&[("src/carts.rs", CARTS_STORED)])
+                        .usd(0.2),
+                    job(
+                        "Bring the cart back when a shopper signs in",
+                        "dev",
+                        Fate::Landed,
+                    )
+                    .files(&[("src/session.rs", SESSION_RESTORED)]),
+                ],
+            )
+            .await?;
 
-        let (_, checkout) = self
+        let (checkout_goal, checkout) = self
             .plan(
                 "shop",
                 "Checkout flow",
@@ -1233,20 +1637,17 @@ impl Driver {
                 ],
             )
             .await?;
-        let _ = checkout;
 
         // Single tickets.
-        let footer = self
-            .single(
-                "shop",
-                "",
-                job("Fix the broken footer links", "dev", Fate::Landed).files(&[(
-                    "templates/footer.html",
-                    "<a href=\"/contact\">Contact</a>\n",
-                )]),
-            )
-            .await?;
-        let _ = footer;
+        self.single(
+            "shop",
+            "",
+            job("Fix the broken footer links", "dev", Fate::Landed).files(&[(
+                "templates/footer.html",
+                "<a href=\"/contact\">Contact</a>\n",
+            )]),
+        )
+        .await?;
         let failed = self
             .single(
                 "shop",
@@ -1260,19 +1661,18 @@ impl Driver {
                 .usd(0.2),
             )
             .await?;
-        let held = self
-            .single(
-                "shop",
-                "",
-                job(
-                    "Add gift card support",
-                    "dev",
-                    Fate::OverBudget("cargo test: 1 failed"),
-                )
-                .files(&[("src/gift.rs", "pub fn redeem() {}\n")])
-                .usd(1.0),
+        self.single(
+            "shop",
+            "",
+            job(
+                "Add gift card support",
+                "dev",
+                Fate::OverBudget("cargo test: 1 failed"),
             )
-            .await?;
+            .files(&[("src/gift.rs", "pub fn redeem() {}\n")])
+            .usd(1.0),
+        )
+        .await?;
         let ready = self
             .single(
                 "shop",
@@ -1291,6 +1691,7 @@ impl Driver {
                     Run("cargo test --workspace"),
                 ])
                 .files(&[("src/landing.rs", LANDING_V2)])
+                .revised(&[("src/landing.rs", LANDING_V3)])
                 .usd(0.25),
             )
             .await?;
@@ -1351,8 +1752,7 @@ impl Driver {
             ]),
         )
         .await?;
-        let checks = self
-            .single(
+        self.single(
                 "shop",
                 "",
                 job("Resize product images", "dev", Fate::Checking)
@@ -1364,40 +1764,41 @@ impl Driver {
                     .files(&[("src/images.rs", "pub fn widths() -> [u32; 3] { [320, 640, 1280] }\n")]),
             )
             .await?;
-        let review = self
-            .single(
-                "shop",
-                "",
-                job("Add an order history page", "dev", Fate::Reviewing)
-                    .beats(&[Write("src/orders.rs"), Run("git diff --stat main...HEAD")])
-                    .files(&[("src/orders.rs", "pub fn history() {}\n")]),
-            )
-            .await?;
-        let (planner, _) = self
-            .plan(
-                "shop",
-                "Add a settings page for email and notification preferences",
-                Some("0.5"),
-                Vec::new(),
-            )
-            .await?;
+        self.single(
+            "shop",
+            "",
+            job("Add an order history page", "dev", Fate::Reviewing)
+                .beats(&[Write("src/orders.rs"), Run("git diff --stat main...HEAD")])
+                .files(&[("src/orders.rs", "pub fn history() {}\n")]),
+        )
+        .await?;
+        self.plan(
+            "shop",
+            "Add a settings page for email and notification preferences",
+            Some("0.5"),
+            Vec::new(),
+        )
+        .await?;
         // Every desk is taken now, so this one waits.
         self.single("shop", "", job("Add a contact page", "dev", Fate::Queued))
             .await?;
 
-        let goal = look;
+        // The goal that is ready to ship has had its checks run on its branch.
+        self.until("the checks of the ready goal", async || {
+            let office = self.call(Request::Office).await?;
+            Ok(office["ship_checks"][&ready_goal]["state"] == "passed")
+        })
+        .await?;
+
         let landed_merged = nav[0].clone();
         let landed = editor[0].clone();
         Ok(Ids {
             working,
             asking: checkout[1].clone(),
-            checks,
-            review,
             ready,
-            held,
             failed,
-            planner,
-            goal,
+            ready_goal,
+            checkout_goal,
             landed,
             landed_merged,
         })
@@ -1419,6 +1820,45 @@ const LANDING_V2: &str = "pub fn page(html: &mut Html, user: Option<&User>) {
     }
 }
 ";
+
+const LANDING_V3: &str = "pub fn page(html: &mut Html, user: Option<&User>) {
+    html.heading(\"Corner Shop\");
+    html.link(\"Shop now\", \"/products\");
+    if let Some(user) = user {
+        html.text(&format!(\"Signed in as {}\", user.name));
+        html.confirm(\"Sign out\", \"/sign-out\");
+    }
+}
+";
+
+// What the finished goal adds to the shop: the cart kept in the database and
+// put back when a shopper signs in. New files only: the checkout of a worktree
+// can still put back a file that exists when `plant` writes it.
+const CARTS_STORED: &str = r#"use crate::cart::Cart;
+
+/// Keeps a shopper's cart in the database, so it is there on the next visit.
+pub fn save(db: &Db, shopper: ShopperId, cart: &Cart) -> Result<(), DbError> {
+    db.put("carts", shopper, cart)
+}
+
+/// The cart a shopper left, or an empty one.
+pub fn load(db: &Db, shopper: ShopperId) -> Cart {
+    db.get("carts", shopper).unwrap_or_default()
+}
+
+/// Empties the cart a shopper left, once they have checked out.
+pub fn clear(db: &Db, shopper: ShopperId) -> Result<(), DbError> {
+    db.delete("carts", shopper)
+}
+"#;
+
+const SESSION_RESTORED: &str = r#"use crate::carts;
+
+/// Puts back the cart a shopper left when they sign in.
+pub fn on_sign_in(db: &Db, shopper: ShopperId) -> Cart {
+    carts::load(db, shopper)
+}
+"#;
 
 const CART_V2: &str = "pub type Cart = Vec<Line>;
 

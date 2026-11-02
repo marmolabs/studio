@@ -137,6 +137,7 @@ async fn work_on(
                                 log.note(&format!("plan: {summary}"));
                             }
                             studio.append(id, Event::Landed)?;
+                            studio.plan_filed(&ticket);
                             let _ = repo.remove_worktree(&worktree, true);
                             return Ok(());
                         }
@@ -289,7 +290,7 @@ async fn work_on(
 /// Lands a ready ticket on its goal branch. A conflict sends it back to its
 /// agent; an error leaves it ready for the owner, who is told as for any
 /// ready ticket.
-fn auto_land(studio: &Studio, ticket: &Ticket, log: &RunLog) {
+fn auto_land(studio: &Arc<Studio>, ticket: &Ticket, log: &RunLog) {
     match studio.land(&ticket.id) {
         Ok(Landing::Landed { branch, .. }) => log.note(&format!("auto-landed on {branch}")),
         Ok(Landing::SentBack { branch, files }) => log.note(&format!(
@@ -482,10 +483,15 @@ impl AgentRun<'_> {
             } else {
                 tokio::select! {
                     event = run.next() => event,
+                    _ = self.stop.heard.notified() => {
+                        self.pass_on(&run).await;
+                        continue;
+                    }
                     _ = self.stop.notify.notified() => {
                         let reason = self.stop.reason().unwrap_or(StopReason::Cancel);
                         self.log.note(match reason {
                             StopReason::Cancel => "cancelled by the owner",
+                            StopReason::SentBack => "sent back with a message; stopping",
                             StopReason::Budget => "budget: a 24-hour limit was reached; stopping",
                             StopReason::Pause => "paused by the owner",
                         });
@@ -601,6 +607,9 @@ impl AgentRun<'_> {
                             // The notes read the same whoever decided, so the log
                             // shows them alike.
                             let title = "approver";
+                            // The call put to the owner in plain words, when
+                            // the decider left it to them and said so.
+                            let mut question = String::new();
                             let (label, decider) = match &lead {
                                 Some(lead) => ("Lead", Some(lead.clone())),
                                 None => ("Approver", self.studio.first_with_role("approver")),
@@ -653,18 +662,27 @@ impl AgentRun<'_> {
                                         run.deny(&request_id, &message).await?;
                                         continue;
                                     }
-                                    approver::Call::Owner(reason) => {
+                                    approver::Call::Owner { reason, title: put } => {
                                         self.log.note_by(
                                             &format!("{title} left {tool} to the owner: {reason}"),
                                             &approver.id.0,
                                         );
                                         why.push(format!("{label}: {reason}"));
+                                        question = put;
                                     }
                                 }
                             }
                             let decision = self
                                 .studio
-                                .ask(self.id(), &self.hire.id.0, "permission", &tool, input, why)
+                                .ask_titled(
+                                    self.id(),
+                                    &self.hire.id.0,
+                                    "permission",
+                                    &tool,
+                                    input,
+                                    why,
+                                    question,
+                                )
                                 .await?;
                             if !self.decide(&run, request_id, decision).await? {
                                 stopping = Some(StopReason::Cancel);
@@ -755,7 +773,7 @@ impl AgentRun<'_> {
             return None;
         }
         let path = self.log.mcp_config_path();
-        let config = mcp_config(&self.studio.paths, self.id());
+        let config = mcp_config(&self.studio.paths, "--ticket", &self.id().to_string());
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -849,11 +867,25 @@ impl AgentRun<'_> {
         Ok(true)
     }
 
-    /// The run was stopped on purpose. A cancel or a denial already moved the
-    /// ticket; a budget stop or a pause holds it.
+    /// Passes on to the run what the agent was told, as messages from the
+    /// user. Once the agent has finished its work there is no one to hear it.
+    async fn pass_on(&self, run: &Run) {
+        let working = matches!(
+            self.studio.ticket(self.id()).map(|t| t.state),
+            Ok(TicketState::Claimed | TicketState::Working | TicketState::Asking { .. })
+        );
+        for text in self.stop.take_said() {
+            if !working || run.say(&text).await.is_err() {
+                self.log.note("too late for the agent to hear a message");
+            }
+        }
+    }
+
+    /// The run was stopped on purpose. A cancel, a send-back or a denial
+    /// already moved the ticket; a budget stop or a pause holds it.
     fn stopped(&self, reason: StopReason) -> Result<AgentEnd, StudioError> {
         match reason {
-            StopReason::Cancel => Ok(AgentEnd::Stopped),
+            StopReason::Cancel | StopReason::SentBack => Ok(AgentEnd::Stopped),
             StopReason::Budget => self.hold(HeldReason::Budget),
             StopReason::Pause => self.hold(HeldReason::Paused),
         }
@@ -919,9 +951,11 @@ impl AgentRun<'_> {
     }
 }
 
-/// The MCP config for a ticket's run. `studio` sits next to `studiod`; if it
-/// doesn't, we hope it is on PATH.
-fn mcp_config(paths: &StudioPaths, ticket: &TicketId) -> Value {
+/// The MCP config for a run of the studio's tools: `studio mcp <mode> <who>`,
+/// where `mode` is `--ticket` (and `who` a ticket), `--talk` or `--setup` (and
+/// `who` a project). `studio` sits next to `studiod`; if it doesn't, we hope it
+/// is on PATH.
+pub(crate) fn mcp_config(paths: &StudioPaths, mode: &str, who: &str) -> Value {
     let studio = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.join("studio")))
@@ -929,13 +963,7 @@ fn mcp_config(paths: &StudioPaths, ticket: &TicketId) -> Value {
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| "studio".to_string());
     let socket = crate::api::socket_path(&paths.data_dir);
-    let args = [
-        "mcp",
-        "--ticket",
-        &ticket.to_string(),
-        "--socket",
-        &socket.to_string_lossy(),
-    ];
+    let args = ["mcp", mode, who, "--socket", &socket.to_string_lossy()];
     json!({ "mcpServers": { "studio": { "command": studio, "args": args } } })
 }
 
@@ -985,7 +1013,9 @@ pub(crate) fn tool_verdict(
     )
 }
 
-fn tool_paths(input: &Value, root: &Path) -> (Vec<String>, bool) {
+/// The paths a tool call names, relative to `root` where they are inside it,
+/// and whether any of them is outside it.
+pub(crate) fn tool_paths(input: &Value, root: &Path) -> (Vec<String>, bool) {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut paths = Vec::new();
     let mut outside = false;

@@ -17,6 +17,29 @@ fn expand_home(path: &str) -> std::path::PathBuf {
     }
 }
 
+/// The git repository at `path` and the branch work starts on: `branch` when
+/// it is given, else the one checked out.
+pub(super) fn repo_and_branch(
+    path: &str,
+    branch: Option<String>,
+) -> Result<(studio_git::Repo, String), StudioError> {
+    let path = expand_home(path.trim());
+    if !path.is_dir() {
+        return Err(other(format!("{} is not a folder", path.display())));
+    }
+    let repo = studio_git::Repo::open(&path)?;
+    let branch = match branch
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+    {
+        Some(branch) => branch,
+        None => repo
+            .current_branch()?
+            .ok_or_else(|| other("that repository has no branch checked out; name one"))?,
+    };
+    Ok((repo, branch))
+}
+
 impl Studio {
     /// The file whose presence means the owner closed the office.
     fn closed_path(&self) -> std::path::PathBuf {
@@ -67,20 +90,7 @@ impl Studio {
         pack: Option<String>,
         check: bool,
     ) -> Result<Response, StudioError> {
-        let path = expand_home(path.trim());
-        if !path.is_dir() {
-            return Err(other(format!("{} is not a folder", path.display())));
-        }
-        let repo = studio_git::Repo::open(&path)?;
-        let branch = match branch
-            .map(|b| b.trim().to_string())
-            .filter(|b| !b.is_empty())
-        {
-            Some(branch) => branch,
-            None => repo
-                .current_branch()?
-                .ok_or_else(|| other("that repository has no branch checked out; name one"))?,
-        };
+        let (repo, branch) = repo_and_branch(path, branch)?;
         let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
         let project = studio_config::NewProject {
             path: repo.root(),

@@ -61,8 +61,6 @@ impl From<studiod::api::JudgeView> for crate::summary::Judge {
 /// The parts of `Request::Status` the pages use.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct Status {
-    #[serde(default)]
-    pub running: u64,
     /// The owner's rule files.
     #[serde(default)]
     pub rules: u64,
@@ -73,9 +71,6 @@ pub struct Status {
     pub daily_usd: f64,
     #[serde(default)]
     pub spent_24h: f64,
-    /// The studio's 24-hour budget can't fund another run, so nothing starts.
-    #[serde(default)]
-    pub out_of_budget: bool,
     #[serde(default)]
     pub projects: Vec<String>,
     #[serde(default)]

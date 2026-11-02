@@ -84,31 +84,50 @@ pub async fn changes(diff: Option<String>) -> topcoat::Result<impl View> {
             if files.is_empty() {
                 <p class=(ui::MUTED)>"No changes yet."</p>
             } else {
-                <div class=(ui::LIST)>
-                    for file in files {
-                        <details class="group border-t border-line first:border-t-0">
-                            <summary class="flex cursor-pointer list-none items-center gap-2.5 px-4 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
-                                <span class="text-fg-3 transition-transform group-open:rotate-90">ui::icon(name: "chevron-right", small: true)</span>
-                                <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-2">(file.path)</span>
-                                ui::diff_size(added: file.adds as u64, removed: file.removes as u64)
-                            </summary>
-                            <div class="overflow-x-auto border-t border-line bg-bg-2 py-1 font-mono text-[12px] leading-5">
-                                <div class="w-max min-w-full">
-                                    for (tone, text) in file.lines {
-                                        <div class=(match tone {
-                                            Tone::Add => "whitespace-pre bg-ok-bg px-4 text-ok-fg",
-                                            Tone::Remove => "whitespace-pre bg-bad-bg px-4 text-bad-fg",
-                                            Tone::Hunk => "whitespace-pre px-4 text-fg-3",
-                                            Tone::Plain => "whitespace-pre px-4 text-fg-2",
-                                        })>(text)</div>
-                                    }
-                                </div>
-                            </div>
-                        </details>
-                    }
-                </div>
+                file_rows(files: files, open_first: false)
             }
         </section>
+    })
+}
+
+/// The files of `diff`, one folded row each, the first one opened when
+/// `open_first`; nothing when the diff has no files.
+#[component]
+pub async fn diff_files(diff: String, #[default] open_first: bool) -> topcoat::Result<impl View> {
+    let files = parse(&diff);
+    Ok(view! {
+        if !files.is_empty() {
+            file_rows(files: files, open_first: open_first)
+        }
+    })
+}
+
+#[component]
+async fn file_rows(files: Vec<FileDiff>, open_first: bool) -> topcoat::Result<impl View> {
+    Ok(view! {
+        <div class=(ui::LIST)>
+            for (n, file) in files.into_iter().enumerate() {
+                <details open=((open_first && n == 0).then_some("")) class="group border-t border-line first:border-t-0">
+                    <summary class="flex cursor-pointer list-none items-center gap-2.5 px-4 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
+                        <span class="text-fg-3 transition-transform group-open:rotate-90">ui::icon(name: "chevron-right", small: true)</span>
+                        <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-2">(file.path)</span>
+                        ui::diff_size(added: file.adds as u64, removed: file.removes as u64)
+                    </summary>
+                    <div class="overflow-x-auto border-t border-line bg-bg-2 py-1 font-mono text-[12px] leading-5">
+                        <div class="w-max min-w-full">
+                            for (tone, text) in file.lines {
+                                <div class=(match tone {
+                                    Tone::Add => "whitespace-pre bg-ok-bg px-4 text-ok-fg",
+                                    Tone::Remove => "whitespace-pre bg-bad-bg px-4 text-bad-fg",
+                                    Tone::Hunk => "whitespace-pre px-4 text-fg-3",
+                                    Tone::Plain => "whitespace-pre px-4 text-fg-2",
+                                })>(text)</div>
+                            }
+                        </div>
+                    </div>
+                </details>
+            }
+        </div>
     })
 }
 

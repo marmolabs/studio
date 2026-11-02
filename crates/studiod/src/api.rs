@@ -73,8 +73,11 @@ pub enum Request {
     /// for the last 24 hours), `TicketSpends`, `MergedTickets` and
     /// `HiresToday` answer, the size of each ready ticket's change, and who
     /// is judging each ticket in review, what each live run is doing and
-    /// which ready tickets the owner must review. One request instead of eight, for
-    /// pages that stay open all day.
+    /// which ready tickets the owner must review, and each project's
+    /// conversation at a glance, the one-line results of finished tasks, each
+    /// lead's standup, the checks of each goal ready to ship and how each
+    /// project's setup stands. One request instead of eight, for pages that
+    /// stay open all day.
     Office,
     /// When each running ticket's latest run began and each held ticket was
     /// held, by ticket id.
@@ -165,8 +168,12 @@ pub enum Request {
         #[serde(default)]
         hire: Option<String>,
     },
-    /// `git diff --stat` of the ticket's worktree against its base, or null
-    /// when the worktree is gone.
+    /// `git diff --stat` of the ticket's change: its worktree against its
+    /// base; once the work landed and its worktree is gone, its branch
+    /// against the commit it started from, while the branch is kept; and for
+    /// a goal's plan ticket, the goal's branch against the base the goal
+    /// ships to, however many of its tasks landed. Null when git has none to
+    /// give.
     Diffstat {
         ticket: String,
     },
@@ -174,8 +181,8 @@ pub enum Request {
     Diffstats {
         tickets: Vec<String>,
     },
-    /// The ticket's full change against its base as a unified diff, cut at
-    /// 1 MB, or null when the worktree is gone.
+    /// The ticket's full change as a unified diff, cut at 1 MB, from the same
+    /// place as `Diffstat`; null when git has none to give.
     Diff {
         ticket: String,
     },
@@ -297,6 +304,387 @@ pub enum Request {
         #[serde(default)]
         project: Option<String>,
     },
+    /// The owner's message to the lead of `project`: it is stored in the
+    /// project's conversation and the lead answers it in a turn of its own,
+    /// which `Conversation` shows. A project without a lead is an error that
+    /// says to give it one. Answers the stored `TalkMessage`.
+    Talk {
+        project: String,
+        text: String,
+    },
+    /// The messages of `project`'s conversation, oldest first, and whether
+    /// its lead is working on a reply: only those after the message numbered
+    /// `after`, when it is given. Answers the `ConversationView`.
+    Conversation {
+        project: String,
+        #[serde(default)]
+        after: Option<u64>,
+    },
+    /// Tells a task's agent something: a running task hears it in its live
+    /// session, one that waits in checks, review or ready goes back with it as
+    /// a note, a queued one keeps it for its next run, and a finished one is an
+    /// error. Answers `{"task", "how"}`, where `how` is `live`, `sent_back` or
+    /// `queued`.
+    Tell {
+        task: String,
+        text: String,
+    },
+    /// What the lead of `project` does to one of its tasks while it talks with
+    /// the owner (the `send_back`, `pause`, `resume`, `cancel` and `tell`
+    /// tools): the same as the owner's `RequestChanges`, `Pause`, `Resume`,
+    /// `Cancel` and `Tell`, except that the task must be one of `project`'s
+    /// own (any other is refused: "GARD-3 isn't one of shop's tasks.") and a
+    /// message reaches the agent as coming from the lead, by name. Answers
+    /// what the owner's request answers.
+    LeadActs {
+        project: String,
+        task: String,
+        act: LeadAct,
+    },
+    /// Adds the git repository at `path` as a project, as `AddProject` does,
+    /// and has its lead set it up: the lead reads the repository and proposes
+    /// how the project runs, and the studio tries what it proposes. The lead is
+    /// the hire `lead`, or a new hire made from `new_lead`; one of them must be
+    /// given. Answers the `SetupView`, which `SetupStatus` keeps answering as
+    /// the setup goes on.
+    SetupProject {
+        path: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        lead: Option<String>,
+        #[serde(default)]
+        new_lead: Option<NewLead>,
+    },
+    /// How the setup of `project` stands. Answers the `SetupView`.
+    SetupStatus {
+        project: String,
+    },
+    /// The owner's go-ahead for what the lead proposed to set `project` up:
+    /// `choice` is written to the project's `.studio.toml` and the daily limit
+    /// to `studio.toml`, and with `plan_first` the lead starts the project's
+    /// first goal. Answers the `SetupView`, now accepted.
+    AcceptSetup {
+        project: String,
+        choice: SetupChoice,
+    },
+    /// The lead's proposal for how `project` runs (the `propose_setup` tool):
+    /// stored when it is sound, after which the studio tries it. Only a
+    /// project whose lead is reading it takes one, and only once. Answers
+    /// a line for the lead.
+    ProposeSetup {
+        project: String,
+        proposal: SetupProposal,
+    },
+}
+
+/// What a lead does to a task of its project (see `Request::LeadActs`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum LeadAct {
+    /// Sends the task back to its agent with a note on what to change.
+    SendBack { note: String },
+    /// Stops the task's running agent and holds the task.
+    Pause,
+    /// Continues a held task.
+    Resume,
+    /// Cancels the task for good.
+    Cancel,
+    /// Tells the task's agent something.
+    Tell { text: String },
+}
+
+/// One message of a project's conversation, kept as a line of
+/// `<data>/talk/<project>.jsonl`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TalkMessage {
+    /// Counts up from 1 in each project's conversation.
+    pub id: u64,
+    /// When it was posted, in epoch milliseconds.
+    pub at: u64,
+    pub from: TalkFrom,
+    pub text: String,
+    /// What it shows under its words, if anything.
+    #[serde(default)]
+    pub card: Option<TalkCard>,
+}
+
+/// Who a message is from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "who", rename_all = "snake_case")]
+pub enum TalkFrom {
+    Owner,
+    /// The lead, by hire id.
+    Lead {
+        hire: String,
+    },
+    /// The studio itself, such as when it reports what it did for the lead.
+    Studio,
+}
+
+/// What a message shows under its words.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TalkCard {
+    /// A goal the lead planned and the tasks it filed for it.
+    Plan {
+        /// The goal's plan ticket.
+        goal: String,
+        title: String,
+        /// The version the goal is a milestone towards, such as `0.4`.
+        #[serde(default)]
+        version: Option<String>,
+        #[serde(default)]
+        tasks: Vec<PlanTask>,
+    },
+    /// Something the lead did to a task: `action` is `sent back`, `paused`,
+    /// `resumed`, `cancelled` or `told`, and `note` what it said, if
+    /// anything.
+    Acted {
+        task: String,
+        title: String,
+        action: String,
+        note: String,
+    },
+    /// How a project runs, as its lead proposed it when setting it up; the
+    /// project's `SetupView` has the details.
+    Setup { project: String },
+}
+
+/// A task of a planned goal, as its card lists it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlanTask {
+    pub title: String,
+    /// The hire it was given to, if it was given to one.
+    #[serde(default)]
+    pub hire: Option<String>,
+}
+
+/// The answer to `Request::Conversation`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConversationView {
+    /// Oldest first.
+    #[serde(default)]
+    pub messages: Vec<TalkMessage>,
+    /// The lead is working on a reply.
+    pub thinking: bool,
+}
+
+/// A hire to make for a project, as its lead.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NewLead {
+    /// What to call it, such as "Nora".
+    pub name: String,
+    /// The model it runs on.
+    pub model: String,
+}
+
+/// What a new lead is told it is.
+const LEAD_PROMPT: &str = "You are the lead of a project at a small software studio, and you speak \
+for it to its owner. Keep your words plain and short. You read the project's code, plan its work \
+and check what comes back; you never change files yourself.";
+
+impl NewLead {
+    /// The hire this makes, as its id and the text of its file: a lead that
+    /// runs on `model`, with the tool it needs to file the tasks of a plan.
+    /// The id is the name in lowercase, with a dash for anything but a letter
+    /// or a digit. Refused, in plain words, for a name or a model no hire can
+    /// be made of. Whether another hire has the name is for the caller to
+    /// say.
+    pub fn hire_file(&self) -> Result<(String, String), String> {
+        let name = self.name.trim();
+        let model = self.model.trim();
+        if name.is_empty() || name.chars().count() > 40 || name.contains('\n') {
+            return Err("give the lead a short name".to_string());
+        }
+        if model.is_empty() {
+            return Err("pick a model for the lead".to_string());
+        }
+        let id: String = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        if id.is_empty() {
+            return Err("use letters or digits in the lead's name".to_string());
+        }
+        let quote = |text: &str| Value::String(text.to_string()).to_string();
+        let text = format!(
+            "---\nname: {}\nrole: lead\nruntime: claude-code\nmodel: {}\ntools: [file_ticket]\n---\n{LEAD_PROMPT}\n",
+            quote(name),
+            quote(model),
+        );
+        Ok((id, text))
+    }
+}
+
+/// How a project's setup through its lead stands.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SetupView {
+    pub project: String,
+    /// The hire doing the setup.
+    #[serde(default)]
+    pub lead: Option<String>,
+    pub state: SetupState,
+    /// What the lead proposed, once it has.
+    #[serde(default)]
+    pub proposal: Option<SetupProposal>,
+    /// Why the setup failed, in a line.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupState {
+    /// The lead is reading the repository.
+    #[default]
+    Reading,
+    /// The studio is trying what the lead proposed.
+    Checking,
+    /// Everything proposed has been tried; it waits for the owner's choice.
+    Ready,
+    /// The owner chose, and the choice is written to the project's files.
+    Accepted,
+    /// The setup could not go on; the `SetupView`'s `error` says why.
+    Failed,
+}
+
+/// How the lead proposes a project runs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SetupProposal {
+    /// What the lead found, in a sentence or two.
+    #[serde(default)]
+    pub summary: String,
+    /// The checks that show a change works.
+    #[serde(default)]
+    pub verify: Vec<ProposedCommand>,
+    /// The command that takes the pictures a change is judged by, if there is
+    /// one.
+    #[serde(default)]
+    pub capture: Option<ProposedCommand>,
+    /// The commands that release the project, each a program with its
+    /// arguments.
+    #[serde(default)]
+    pub release: Vec<Vec<String>>,
+    /// Where the release commands were found, such as "your CI".
+    #[serde(default)]
+    pub release_source: String,
+    /// Paths the owner is asked about before an agent touches them.
+    #[serde(default)]
+    pub protected: Vec<ProtectedPath>,
+    /// What the project may spend in a day, in USD.
+    #[serde(default)]
+    pub daily_usd: Option<f64>,
+    /// What the lead would plan first.
+    #[serde(default)]
+    pub first_goal: Option<FirstGoal>,
+}
+
+/// A command the lead proposes, and what the studio found when it tried it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProposedCommand {
+    /// A program with its arguments.
+    #[serde(default)]
+    pub command: Vec<String>,
+    pub why: String,
+    /// What happened when the studio ran it in a fresh checkout; none before
+    /// it has.
+    #[serde(default)]
+    pub tried: Option<CommandRun>,
+}
+
+/// One try of a proposed command.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CommandRun {
+    pub passed: bool,
+    pub seconds: u64,
+    /// What it came to in a few words, such as "112 pass".
+    pub summary: String,
+    /// The last lines of what it printed.
+    pub output_tail: String,
+}
+
+/// A path the owner is asked about before an agent touches it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProtectedPath {
+    /// A glob, such as `migrations/**`.
+    pub glob: String,
+    pub why: String,
+}
+
+/// The first goal a lead offers to plan.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FirstGoal {
+    pub text: String,
+    /// The version it is a milestone towards, such as `0.9`.
+    #[serde(default)]
+    pub version: Option<String>,
+    pub why: String,
+}
+
+/// What the owner picked from a proposal, written to the project's files.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SetupChoice {
+    /// The checks to keep, each a program with its arguments.
+    #[serde(default)]
+    pub verify: Vec<Vec<String>>,
+    /// The capture command, if it is kept; empty for none.
+    #[serde(default)]
+    pub capture: Vec<String>,
+    #[serde(default)]
+    pub release: Vec<Vec<String>>,
+    /// The globs the owner is asked about.
+    #[serde(default)]
+    pub protected: Vec<String>,
+    #[serde(default)]
+    pub daily_usd: Option<f64>,
+    /// The lead plans its first goal at once.
+    pub plan_first: bool,
+}
+
+/// What a project's conversation holds, for the office to show without the
+/// whole thread.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TalkSummary {
+    /// The latest message, if there is one.
+    #[serde(default)]
+    pub last: Option<TalkMessage>,
+    /// The lead is working on a reply.
+    pub thinking: bool,
+    /// How many messages the conversation has.
+    pub count: u64,
+}
+
+/// A lead's few words on how its project is doing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Standup {
+    /// When it was written, in epoch milliseconds.
+    pub at: u64,
+    pub text: String,
+}
+
+/// The checks the studio ran on a goal's branch once all its tasks were done.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShipCheck {
+    pub state: CheckState,
+    /// What the checks came to in a line, such as "112 pass" or the check
+    /// that failed.
+    pub summary: String,
+    /// When the checks last changed state, in epoch milliseconds: when they
+    /// began, or when they ended.
+    pub at: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckState {
+    #[default]
+    Running,
+    Passed,
+    Failed,
 }
 
 /// A project as the office shows it beyond its tickets: who leads it and
@@ -592,6 +980,25 @@ pub struct OfficeView {
     /// Every project in `studio.toml` order, with its lead and releases.
     #[serde(default)]
     pub projects: Vec<ProjectView>,
+    /// Each project's conversation with its lead at a glance, by project
+    /// name; a project nobody has talked about is left out.
+    #[serde(default)]
+    pub talk: BTreeMap<String, TalkSummary>,
+    /// A line on what each finished task came to (done, ready or shipped),
+    /// by ticket id: the first sentence of its agent's last words.
+    #[serde(default)]
+    pub results: BTreeMap<String, String>,
+    /// Each project's latest standup from its lead, by project name.
+    #[serde(default)]
+    pub standups: BTreeMap<String, Standup>,
+    /// The checks of each goal whose tasks are all done, by the goal's plan
+    /// ticket.
+    #[serde(default)]
+    pub ship_checks: BTreeMap<String, ShipCheck>,
+    /// How each project's setup through its lead stands, by project name; a
+    /// project that was never set up that way is left out.
+    #[serde(default)]
+    pub setups: BTreeMap<String, SetupView>,
     /// When this was read, in epoch milliseconds.
     pub now: u64,
 }
@@ -716,6 +1123,10 @@ pub struct AskView {
     /// When it was asked, in epoch milliseconds; 0 from an older studiod.
     #[serde(default)]
     pub at_ms: u64,
+    /// What it asks the owner, as a plain question such as "Send the launch
+    /// email?"; empty when none was written.
+    #[serde(default)]
+    pub title: String,
 }
 
 /// Where the daemon listens: `<data>/studiod.sock`, or a short path in `/tmp`
@@ -744,4 +1155,359 @@ pub fn call(socket: &Path, request: &Request) -> std::io::Result<Response> {
     let mut reply = String::new();
     BufReader::new(stream).read_line(&mut reply)?;
     serde_json::from_str(&reply).map_err(std::io::Error::other)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use serde_json::json;
+
+    fn plan() -> TalkCard {
+        TalkCard::Plan {
+            goal: "SHOP-9".into(),
+            title: "Checkout flow".into(),
+            version: Some("0.5".into()),
+            tasks: vec![PlanTask {
+                title: "Add a cart drawer".into(),
+                hire: Some("dev".into()),
+            }],
+        }
+    }
+
+    /// What `OfficeView` needs of an older studiod's reply.
+    fn office_parts() -> Value {
+        json!({
+            "status": {}, "tickets": [], "asks": [], "events": [], "spend": {},
+            "merged": [], "sizes": {}, "today": {}, "judges": {}, "now": 5,
+        })
+    }
+
+    #[test]
+    fn a_message_says_who_it_is_from_and_what_it_shows() {
+        let message = TalkMessage {
+            id: 3,
+            at: 1_700_000_000_000,
+            from: TalkFrom::Lead {
+                hire: "nora".into(),
+            },
+            text: "Planned it.".into(),
+            card: Some(plan()),
+        };
+        let wire = json!({
+            "id": 3, "at": 1_700_000_000_000_u64,
+            "from": {"who": "lead", "hire": "nora"},
+            "text": "Planned it.",
+            "card": {
+                "type": "plan", "goal": "SHOP-9", "title": "Checkout flow", "version": "0.5",
+                "tasks": [{"title": "Add a cart drawer", "hire": "dev"}],
+            },
+        });
+        assert_eq!(serde_json::to_value(&message).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<TalkMessage>(wire).unwrap(),
+            message
+        );
+        // The owner and the studio have no hire to name.
+        let from = |from: TalkFrom| serde_json::to_value(from).unwrap();
+        assert_eq!(from(TalkFrom::Owner), json!({"who": "owner"}));
+        assert_eq!(from(TalkFrom::Studio), json!({"who": "studio"}));
+    }
+
+    #[test]
+    fn a_card_may_leave_out_what_is_optional() {
+        let card = |value| serde_json::from_value::<TalkCard>(value).unwrap();
+        assert_eq!(
+            card(json!({"type": "plan", "goal": "G-1", "title": "Saves"})),
+            TalkCard::Plan {
+                goal: "G-1".into(),
+                title: "Saves".into(),
+                version: None,
+                tasks: Vec::new(),
+            }
+        );
+        assert_eq!(
+            card(json!({"type": "setup", "project": "garden"})),
+            TalkCard::Setup {
+                project: "garden".into()
+            }
+        );
+        let acted = json!({
+            "type": "acted", "task": "G-2", "title": "Menu art",
+            "action": "sent back", "note": "Too many colours.",
+        });
+        assert!(matches!(card(acted), TalkCard::Acted { action, .. } if action == "sent back"));
+        let message: TalkMessage = serde_json::from_value(
+            json!({"id": 1, "at": 2, "from": {"who": "owner"}, "text": "Hi"}),
+        )
+        .unwrap();
+        assert_eq!(message.card, None);
+    }
+
+    #[test]
+    fn the_new_requests_are_named_by_cmd() {
+        let wire = |request: Request| serde_json::to_value(request).unwrap();
+        assert_eq!(
+            wire(Request::Talk {
+                project: "shop".into(),
+                text: "Hi".into()
+            }),
+            json!({"cmd": "talk", "project": "shop", "text": "Hi"})
+        );
+        assert_eq!(
+            wire(Request::Conversation {
+                project: "shop".into(),
+                after: Some(7)
+            }),
+            json!({"cmd": "conversation", "project": "shop", "after": 7})
+        );
+        assert_eq!(
+            wire(Request::Tell {
+                task: "SHOP-3".into(),
+                text: "Use three colours.".into()
+            }),
+            json!({"cmd": "tell", "task": "SHOP-3", "text": "Use three colours."})
+        );
+        assert_eq!(
+            wire(Request::SetupStatus {
+                project: "garden".into()
+            }),
+            json!({"cmd": "setup_status", "project": "garden"})
+        );
+        // What a lead does to a task of its project names the act by `do`.
+        let acts = |act| Request::LeadActs {
+            project: "shop".into(),
+            task: "SHOP-3".into(),
+            act,
+        };
+        assert_eq!(
+            wire(acts(LeadAct::Pause)),
+            json!({"cmd": "lead_acts", "project": "shop", "task": "SHOP-3", "act": {"do": "pause"}})
+        );
+        assert_eq!(
+            wire(acts(LeadAct::SendBack {
+                note: "Fewer colours.".into()
+            })),
+            json!({
+                "cmd": "lead_acts", "project": "shop", "task": "SHOP-3",
+                "act": {"do": "send_back", "note": "Fewer colours."},
+            })
+        );
+        let read: Request = serde_json::from_value(json!({
+            "cmd": "lead_acts", "project": "shop", "task": "SHOP-3",
+            "act": {"do": "tell", "text": "Use three."},
+        }))
+        .unwrap();
+        assert_eq!(
+            read,
+            acts(LeadAct::Tell {
+                text: "Use three.".into()
+            })
+        );
+    }
+
+    #[test]
+    fn what_a_request_may_leave_out_is_none_or_empty() {
+        let request = |value| serde_json::from_value::<Request>(value).unwrap();
+        assert_eq!(
+            request(json!({"cmd": "conversation", "project": "shop"})),
+            Request::Conversation {
+                project: "shop".into(),
+                after: None
+            }
+        );
+        assert_eq!(
+            request(json!({"cmd": "setup_project", "path": "~/games/garden"})),
+            Request::SetupProject {
+                path: "~/games/garden".into(),
+                name: None,
+                lead: None,
+                new_lead: None,
+            }
+        );
+        assert_eq!(
+            request(json!({
+                "cmd": "setup_project", "path": "~/games/garden",
+                "new_lead": {"name": "Mira", "model": "opus"},
+            })),
+            Request::SetupProject {
+                path: "~/games/garden".into(),
+                name: None,
+                lead: None,
+                new_lead: Some(NewLead {
+                    name: "Mira".into(),
+                    model: "opus".into()
+                }),
+            }
+        );
+        assert_eq!(
+            request(json!({
+                "cmd": "accept_setup", "project": "garden",
+                "choice": {"plan_first": true, "verify": [["./test.sh"]]},
+            })),
+            Request::AcceptSetup {
+                project: "garden".into(),
+                choice: SetupChoice {
+                    verify: vec![vec!["./test.sh".into()]],
+                    plan_first: true,
+                    ..SetupChoice::default()
+                },
+            }
+        );
+        // The lead's proposal needs little to be read: the rest has defaults.
+        assert_eq!(
+            request(json!({
+                "cmd": "propose_setup", "project": "garden",
+                "proposal": {"verify": [{"command": ["./test.sh"], "why": "Tests."}]},
+            })),
+            Request::ProposeSetup {
+                project: "garden".into(),
+                proposal: SetupProposal {
+                    verify: vec![ProposedCommand {
+                        command: vec!["./test.sh".into()],
+                        why: "Tests.".into(),
+                        tried: None,
+                    }],
+                    ..SetupProposal::default()
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn a_setup_goes_from_reading_to_accepted() {
+        let state = |state: SetupState| serde_json::to_value(state).unwrap();
+        assert_eq!(state(SetupState::Reading), json!("reading"));
+        assert_eq!(state(SetupState::Checking), json!("checking"));
+        assert_eq!(state(SetupState::Ready), json!("ready"));
+        assert_eq!(state(SetupState::Accepted), json!("accepted"));
+        assert_eq!(state(SetupState::Failed), json!("failed"));
+        // A setup starts by reading, with nothing proposed yet.
+        let view = SetupView::default();
+        assert_eq!(view.state, SetupState::Reading);
+        assert!(view.proposal.is_none() && view.lead.is_none() && view.error.is_none());
+
+        let proposal = SetupProposal {
+            summary: "A small game with tests.".into(),
+            verify: vec![ProposedCommand {
+                command: vec!["./test.sh".into()],
+                why: "It runs the tests.".into(),
+                tried: Some(CommandRun {
+                    passed: true,
+                    seconds: 12,
+                    summary: "112 pass".into(),
+                    output_tail: "ok".into(),
+                }),
+            }],
+            release: vec![vec!["./package.sh".into()]],
+            release_source: "your CI".into(),
+            protected: vec![ProtectedPath {
+                glob: "saves/**".into(),
+                why: "Players' data.".into(),
+            }],
+            daily_usd: Some(10.0),
+            first_goal: Some(FirstGoal {
+                text: "Fix the three crashes".into(),
+                version: Some("0.9".into()),
+                why: "They are in TODO.md.".into(),
+            }),
+            ..SetupProposal::default()
+        };
+        let view = SetupView {
+            project: "garden".into(),
+            lead: Some("mira".into()),
+            state: SetupState::Ready,
+            proposal: Some(proposal),
+            error: None,
+        };
+        let wire = serde_json::to_value(&view).unwrap();
+        assert_eq!(wire["state"], "ready");
+        assert_eq!(
+            wire["proposal"]["verify"][0]["tried"]["summary"],
+            "112 pass"
+        );
+        assert_eq!(wire["proposal"]["capture"], json!(null));
+        assert_eq!(serde_json::from_value::<SetupView>(wire).unwrap(), view);
+    }
+
+    #[test]
+    fn a_reply_from_an_older_studiod_still_reads() {
+        let office: OfficeView = serde_json::from_value(office_parts()).unwrap();
+        assert!(office.talk.is_empty() && office.results.is_empty());
+        assert!(office.standups.is_empty() && office.ship_checks.is_empty());
+        assert!(office.setups.is_empty());
+        let ask: AskView = serde_json::from_value(json!({
+            "id": "a1", "ticket": "T-1", "hire": "dev", "kind": "question",
+            "tool": "AskUserQuestion", "input": {},
+        }))
+        .unwrap();
+        assert_eq!(ask.title, "");
+    }
+
+    #[test]
+    fn the_office_carries_what_the_team_pages_show() {
+        let mut parts = office_parts();
+        parts.as_object_mut().unwrap().extend(
+            json!({
+                "talk": {"shop": {"last": null, "thinking": true, "count": 4}},
+                "results": {"SHOP-2": "Added the cart."},
+                "standups": {"shop": {"at": 9, "text": "2 tasks done."}},
+                "ship_checks": {"SHOP-1": {"state": "failed", "summary": "lint failed", "at": 8}},
+                "setups": {"garden": {"project": "garden", "state": "checking"}},
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        let office: OfficeView = serde_json::from_value(parts).unwrap();
+        assert_eq!(
+            office.talk["shop"],
+            TalkSummary {
+                last: None,
+                thinking: true,
+                count: 4
+            }
+        );
+        assert_eq!(office.results["SHOP-2"], "Added the cart.");
+        assert_eq!(office.standups["shop"].text, "2 tasks done.");
+        assert_eq!(office.ship_checks["SHOP-1"].state, CheckState::Failed);
+        assert_eq!(office.setups["garden"].state, SetupState::Checking);
+    }
+
+    #[test]
+    fn a_new_lead_is_a_hire_on_its_model_with_the_tool_to_plan_goals() {
+        let new = |name: &str, model: &str| NewLead {
+            name: name.into(),
+            model: model.into(),
+        };
+        // The id is the name in lowercase, a dash for what is not a letter or a
+        // digit; the file quotes what the owner typed.
+        let (id, text) = new(" Mira  Lee ", "opus").hire_file().unwrap();
+        assert_eq!(id, "mira--lee");
+        assert!(
+            text.starts_with(
+                "---\nname: \"Mira  Lee\"\nrole: lead\nruntime: claude-code\nmodel: \"opus\"\ntools: [file_ticket]\n---\nYou are the lead of a project"
+            ),
+            "{text}"
+        );
+        studio_config::check_hire(&id, &text).unwrap();
+        // A name that could end the quote and add a line of its own stays a name.
+        let (_, tricky) = new("Mira\": x", "opus").hire_file().unwrap();
+        assert!(
+            tricky.contains("name: \"Mira\\\": x\"\nrole: lead\n"),
+            "{tricky}"
+        );
+        // What no hire can be made of is said in plain words.
+        for (name, model, said) in [
+            ("", "opus", "short name"),
+            ("   ", "opus", "short name"),
+            ("two\nlines", "opus", "short name"),
+            (&"x".repeat(41), "opus", "short name"),
+            ("日本", "opus", "letters or digits"),
+            ("Mira", " ", "model"),
+        ] {
+            let why = new(name, model).hire_file().unwrap_err();
+            assert!(why.contains(said), "{name:?}: {why}");
+        }
+    }
 }

@@ -1,13 +1,22 @@
 # Web UI design
 
-`prototype.html` is the reference for every page except the Office: open it in
-a browser (sidebar links switch pages; the moon button switches theme) or render
-it with Quick Look (below). Like the app, it has no script of its own: links and
-`:target` pick the page and the panel, popovers open the dialogs, and a checkbox
-flips the theme. Build the app to look and behave like it. Its CSS is the design
+The studio is a company, and the web UI is how the owner runs it: a team
+sidebar, with one lead for each project, and a page for each thing the owner
+does. The reference for the team pages (HQ, a lead's conversation, Look closer,
+the office, New project and the studio settings) is the gallery's pictures
+(`examples/gallery/`, below). The reference for the task page, the hires page
+and the rules page is `prototype.html`: open it in a browser (sidebar links
+switch pages; the moon button switches theme) or render it with Quick Look.
+Like the app, it has no script of its own: links and `:target` pick the page,
+popovers open the dialogs, and a checkbox flips the theme. Its CSS is the design
 system: take the values, spacing and structure from it. Its data is sample data;
-the app shows only real data from studiod. The Office is the exception: its
-reference is the gallery's office screenshots (`examples/gallery/`, below).
+the app shows only real data from studiod. Its office page is not a reference:
+the team pages replaced it.
+
+When a page and its pictures disagree, fix the page; when the design changes on
+purpose, render the gallery again so the pictures stay true. The owner approved
+the mockups the team pages follow; the gallery is how they look with real
+studios.
 
 ## Look
 
@@ -22,157 +31,147 @@ can force either (below).
   `:root[data-theme="dark"]`) into `src/app.css` and expose them to Tailwind
   with `@theme inline`. Neutrals are Radix Slate, states are Radix Amber (needs
   you), Blue (running), Grass (done), Red (failed). Every text colour passes
-  4.5:1 on its background in both themes; keep it that way.
+  4.5:1 on its background in both themes; keep it that way. Each project has a
+  colour of its own, used for its lead's progress bar and its floor.
 - Type: IBM Plex Sans (one variable file, weights 400 to 600) and IBM Plex Mono
   400 and 500, from `vendor/fonts/` (SIL OFL 1.1, `OFL.txt`), served by the app
   and declared with `@font-face`, with system fallbacks. Body 14px/20px; tables
-  and secondary text 13px or 12.5px; labels 12px; page title 15px semibold in
-  the top bar; a ticket title 26px semibold with -0.02em tracking. Mono only for
-  ids, branches, paths, commands, models and code. Numbers use tabular figures.
+  and secondary text 13px or 12.5px; labels 12px. Mono only for ids, branches,
+  paths, commands, models and code. Numbers use tabular figures.
 - Icons: Lucide (ISC, `vendor/lucide/LICENSE`), 16px, stroke 1.75, from the
-  sprite in `vendor/lucide/icons.svg`, inlined once per page and used as
-  `<svg class="i"><use href="#i-NAME"/></svg>`. State glyphs (queued, needs
-  you, held, ready, landed, failed, cancelled) are the `s-*` symbols in the
-  prototype; running is the CSS conic "prog" ring with `--p` for the step.
-- Spacing: 4px grid; page padding 28px 32px; 28px between sections; rows 56px
-  for two lines, 44px for one; radius 7px buttons, 10px containers, 12px ask
-  cards.
+  sprite in `vendor/lucide/icons.svg`.
+- Faces: a hire is a small portrait in a circle (24, 30, 40 or 48px): background,
+  shirt, neck, head, hair, eyes and a smile, drawn as an inline SVG. Skin, hair
+  and the hair style come from the hire id, the same as the floor's figures
+  have them; the shirt is the role's colour, and a lead's is its project's. The
+  owner wears a dark jacket and a white collar.
+- Spacing: 4px grid; radius 7px buttons, 10px containers, 12px cards.
 
-## Shell
+## Words
 
-Sidebar (232px) on every page but the Office: the brand, then Office; a
-"Studio" label; Hires, Rules. At its foot: running and queued counts with a
-pulsing dot, today's spend of the daily limit with a meter (it leads to the
-office's Money tab), and the theme switch. The Office has no sidebar: it draws
-its own top bar (see Pages). Top bar (56px, sticky, translucent): title or
-breadcrumb, then page actions on the right, at most one primary button. Content in a
-centred column up to 1200px. Below 760px the sidebar becomes a top bar with the
-brand, running count and spend, and a horizontally scrolling nav that starts
-with Office; rails stack under the main column; nothing scrolls the page
-sideways at 390px. Leave out the prototype's "Prototype" and "Sample data"
-labels.
+Plain and short, from the owner's side. Say task (not ticket), done or added
+(not landed), ship (not merge) and the lead (not router, approver or producer).
+No ids in a sentence where a title reads better; an id may show small in
+metadata.
+
+## The frame
+
+Every team page sits in the same frame: the team sidebar (288px) beside the
+page's own main area.
+
+- The sidebar: the studio's name and a gear to the studio settings; **HQ** with
+  a count of what waits for the owner; **Your leads**, each with its face, name,
+  its project, its phase in a word (Building, Testing, "v1.2 waits for you",
+  Live v1.0, Setting up...), a thin bar in the project's colour and a yellow
+  count when something waits for the owner; **New project** ("Hire a lead for
+  it"); at the bottom a small live picture of the office floor, which links to
+  the office, and "Spent today $6.59 of $10" with a thin bar.
+- On a phone the sidebar stacks above the page (the leads in a row that
+  scrolls), the conversation's rail is hidden and the sheet is full width.
+  Nothing scrolls the page sideways at 390px.
+- Every team page keeps itself up to date from one stream; what the owner has
+  typed or opened stays as it is.
 
 ## Pages
 
-- **Office** (the home page, `/`): the company as one isometric floor on a
-  page of its own, with no sidebar. Its visual reference is the gallery's
-  office pictures (`examples/gallery/`, the `office-*.png` files at 1440px,
-  1024px and phone width, dark and light), not the prototype: when the page and
-  these pictures disagree, fix the page, and when the design changes on
-  purpose, render the gallery again so the pictures stay true. The owner
-  approved the mockup the floor follows; the gallery is how it looks with real
-  studios.
-  - The top bar: the brand, three figures (projects, releasing, need you; each
-    opens its tab), the money spent today (it leads to the Money tab), New
-    work (one form for a task or a goal) and the theme switch.
-  - The floor: an SVG drawn from the studio's real state, seen from one of four
-    corners (turn it with the two arrows or Q and E), with Fit, zoom and
-    "What's what" over it, and a line under it saying what each prop means. It
-    holds one team area per project (a rug in the project's colour, a desk for
-    the lead and four for the team, and one prop that shows the phase), the
-    owner's glass office, the checks lab, the review room, the lounge, and an
-    empty dashed area where the next project goes. Over each team area hangs a
-    sign.
-  - The prop shows the phase: a whiteboard when planning, desks with people
-    when building, a test bench when testing, a launch crate in a ring that
-    fills as the release goes, a plaque with the version when live, a pause
-    sign when the office is closed and the project has work open; nothing
-    when idle.
-  - The sign (a button that opens the project) has the project's colour and
-    name, its phase, the version and title of its milestone, a bar with
-    "1 of 3 tasks" (or "1 of 5 steps" for a release, "v1.2 waits for you", or
-    "Live · v1.0"), and the faces of who is on it. A bell with a count shows
-    when something in the project needs the owner, and opens For you. When a
-    project is picked, the other signs and areas fade. Narrow screens show a
-    smaller sign, and below 900px only the signs that need the owner.
-  - Every shared room is a control too: the owner's office (For you), the
-    lounge (who is free), the free seat (hire someone), the review room
-    (reviewers and critics), the checks lab (each project's checks) and the
-    empty area (add a project). They open their own panel (`elements/<key>`)
-    with a way back.
-  - The panel beside the floor (under it on a phone) has five tabs: For you,
-    Projects, Company, Money and Log. People appear by their name, with the id
-    only where a hire has no name.
-    - **For you**: everything that waits for the owner, across the projects
-      and grouped by project: a release waiting for the go-ahead (Approve,
-      Not yet), questions, calls to allow or deny, held work, work ready to
-      ship. What the leads answered by themselves today is counted apart.
-    - **Projects**: a card per project (phase, the steps Planning, Building,
-      Testing, Releasing and Live with the current one lit, its milestone and
-      who is on it), then History: milestones that are done and work that
-      finished more than a day ago, newest first, twenty at a time with "Show
-      more". Picking a card opens the project's page.
-    - **Company**: who reports to whom (the owner, each project's lead with its
-      team, then the lounge and the front desk), then desks (how many agents
-      work at once), open or closed (nothing new starts while closed),
-      house rules, trophies and hiring. Each person shows what they did today;
-      a lead's figures include the goals it planned and the calls and
-      assignments it decided, not the front desk's.
-    - **Money**: the last 24 hours, by project and by hire, 14 days, and limits.
-    - **Log**: what happened lately, newest first.
-
-    The old Team and Rules tabs are part of Company now.
-  - **A project's page** (in the panel, with "Back to the company"): the
-    project's name and phase, the steps with the current one lit, a line on
-    who leads and what is going on, the open milestone with its tasks in four
-    columns (To do, Doing, Checking, Done; four cards each, then a count), what
-    needs the owner in this project, the release (a form with a version to
-    start one; its checklist while it runs, with Approve and Cancel when it
-    waits for the owner; the last release), and the lead, who can be changed.
-    New work opens the form for this project.
-  - A task at a desk, a person and a goal open theirs: a task's panel follows
-    its state (the question with Allow and Deny, what the agent is doing, the
-    checks and review, changed files with Ship, a held task's reason with
-    Resume, Cancel); a person's says what they did and what they are on, with
-    a level from finished work; a goal's lists what it filed.
-  - Adding a project asks studiod what it would add, then shows the name, the
-    full folder, the branch and the checks, with "Add it" and Cancel; only
-    "Add it" adds anything.
-  - Links: `/?tab=money` opens a tab, `/?sel=projects/shop`,
-    `tickets/SHOP-3`, `hires/<id>`, `goals/<id>` or `elements/lounge` open a
-    panel. An unknown tab opens For you; an unknown thing shows the tabs.
-    `/board`, `/goals`, `/asks`, `/budget` and `/live` lead to the tabs that
-    took them over.
-  - Dark is the office at night, light the same office by day. The page, its
-    figures, signs and panel stay live. Below 900px the floor fills the width
-    and the panel follows it.
-- **Ticket**: breadcrumb; title, who filed it and from which goal; the detail
-  as Markdown; the ask card when there is one; Activity as one feed of studio
+- **HQ** (`/`): the date, "Good morning" (afternoon, evening: the machine's
+  clock) and a "3 need you" pill. One line for each lead: its face, name,
+  project, time and its standup in a sentence or two. Under a lead's line, the
+  cards that wait for the owner in that project: questions with Allow and Deny,
+  work ready to ship with Ship and Look closer, a release that waits, with
+  Publish and Not yet. Leads with something for the owner come first. A footer
+  line gives the day's totals: tasks done, sent back and spent. A project with
+  no lead has the day's facts for its words and, under them, a quiet row, "No
+  lead yet", with the link "Give {project} a lead" to its conversation.
+- **A conversation** (`/leads/{project}`): a header with the lead's face, name,
+  "Leads shop", the phase pill and the milestone's progress. The thread, newest
+  at the bottom: the lead's messages (face, name, time and short words) with
+  cards under them, and the owner's messages as right-aligned bubbles. Cards
+  come from stored messages (a plan, what the lead did, a setup) and from the
+  live state (questions that wait, work ready to ship, a release that waits,
+  today's numbers), merged by time. A composer at the bottom has quick chips
+  ("How's it going?", "What's next?", "Plan something new") and "Message Nora";
+  a lead that has not looked at the project, and has said nothing yet, also
+  gets a chip in blue, "Ask Nora to look at how shop runs", which has it read
+  the project and say how it runs, as New project does. While the lead works on
+  a reply, the thread says "Nora is replying...". The header has a small
+  **Change lead** menu: another lead, a new hire or no lead. A project without
+  a lead has a card in place of the composer: "{project} has no lead yet. A
+  lead plans the work, hands it out and answers the team's routine questions."
+  with two ways to give it one, **Hire a lead** (a name, suggested, on a strong
+  model) and **Pick one you have** (left out when no hire has the role lead);
+  the page turns into the conversation with the new lead as it is named. A rail
+  on the right, "In shop now", shows each person at work (face, name, what they
+  are doing and for how long, and a message button on a running agent), the
+  milestone with its tasks as ticks, and the project's spend today against its
+  cap.
+- **Look closer** (`?look={id}` on a conversation; the id is a goal's plan task
+  or a ready task): a sheet that slides over the conversation from the right
+  (600px, the rest dimmed). The work's name, project, task count and lines
+  added and removed, with a close button; the lead's sentence on it; three proof
+  tiles (the checks, with how many passed; the review; protected paths touched,
+  and that the owner allowed it); the tasks with their lines; the files, the
+  first one opened with its diff and the rest folded. The footer has **Ship to
+  main**, **Send back with a note** (opens a field), "Try it first" with the
+  command to switch to the branch and a copy button, and "Open in editor".
+- **The office** (`/office`): the company floor inside the same frame. Picking a
+  sign or a person floats a card for that project's lead (face, name, "Leads
+  shop · Building", a line, a count, **Talk to Nora** and "What's ready"). A hint
+  says "Click anyone to talk to them". `?pick=projects/shop` picks a project
+  as a click does, and `?turn=` turns the floor. The floor is drawn from the
+  studio's real state: a team area for each project, the owner's glass office,
+  the checks lab, the review room, the lounge and an empty dashed area for the
+  next project; over each team area hangs a sign with the phase, the milestone,
+  and who is on it. Dark is the office at night, light the same office by day.
+- **New project** (`/new`): a short form, the folder and the lead (a new hire
+  with a name the studio suggests, on a strong model, or one you already have).
+  Submitting opens the conversation, where the lead greets the owner and shows
+  **How {project} runs** as a card: the checks, each tried by the studio with its
+  result ("112 pass", "failed"), screenshots, release steps and where they were
+  found, "Ask you first" paths and the daily budget, with **Use these**,
+  **Change something** and **See the file**; then it offers a first milestone
+  (**Plan it**, **Not yet**). While the lead reads or the studio tries the
+  checks, the card says so; a setup that failed says why and has **Try again**.
+  The gallery shows the card in each of its states.
+- **Studio settings** (`/studio`): the money limits, the desks (how many agents
+  work at once), the hires with Hire someone, a link to the rules and open or
+  close the office.
+- **Task**: breadcrumb; title, who filed it and from which goal; the detail as
+  Markdown; the ask card when there is one; Activity as one feed of studio
   events, agent messages (Markdown), grouped tool calls with a one-line summary
   and per-call results, and asks. Right rail: status, hire and model, goal,
-  project, branch, try n of 3, spend of the ticket cap, time; progress steps
-  for this ticket's real stages (checks, each gate that applies, review, land);
+  project, branch, try n of 3, spend of the task's cap, time; progress steps
+  for this task's real stages (checks, each gate that applies, review, ship);
   changed files with +/-. Evidence and image pairs fit in the main column.
-  Finished tickets state the outcome and offer only actions that still apply.
-  Pause and Cancel live in the "more" menu.
-- **Hires**: the team as a table (hire with role, model and escalation,
-  effort, what it is on now, what it did today, spend today, Edit), then the
-  studio's own hires (approver, router) with what they did today.
+  Finished tasks state the outcome and offer only actions that still apply.
+- **Hires**: the team as a table (hire with role, model and escalation, effort,
+  what it is on now, what it did today, spend today, Edit), then the studio's own
+  hires (approver, router) with what they did today.
 - **Rules**: rules grouped by where they come from, each with kind and level;
   the selected rule's file in an editor beside the list (the first rule by
   default); Delete as a quiet button in the editor footer, with a confirmation.
+
+Addresses from older versions lead to the page that took them over: `/asks`,
+`/board` and `/goals` to HQ, `/budget` to the studio settings, and a link to a
+project to its lead's page.
 
 ## How, without our own JavaScript
 
 The app stays Rust + Topcoat + Datastar + Tailwind.
 
-- Menus and the New ticket / New goal forms: the HTML `popover` attribute and
-  `popovertarget` buttons, styled as the prototype's dialog; forms submit
-  through the existing endpoints.
-- Showing what adding a project would do: the check's answer goes into a
-  signal, and the panel swaps its form for a card that reads the signal.
+- Menus and forms: the HTML `popover` attribute and `popovertarget` buttons;
+  forms submit through the existing endpoints.
 - Theme: the switch is a small form that sets a `theme` cookie (`light`,
   `dark`, or none for the system); the server puts `data-theme` on `<html>`.
 - Grouped tool calls: `<details>`.
-- Picking on the office floor: a Datastar `$sel` signal; the panel comes from
-  `/office/panel` and the stream re-renders it with the floor.
-- Live data keeps flowing through the existing Datastar streams.
+- Picking on the office floor: a Datastar `$sel` signal; the floor and the
+  lead's card come from `/team/office/scene`.
+- Live data keeps flowing through the one stream of the team pages.
 
 ## Real data only
 
 Every number and label comes from studiod. Where the daemon doesn't have
-something a page needs (for example spend per day or per model, or counts of
-the approver's decisions), add it to the API with a test. If it can't be had
+something a page needs, add it to the API with a test. If it can't be had
 honestly, leave the element out; never show a made-up or placeholder value.
 
 What a person did today counts under the person who did it. A project's lead
@@ -184,12 +183,26 @@ field beside the note), and the activity feed reads only the note's words.
 ## Checking your work
 
 `cargo run -q -p studio-web --example gallery -- <dir>` renders every page from
-real studios in temporary homes, with scripted agents doing the work. In a
-sandbox it uses Quick Look, which lays pages out at 1024px;
-the gallery also writes 1440px and 390px (phone) versions. Compare them with
-the prototype rendered the same way. The Office has no prototype: its
-reference is the gallery's own `office-*.png` pictures (the floor with four
-projects, each phase, a release waiting, each panel tab, a project's page,
-the closed office, both themes, phone width). Check every one of them against
-the description under Pages, and look at them at 1440x900 in a browser too,
-since Quick Look draws a square page.
+real studios in temporary homes, with scripted agents doing the work. A lead's
+turns can't run there, so the shop's conversation and the leads' standups are
+written into the studio before it is served; every other card is the studio's
+own. It writes each page at 1024px, 1440px and 390px (phone), and some in the
+light theme. In a sandbox it uses Quick Look, which lays pages out in a square
+and shows animations still; look at the pages in a browser at 1440x900 too.
+
+The pictures to check, against the descriptions above:
+
+- `hq*`: HQ of a busy studio, an idle one, one with a release that waits, one
+  with a project that has no lead (`hq-no-lead`) and an empty one.
+- `lead-*`: a conversation for each phase of a project (the shop's has the
+  owner's messages, the lead's replies, a plan and an action as cards), and
+  one for a project that has no lead (`lead-no-lead`), with the card that
+  gives it one.
+- `look-task` and `look-goal`: Look closer on ready work and on a ready goal.
+- `office`, `office-shop` and `office-closed`: the floor, with the shop picked,
+  and with the office closed.
+- `new` and `new-first`: New project, with leads and without.
+- `setup-reading`, `setup-checking`, `setup-ready`, `setup-failed` and
+  `setup-accepted`: a project being set up, in each state.
+- `studio` and `studio-empty`: the studio settings.
+- `ticket-*`, `hires` and `rules*`: the task, hires and rules pages.

@@ -50,13 +50,6 @@ fn reply(request: &Request) -> Value {
                      {"id": "nora", "name": "Nora", "role": "lead", "model": "opus"},
                      {"id": "approver", "role": "approver", "model": "haiku"}],
         }),
-        Request::AddProject {
-            path, name, branch, ..
-        } => json!({
-            "name": name.clone().unwrap_or_else(|| "repo".into()), "path": path,
-            "branch": branch.clone().unwrap_or_else(|| "main".into()),
-            "checks": if path.ends_with("fresh") { json!(format!("{path}/.studio.toml")) } else { Value::Null },
-        }),
         _ => Value::Null,
     }
 }
@@ -496,12 +489,13 @@ async fn the_office_controls_refuse_posts_from_other_sites() {
         "/office/open",
         "/office/desks",
         "/office/limits",
-        "/office/projects",
         "/office/hires",
         "/office/releases/start",
         "/office/releases/approve",
         "/office/releases/cancel",
         "/office/projects/lead",
+        "/office/projects/lead/hire",
+        "/leads/shop/setup/start",
     ] {
         let reply = web
             .http
@@ -522,108 +516,6 @@ async fn the_office_controls_refuse_posts_from_other_sites() {
             .unwrap();
         assert_eq!(no_cookie.status(), 401, "{path}");
     }
-    assert!(sent().is_empty());
-}
-
-#[tokio::test]
-async fn adding_a_project_from_the_office_sends_the_request() {
-    let _turn = TURN.lock().await;
-    let web = Web::start().await;
-
-    // The first submit only checks: studiod is asked what would be added and
-    // nothing is added. Empty name and branch go as absent.
-    let text = web
-        .post(
-            "/office/projects",
-            &[("path", "/code/fresh"), ("name", ""), ("branch", "  ")],
-        )
-        .await;
-    assert_eq!(
-        sent(),
-        [Request::AddProject {
-            path: "/code/fresh".into(),
-            name: None,
-            branch: None,
-            daily_usd: None,
-            pack: None,
-            check: true,
-        }]
-    );
-    // What it found goes to the panel to be confirmed: the name, the full
-    // folder, the branch and the checks.
-    assert!(text.contains("datastar-patch-signals"), "{text}");
-    for found in [
-        r#""name":"repo""#,
-        r#""path":"/code/fresh""#,
-        r#""branch":"main""#,
-        "/code/fresh/.studio.toml",
-    ] {
-        assert!(text.contains(found), "{found}: {text}");
-    }
-    assert!(!text.contains("Added"), "{text}");
-
-    // Add it sends the same form again, and only now is anything added.
-    let text = web
-        .post(
-            "/office/projects?add=yes",
-            &[("path", "/code/fresh"), ("name", ""), ("branch", "  ")],
-        )
-        .await;
-    assert!(
-        text.contains("Added repo. Its checks: /code/fresh/.studio.toml"),
-        "{text}"
-    );
-    assert_eq!(
-        sent(),
-        [Request::AddProject {
-            path: "/code/fresh".into(),
-            name: None,
-            branch: None,
-            daily_usd: None,
-            pack: None,
-            check: false,
-        }]
-    );
-
-    // Typed fields go as typed, in both steps; a project that had its own
-    // checks says only that it was added.
-    let typed = [
-        ("path", " /code/shop "),
-        ("name", "shop"),
-        ("branch", "develop"),
-    ];
-    let request = |check| Request::AddProject {
-        path: "/code/shop".into(),
-        name: Some("shop".into()),
-        branch: Some("develop".into()),
-        daily_usd: None,
-        pack: None,
-        check,
-    };
-    let text = web.post("/office/projects", &typed).await;
-    assert!(text.contains("It already has its own checks."), "{text}");
-    assert_eq!(sent(), [request(true)]);
-    let text = web.post("/office/projects?add=yes", &typed).await;
-    assert!(text.contains("Added shop."), "{text}");
-    assert!(!text.contains("Its checks"), "{text}");
-    assert_eq!(sent(), [request(false)]);
-
-    // No folder: told so, nothing sent.
-    let text = web
-        .post("/office/projects", &[("path", " "), ("name", "x")])
-        .await;
-    assert!(
-        text.contains("Enter the folder of a git repository"),
-        "{text}"
-    );
-    assert!(sent().is_empty());
-    let text = web
-        .post("/office/projects?add=yes", &[("path", " "), ("name", "x")])
-        .await;
-    assert!(
-        text.contains("Enter the folder of a git repository"),
-        "{text}"
-    );
     assert!(sent().is_empty());
 }
 

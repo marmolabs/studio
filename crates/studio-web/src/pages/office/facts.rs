@@ -1,10 +1,9 @@
-//! The office's rules, written once: what needs the owner, how a ticket's
-//! state reads in words and colour, which colour a project has, which phase a
-//! project is in, and what counts as shipped or at work. The top bar, the
-//! floor and the panel all ask here, so they cannot tell different stories.
+//! The office's rules, written once: what needs the owner, which colour a
+//! project has, which phase a project is in, and what counts as shipped or at
+//! work. The team pages and the floor all ask here, so they cannot tell
+//! different stories.
 
-use studio_core::event::Event as TicketEvent;
-use studio_core::ticket::{Ticket, TicketKind, TicketState};
+use studio_core::ticket::{Ticket, TicketKind};
 use studiod::api::{AskView, ReleaseState, ReleaseView};
 
 use super::Office;
@@ -16,26 +15,23 @@ use crate::ui;
 
 /// What waits for the owner: open asks, and tickets held for a reason that
 /// doesn't end on its own. A hold for budget or quota starts again by itself,
-/// so it waits apart.
+/// so it does not count.
 pub struct Needs<'a> {
     pub asks: &'a [AskView],
     /// Held for the owner.
     pub held: Vec<&'a Ticket>,
-    /// Held until money or the provider is back.
-    pub on_hold: Vec<&'a Ticket>,
 }
 
 /// What needs the owner in `office`.
 pub fn needs_you(office: &Office) -> Needs<'_> {
-    let (held, on_hold) = office
+    let held = office
         .tickets
         .iter()
-        .filter(|t| t.state.kind() == "held")
-        .partition(|t| ui::needs_owner(&t.state));
+        .filter(|t| t.state.kind() == "held" && ui::needs_owner(&t.state))
+        .collect();
     Needs {
         asks: &office.asks,
         held,
-        on_hold,
     }
 }
 
@@ -61,87 +57,6 @@ impl Needs<'_> {
             .iter()
             .filter(|t| t.project.to_string() == project)
             .count()
-    }
-}
-
-// ------------------------------------------------------- state in words
-
-/// A ticket's state as the Projects tab words it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StateWords {
-    /// The tick's modifier class.
-    pub tick: &'static str,
-    /// The state in plain words.
-    pub word: &'static str,
-    /// The word's text colour, from the state's tone.
-    pub tone: &'static str,
-}
-
-/// How `state` reads on a task row. A hold that ends on its own reads "on
-/// hold"; one that waits for the owner reads "needs you", as asking does.
-pub fn state_words(state: &TicketState) -> StateWords {
-    let (tick, word) = match ui::shown(state) {
-        "landed" => ("done", "done"),
-        "failed" => ("bad", "failed"),
-        "cancelled" => ("held", "cancelled"),
-        "asking" | "held" => ("needs", "needs you"),
-        "on hold" => ("held", "on hold"),
-        "claimed" | "working" => ("now", "working"),
-        "checking" => ("now", "checking"),
-        "reviewing" => ("now", "in review"),
-        "ready" => ("ready", "ready to ship"),
-        _ => ("", "to do"),
-    };
-    StateWords {
-        tick,
-        word,
-        tone: text_tone(ui::look(ui::shown(state)).tone),
-    }
-}
-
-/// The text colour class of a tone (`ui::Look::tone`).
-fn text_tone(tone: &str) -> &'static str {
-    match tone {
-        "attn" => "text-attn-fg",
-        "run" => "text-run-fg",
-        "ok" => "text-ok-fg",
-        "bad" => "text-bad-fg",
-        _ => "text-fg-3",
-    }
-}
-
-/// The state an event leaves a ticket looking like, as `ui::look` takes it:
-/// for the glyph beside an event, and for the colour of its dot.
-pub fn event_state(event: &TicketEvent) -> &'static str {
-    match event {
-        TicketEvent::Created { .. } | TicketEvent::Retried | TicketEvent::Conflicted { .. } => {
-            "queued"
-        }
-        TicketEvent::Claimed | TicketEvent::RunStarted { .. } | TicketEvent::Resumed => "working",
-        TicketEvent::AskOpened { .. } => "asking",
-        TicketEvent::AskResolved { approved: true, .. }
-        | TicketEvent::ChecksPassed
-        | TicketEvent::ReviewPassed => "ready",
-        TicketEvent::AskResolved { .. }
-        | TicketEvent::ChecksFailed { .. }
-        | TicketEvent::ReviewFailed { .. }
-        | TicketEvent::Failed { .. }
-        | TicketEvent::ChangesRequested { .. } => "failed",
-        TicketEvent::ChecksStarted => "checking",
-        TicketEvent::Held { .. } => "on hold",
-        TicketEvent::Landed => "landed",
-        TicketEvent::Cancelled => "cancelled",
-    }
-}
-
-/// The `.dot` colour of a state: `run`, `ok`, `needs`, `bad` or `held`.
-pub fn dot(state: &str) -> &'static str {
-    match ui::look(state).tone {
-        "run" => "run",
-        "ok" => "ok",
-        "attn" => "needs",
-        "bad" => "bad",
-        _ => "held",
     }
 }
 
@@ -336,68 +251,12 @@ mod tests {
             tickets.iter().map(|t| t.id.to_string()).collect()
         };
         assert_eq!(ids(&needs.held), ["S-3", "A-1"]);
-        assert_eq!(ids(&needs.on_hold), ["S-2"]);
         // Every ask counts, however many a ticket has.
         assert_eq!(needs.count(), 5);
         assert_eq!(needs.in_project(&office, "shop"), 3);
         assert_eq!(needs.in_project(&office, "api"), 2);
         assert_eq!(needs.in_project(&office, "other"), 0);
         assert_eq!(needs_you(&Office::default()).count(), 0);
-    }
-
-    #[test]
-    fn a_task_reads_by_its_state() {
-        let words = |state: Value| {
-            let w = state_words(&ticket("G-1", "game", state).state);
-            w.word
-        };
-        assert_eq!(words(json!("landed")), "done");
-        assert_eq!(
-            words(json!({"failed": {"class": "crash", "detail": ""}})),
-            "failed"
-        );
-        assert_eq!(words(json!("cancelled")), "cancelled");
-        assert_eq!(words(json!({"asking": {"ask": "a"}})), "needs you");
-        assert_eq!(words(json!({"held": {"reason": "paused"}})), "needs you");
-        assert_eq!(words(json!({"held": {"reason": "quota"}})), "on hold");
-        assert_eq!(words(json!("claimed")), "working");
-        assert_eq!(words(json!("working")), "working");
-        assert_eq!(words(json!("checking")), "checking");
-        assert_eq!(words(json!("reviewing")), "in review");
-        assert_eq!(words(json!("ready")), "ready to ship");
-        assert_eq!(words(json!("queued")), "to do");
-    }
-
-    #[test]
-    fn an_event_has_one_state_and_one_dot() {
-        let event = |value: Value| -> TicketEvent { serde_json::from_value(value).unwrap() };
-        let dot_of = |value: Value| dot(event_state(&event(value)));
-        assert_eq!(dot_of(json!({"type": "claimed"})), "run");
-        assert_eq!(dot_of(json!({"type": "checks_started"})), "run");
-        assert_eq!(dot_of(json!({"type": "ask_opened", "ask": "a"})), "needs");
-        assert_eq!(
-            dot_of(json!({"type": "ask_resolved", "ask": "a", "approved": true})),
-            "ok"
-        );
-        assert_eq!(
-            dot_of(json!({"type": "ask_resolved", "ask": "a", "approved": false})),
-            "bad"
-        );
-        assert_eq!(
-            dot_of(json!({"type": "checks_failed", "detail": ""})),
-            "bad"
-        );
-        assert_eq!(dot_of(json!({"type": "landed"})), "ok");
-        // A hold and a cancel are quiet whatever the reason.
-        assert_eq!(dot_of(json!({"type": "held", "reason": "paused"})), "held");
-        assert_eq!(dot_of(json!({"type": "held", "reason": "budget"})), "held");
-        assert_eq!(dot_of(json!({"type": "cancelled"})), "held");
-        assert_eq!(
-            dot_of(
-                json!({"type": "created", "id": "G-1", "project": "g", "title": "t", "goal": "", "hire": "dev", "base_branch": "main", "created_at": 0})
-            ),
-            "held"
-        );
     }
 
     #[test]

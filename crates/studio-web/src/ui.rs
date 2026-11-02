@@ -155,6 +155,45 @@ pub async fn notice(cx: &Cx, message: String, error: bool) -> topcoat::Result<Pa
         .mode(ElementPatchMode::Inner))
 }
 
+/// Empties the page's `#notice` slot: the reply to an action whose result the
+/// page shows by itself, such as a message that turns up in its thread.
+pub fn clear_notice() -> PatchElements {
+    PatchElements::new("")
+        .selector("#notice")
+        .mode(ElementPatchMode::Inner)
+}
+
+/// What a lead wrote, in pieces: its plain words and, set apart (`true`),
+/// what it put between backticks, a command or a file. Words whose backticks
+/// do not pair up are left as they were written.
+fn pieces(text: &str) -> Vec<(bool, String)> {
+    let parts: Vec<&str> = text.split('`').collect();
+    if parts.len().is_multiple_of(2) {
+        return vec![(false, text.to_string())];
+    }
+    parts
+        .into_iter()
+        .enumerate()
+        .filter(|(_, part)| !part.is_empty())
+        .map(|(at, part)| (at % 2 == 1, part.to_string()))
+        .collect()
+}
+
+/// A lead's words as the owner reads them: a command or a file it put between
+/// backticks is set as code, and nothing else about them changes.
+#[component]
+pub async fn prose(text: String) -> topcoat::Result<impl View> {
+    Ok(view! {
+        for (code, part) in pieces(&text) {
+            if code {
+                <code class="rounded bg-bg-4 px-1 font-mono text-[0.92em]">(part)</code>
+            } else {
+                (part)
+            }
+        }
+    })
+}
+
 /// A notice followed by a link to the new-rule editor, filled in with `draft`.
 pub async fn rule_notice(
     cx: &Cx,
@@ -254,72 +293,6 @@ pub fn shown(state: &TicketState) -> &'static str {
         "on hold"
     } else {
         state.kind()
-    }
-}
-
-/// What a queued ticket waits for, as studiod's scheduler sees it.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Wait {
-    /// The owner closed the office, so nothing new starts.
-    Closed,
-    /// Another ticket on its goal, which runs one at a time.
-    After(String),
-    /// Money for a run.
-    Budget,
-    /// A free run slot.
-    Slot,
-}
-
-impl Wait {
-    pub fn of(ticket: &Ticket, tickets: &[Ticket], status: &crate::client::Status) -> Wait {
-        let goal = |t: &Ticket| {
-            if t.goal.trim().is_empty() {
-                t.id.to_string()
-            } else {
-                t.goal.clone()
-            }
-        };
-        let same_goal = |t: &&Ticket| {
-            t.id != ticket.id && t.project == ticket.project && goal(t) == goal(ticket)
-        };
-        let busy =
-            |t: &&Ticket| !matches!(t.state.kind(), "queued" | "landed" | "failed" | "cancelled");
-        // Queued tickets start oldest first, which is the order studiod lists them in.
-        let here = tickets.iter().position(|t| t.id == ticket.id).unwrap_or(0);
-        let blocker = tickets.iter().filter(same_goal).find(busy).or_else(|| {
-            tickets[..here]
-                .iter()
-                .filter(same_goal)
-                .find(|t| t.state.kind() == "queued")
-        });
-        match blocker {
-            _ if status.closed => Wait::Closed,
-            Some(t) => Wait::After(t.id.to_string()),
-            None if status.out_of_budget => Wait::Budget,
-            None => Wait::Slot,
-        }
-    }
-
-    /// A few words, for a row.
-    pub fn short(&self) -> String {
-        match self {
-            Wait::Closed => "Office closed".into(),
-            Wait::After(id) => format!("After {id}"),
-            Wait::Budget => "Waiting for budget".into(),
-            Wait::Slot => "Waiting for a free desk".into(),
-        }
-    }
-
-    /// A sentence, for a panel.
-    pub fn sentence(&self) -> String {
-        match self {
-            Wait::Closed => "The office is closed: it starts when you reopen it.".into(),
-            Wait::After(id) => {
-                format!("Starts after {id} is done: tickets on a goal run one at a time.")
-            }
-            Wait::Budget => "Waits for budget: the studio can't fund another run today.".into(),
-            Wait::Slot => "Queued. It starts when a desk frees up.".into(),
-        }
     }
 }
 
@@ -676,12 +649,9 @@ pub async fn meter(
     })
 }
 
-/// The steps of a run, in the order studiod runs them: the reviewer reads
-/// the change before the critics of any gates that apply.
-pub const STEPS: [&str; 4] = ["Working", "Checks", "Review", "Critics"];
-
-/// Which of `STEPS` a running ticket is on. A reviewing ticket is on
-/// "Review" until a critic takes over, which only its run log says.
+/// Which step of a run a ticket is on: 0 working, 1 checks, 2 review. A
+/// reviewing ticket is on "Review" until a critic takes over, which only its
+/// run log says.
 pub fn run_step(state: &str) -> Option<usize> {
     match state {
         "claimed" | "working" => Some(0),
@@ -814,43 +784,34 @@ pub async fn top_actions(child: Child<'_>) -> topcoat::Result<impl View> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn words_between_backticks_are_set_apart_and_unpaired_ones_are_left_alone() {
+        assert_eq!(
+            pieces("Run `./test.sh` now."),
+            [
+                (false, "Run ".to_string()),
+                (true, "./test.sh".to_string()),
+                (false, " now.".to_string())
+            ]
+        );
+        assert_eq!(
+            pieces("Plain words."),
+            [(false, "Plain words.".to_string())]
+        );
+        // An odd backtick is not a pair: the words stay as written.
+        assert_eq!(
+            pieces("It's the `odd one"),
+            [(false, "It's the `odd one".to_string())]
+        );
+        assert!(pieces("``").is_empty());
+    }
+
     fn ticket(id: &str, state: serde_json::Value, goal: &str) -> Ticket {
         serde_json::from_value(serde_json::json!({
             "id": id, "project": "game", "title": id, "goal": goal, "hire": "dev",
             "state": state, "attempts": 0, "base_branch": "main", "created_at": 0,
         }))
         .unwrap()
-    }
-
-    #[test]
-    fn queued_tickets_wait_for_their_goal_a_slot_or_the_owner() {
-        use serde_json::json;
-        let a = ticket("G-1", json!("ready"), "Menus");
-        let b = ticket("G-2", json!("queued"), "Menus");
-        let c = ticket("G-3", json!("queued"), "");
-        let d = ticket("G-4", json!("queued"), "Saves");
-        let e = ticket("G-5", json!("queued"), "Saves");
-        let all = vec![a, b.clone(), c.clone(), d, e.clone()];
-        let status = |broke: bool, closed: bool| crate::client::Status {
-            out_of_budget: broke,
-            max_runs: 2,
-            closed,
-            ..Default::default()
-        };
-        let wait = |t: &Ticket, broke: bool| Wait::of(t, &all, &status(broke, false)).short();
-        assert_eq!(wait(&b, false), "After G-1");
-        assert_eq!(wait(&c, false), "Waiting for a free desk");
-        assert_eq!(wait(&c, true), "Waiting for budget");
-        assert_eq!(wait(&e, false), "After G-4");
-        // A closed office starts nothing, whatever else the ticket waits for.
-        assert_eq!(
-            Wait::of(&b, &all, &status(false, true)).short(),
-            "Office closed"
-        );
-        assert_eq!(
-            Wait::of(&c, &all, &status(false, true)).sentence(),
-            "The office is closed: it starts when you reopen it."
-        );
     }
 
     #[test]

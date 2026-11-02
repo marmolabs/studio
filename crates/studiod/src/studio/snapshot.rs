@@ -11,7 +11,7 @@ use crate::{now_ms, runview, today};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use studio_core::ticket::{Ticket, TicketKind};
 
 /// How long the run logs' notes stand: reading every fresh log is the
@@ -56,7 +56,7 @@ impl Studio {
         })
     }
 
-    pub(super) fn office(&self) -> Result<Response, StudioError> {
+    pub(super) fn office(self: &Arc<Self>) -> Result<Response, StudioError> {
         let now = now_ms();
         let since = now.saturating_sub(DAY_MS);
         let (tickets, day, spent_24h, mut spend) = {
@@ -112,6 +112,11 @@ impl Studio {
             judges,
             runs: run_views,
             unreviewed,
+            talk: self.talk_summaries(),
+            results: self.results(&tickets),
+            standups: self.standups(),
+            ship_checks: self.ship_checks(),
+            setups: self.setups(),
             now,
             tickets,
             projects: self.project_views(),

@@ -6,7 +6,6 @@ use studiod::api::{ReleaseState, ReleaseView};
 
 use super::floor::{self, Room};
 use super::model::{Doing, Hq, Launch, Milestone, Person, Role, Team, Worker};
-use super::panel::Extra;
 use super::{Office, facts, key};
 use crate::words;
 
@@ -14,7 +13,7 @@ const MINUTE_MS: u64 = 60_000;
 
 /// The company floor for `office`: a team for each project, in the order of
 /// `studio.toml`, and the people and rooms they share.
-pub fn hq(office: &Office, _extra: &Extra) -> Hq {
+pub fn hq(office: &Office) -> Hq {
     let projects = office.project_names();
     let seated = at_desks(office);
     let teams = projects
@@ -303,11 +302,12 @@ mod tests {
             input: json!({"command": "cargo test"}),
             reasons: Vec::new(),
             at_ms: 0,
+            title: String::new(),
         }
     }
 
     fn floor_of(office: &Office) -> Hq {
-        hq(office, &Extra::default())
+        hq(office)
     }
 
     #[test]

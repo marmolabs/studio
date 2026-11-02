@@ -639,7 +639,7 @@ impl Fig {
 }
 
 /// A skin and a hair tone, from a name.
-pub(super) fn looks(seed: &str) -> (char, char) {
+pub(crate) fn looks(seed: &str) -> (char, char) {
     let h = seed
         .bytes()
         .fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(u32::from(b)));

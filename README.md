@@ -13,44 +13,53 @@
 </p>
 
 studio is a local orchestrator for AI coding agents, run like a small company.
-You are the owner. Each project can have a lead: an agent that plans the
-project's goals, hands the tasks to its team and answers the routine questions,
-and passes up to you only what it can't decide. Under the lead are the makers.
-Each takes one ticket in its own git worktree, runs your checks, gets the
-change reviewed and leaves the result on a branch for you to merge. When a
-version is ready, the studio runs the project's release commands after your
-go-ahead and tags it. Nothing is pushed, and agents never see your credentials.
+You are the owner. Each project has a lead: an agent you talk to. The lead
+plans the project's goals, hands the tasks to its makers, checks what comes
+back and comes to you only for what it can't decide. Each maker takes one task
+in its own git worktree, runs your checks and leaves the result on a branch for
+you to ship. Nothing is pushed, and agents never see your credentials.
 
 > [!WARNING]
 > **Very early. Use with caution.** studio runs AI agents with real tools on
 > your repositories. Expect bugs and breaking changes between versions. Try it
 > on a repo you have backed up, keep its budget low, set a spending limit in
-> your Claude account too, and read what it lands before you merge.
+> your Claude account too, and read what it ships before you do.
 
-## The company floor
+<p align="center"><img src="docs/office.png" alt="HQ: the team sidebar with a lead for each project, and a standup from each lead with the questions and work that wait for you" width="900"></p>
 
-<p align="center"><img src="docs/office.png" alt="The company floor: a team area with a sign for each project, around the owner's office, the lounge, the review room and the checks lab, with the panel beside it" width="900"></p>
+## Talk to your leads
 
-The web UI opens on the company floor: one isometric floor with a team area for
-each project, around the owner's office, the lounge, and the review room and QA
-lab every project shares. Each team area has a sign that tells you the
-project's **phase** (Planning, Building, Testing, Releasing, Live, Paused while
-the studio is closed with work open, or Idle), its **milestone** and its
-version with a bar for the tasks done, **who is on it** (the lead first), and a
-**bell** when something in that project needs you.
+The web UI is a team sidebar and a page for each thing you do.
 
-Everything on the floor is a control that opens its panel beside it, and the
-bar on top counts projects, releases and what needs you. The panel's tabs are
-**For you** (what waits for you across the projects: a release that wants your
-go-ahead, questions, held work, work ready to ship, work that failed),
-**Projects** (a card for each, with History), **Company** (who reports to whom,
-desks, closing the studio, rules, trophies, hiring), **Money** and **Log**.
+- **HQ** is your morning round-up. Each lead has a line, its standup in a
+  sentence or two, and under it the cards that wait for you: a question, work
+  that is ready to ship, a release that wants your go-ahead. Leads with
+  something for you come first.
+- **A lead's page** is a conversation. Ask "How's it going?", or say "Plan the
+  checkout flow for 0.5" or "Tell Dev to close the drawer on outside clicks".
+  The lead reads the project, answers in plain words, and can start a goal,
+  send a task back, pause, resume or cancel one, and message a running agent.
+  Each thing it does shows as a card. A rail beside the thread shows who is at
+  work, the milestone and what the project spent today. From a terminal, use
+  `studio talk my-app "How's it going?"`; without text it shows the last
+  messages. A project that has no lead (HQ says so, with a link) has a card
+  in place of the message box: hire a lead for it, or pick one you have. Change
+  lead in the header picks another, hires a new one, or leaves it with none.
+- **Look closer** opens ready work over the conversation: a summary, the checks,
+  the review, whether protected paths were touched, the files with their
+  diffs and the branch to try. **Ship to main**, or **Send back with a note**.
+  A goal is checked as a whole before it ships.
+- **The office** is the company floor, with a card for each lead when you pick
+  a sign or a person. **Studio** has the money limits, the desks, the hires and
+  the rules.
 
-Pick a sign to open the **project's page**: its pipeline from Planning to
-Live, its milestone, the tasks in four columns (To do, Doing, Checking and
-Done), the release checklist with Start, Approve and Cancel, and its lead,
-whom you can change there. Each task has its own page with a live activity
-feed.
+Adding a project is a conversation too: **New project** takes a folder and
+hires a lead for it. The lead reads the repository and shows how the project
+would run, with the checks it proposes already tried in a fresh checkout. Use
+them, change something, or see the file it would write.
+
+A message to a lead costs about $0.10 to $0.25 on a strong model, is capped at
+$0.50, and counts against the project's daily limit.
 
 ## Install
 
@@ -74,53 +83,50 @@ cargo install --locked --git https://github.com/marmolabs/studio studio studiod 
 ## Quick start
 
 ```sh
-studio init                         # studio.toml, five hires, two rules
-studio project add ~/code/my-app    # register a git repo
-studio up                           # start the daemon and open the web UI
+studio init       # studio.toml, five hires, two rules
+studio up         # start the daemon and open the web UI
 ```
 
-Then give it work, from the web UI or a terminal:
+In the web UI, choose **New project**, give the folder of a git repository and
+a lead, and talk to the lead from there. Or from a terminal:
 
 ```sh
-studio lead my-app manager                       # optional: a lead for the project
-studio goal -p my-app --milestone 0.4 "Add a dark mode with a switch in settings"
-studio ticket -p my-app "Fix the login timeout"  # the lead or router picks the hire
-studio status                                    # what the studio is doing
+studio project add ~/code/my-app       # register a git repo
+studio lead my-app manager             # name its lead (a hire)
+studio talk my-app "Plan a dark mode with a switch in settings"
+studio status                          # what the studio is doing
 ```
 
 Answer questions with `studio asks`, `studio approve` and `studio deny`, land a
-ready ticket with `studio land <ticket>`, and bring a finished goal into your
-branch with `studio merge <ticket>`. To release, list the commands in the
-project's `.studio.toml` (`release = [["./publish.sh"]]`), run
+ready task with `studio land <task>` and ship a goal with `studio merge <task>`.
+To release, list the commands in the project's `.studio.toml`, run
 `studio release my-app 0.4`, then `studio release approve my-app`.
-[Getting started](docs/getting-started.md) walks through it, including how
-to write a lead's hire file.
+[Getting started](docs/getting-started.md) walks through it, including how to
+write a lead's hire file.
 
 ## How it works
 
-- **Leads** are hires you name for a project (in `studio.toml`, with
-  `studio lead`, or on the project's page). A lead plans the project's goals,
-  assigns its tickets and decides the routine tool calls its team asks about.
-  Without one, a producer, a router and an approver do those jobs.
-- **Goals** are planned into tickets that run one after another and land on one
-  goal branch. A goal with a version is a milestone, and its sign shows how far
-  along it is.
-- **Tickets** are one piece of work for one hire in one project, each in its
-  own worktree and branch. **Hires** are agent roles written as Markdown files:
-  a model, a prompt and optional limits.
+- **Leads** are hires you name for a project. A lead answers you, plans the
+  project's goals, assigns its tasks and decides the routine tool calls its
+  team asks about. Without one, a producer, a router and an approver do those
+  jobs, and there is nobody to talk to.
+- **Goals** are planned into **tasks** that run one after another on one goal
+  branch, each in its own worktree. **Hires** are agent roles written as
+  Markdown files: a model, a prompt and optional limits.
 - **Rules** are Markdown files too: protect paths, gate commands, lint
   changes, require checks or guide the agent. The lead (or the approver)
   decides the tool calls no rule covers, so only dangerous ones reach you.
 - **Checks and review.** The project's checks run, critics judge screenshots
   and design where a gate asks, then a reviewer on a different model reads the
-  diff. A ticket that fails goes back to its agent, up to three tries.
-- **Landing and merging.** A ticket that passes waits for you to land it on its
-  goal branch (or lands by itself with `auto_land`). You merge the goal branch
-  into your own branch when you like it.
+  diff. A task that fails goes back to its agent, up to three tries. When every
+  task of a goal is done, the checks run again on the goal's branch.
+- **Shipping.** A task that passes waits for you to ship it to its goal branch
+  (or ships by itself with `auto_land`), and you ship the goal into your own
+  branch when you like it.
 - **Releases.** The final checks run, the release waits for your go-ahead, the
   project's release commands run with `VERSION` set, and the commit is tagged
   `v<version>`. The tag is never pushed.
-- **Budgets** cap the studio, a project, a hire, a ticket and a run. **Packs**
+- **Budgets** cap the studio, a project, a hire, a task and a run. **Packs**
   bundle hires, rules and a project template to reuse.
 
 ## Docs
@@ -135,8 +141,7 @@ to write a lead's hire file.
 ## Status
 
 0.1.0, very early: expect bugs, rough edges and breaking changes. Claude Code
-is the only agent runtime for now. Linux release builds need glibc 2.34 or
-newer (Ubuntu 22.04, Debian 12, RHEL 9 or later).
+is the only agent runtime for now. Linux release builds need glibc 2.34 or newer.
 
 ## License
 

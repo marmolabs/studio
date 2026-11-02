@@ -4,12 +4,14 @@
 //!
 //! Writes `<name>.png` at 1024px wide, `<name>-1440.png` and `<name>-phone.png`
 //! (390px) for every page, plus a few in the light theme at 1024px and 1440px.
-//! Three studiods run in-process in temporary homes with git repositories as
+//! Several studiods run in-process in temporary homes with git repositories as
 //! projects and a scripted runtime for their hires (see `studios.rs`): a busy
-//! company of four projects, each with a lead and in a different phase,
-//! whose office is closed for the last picture; an idle one; and a new
-//! studio with nothing in it yet. Everything on the pages is what the real
-//! studiod answers, so every time reads "just now".
+//! company of four projects, each with a lead and in a different phase, with
+//! the shop's conversation and every lead's standup written in, whose office
+//! is closed for the last picture; an idle one; one with a release that waits;
+//! one whose project has no lead; a new studio with nothing in it yet; and one
+//! with a project in each state of being set up. Everything on the pages is
+//! what the real studiod answers, so every time reads "just now".
 //!
 //! Uses a Chromium browser (`$STUDIO_BROWSER`, Chrome, Brave, Chromium). When
 //! there is none, or it can't run (as in an agent's sandbox), macOS Quick Look
@@ -31,10 +33,7 @@ const TOKEN: &str = "0123abcd";
 /// Page widths, by the suffix of their file name.
 const WIDTHS: [(&str, u32); 3] = [("", 1024), ("-1440", 1440), ("-phone", 390)];
 /// Pages also shown in the light theme (Quick Look only).
-const LIGHT: [&str; 3] = ["hires", "ticket-asking", "office"];
-/// What the company floor draws as a control, by the key that selects it
-/// (`Element::ALL` in the app).
-const ELEMENTS: [&str; 6] = ["owner", "lounge", "hire", "review", "racks", "add-project"];
+const LIGHT: [&str; 4] = ["hq", "lead-shop", "ticket-asking", "hires"];
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -78,6 +77,8 @@ async fn run(out_dir: &Path) -> Result<()> {
     let idle = serve(&studios.idle).await?;
     let empty = serve(&studios.empty).await?;
     let waiting = serve(&studios.waiting).await?;
+    let leadless = serve(&studios.leadless).await?;
+    let starting = serve(&studios.starting).await?;
 
     // One profile for every page, so the login cookie carries over (cookies
     // ignore the port). Logging in also shows whether the browser works here.
@@ -105,8 +106,40 @@ async fn run(out_dir: &Path) -> Result<()> {
 
     // (name, server, path)
     let ticket = |id: &str| format!("/tickets/{id}");
-    let sel = |what: &str| format!("/?sel={what}");
+    let lead = |project: &str| format!("/leads/{project}");
+    let look = |project: &str, id: &str| format!("/leads/{project}?look={id}");
     let pages = [
+        // HQ: the morning round-up of a busy, an idle, a waiting and an empty
+        // studio.
+        ("hq", &busy, "/".to_string()),
+        ("hq-idle", &idle, "/".into()),
+        ("hq-release-waiting", &waiting, "/".into()),
+        ("hq-no-lead", &leadless, "/".into()),
+        ("hq-empty", &empty, "/".into()),
+        // A conversation for each phase a project can be in: the shop's is
+        // written out, and the others hold what the studio itself shows.
+        ("lead-shop", &busy, lead("shop")),
+        ("lead-editor", &busy, lead("editor")),
+        ("lead-admin", &busy, lead("admin")),
+        ("lead-docs", &busy, lead("docs")),
+        ("lead-idle", &idle, lead("editor")),
+        // A project nobody leads: the card that gives it a lead.
+        ("lead-no-lead", &leadless, lead("shop")),
+        // Look closer: work that is ready, and a goal that is ready.
+        ("look-task", &busy, look("shop", &ids.ready)),
+        ("look-goal", &busy, look("shop", &ids.ready_goal)),
+        ("office", &busy, "/office".into()),
+        ("office-shop", &busy, "/office?pick=projects/shop".into()),
+        ("new", &busy, "/new".into()),
+        ("new-first", &empty, "/new".into()),
+        // A project being set up, in each state of the setup.
+        ("setup-reading", &starting, lead("wiki")),
+        ("setup-checking", &starting, lead("ledger")),
+        ("setup-ready", &starting, lead("garden")),
+        ("setup-failed", &starting, lead("tracker")),
+        ("setup-accepted", &starting, lead("journal")),
+        ("studio", &busy, "/studio".into()),
+        ("studio-empty", &empty, "/studio".into()),
         ("ticket-working", &busy, ticket(&ids.working)),
         ("ticket-asking", &busy, ticket(&ids.asking)),
         ("ticket-ready", &busy, ticket(&ids.ready)),
@@ -121,78 +154,11 @@ async fn run(out_dir: &Path) -> Result<()> {
             "/rules?file=protect-payments&from=project/shop".into(),
         ),
         ("hire-edit", &busy, "/hires?file=dev".into()),
-        ("office", &busy, "/".into()),
-        ("office-tab-needs", &busy, "/?tab=needs".into()),
-        ("office-tab-projects", &busy, "/?tab=projects".into()),
-        ("office-tab-company", &busy, "/?tab=company".into()),
-        ("office-tab-money", &busy, "/?tab=money".into()),
-        ("office-tab-log", &busy, "/?tab=log".into()),
-        // One page for each phase a project can be in.
-        ("office-project-building", &busy, sel("projects/shop")),
-        ("office-project-testing", &busy, sel("projects/editor")),
-        ("office-project-releasing", &busy, sel("projects/admin")),
-        ("office-project-live", &busy, sel("projects/docs")),
-        ("office-project-idle", &idle, sel("projects/editor")),
-        // The release that waits for the owner, among what needs them.
-        ("office-release-waiting", &waiting, "/?tab=needs".into()),
-        (
-            "office-working",
-            &busy,
-            sel(&format!("tickets/{}", ids.working)),
-        ),
-        (
-            "office-asking",
-            &busy,
-            sel(&format!("tickets/{}", ids.asking)),
-        ),
-        (
-            "office-checks",
-            &busy,
-            sel(&format!("tickets/{}", ids.checks)),
-        ),
-        (
-            "office-review",
-            &busy,
-            sel(&format!("tickets/{}", ids.review)),
-        ),
-        (
-            "office-ready",
-            &busy,
-            sel(&format!("tickets/{}", ids.ready)),
-        ),
-        ("office-held", &busy, sel(&format!("tickets/{}", ids.held))),
-        (
-            "office-planner",
-            &busy,
-            sel(&format!("tickets/{}", ids.planner)),
-        ),
-        ("office-hire", &busy, sel("hires/approver")),
-        ("office-lead", &busy, sel("hires/shop-lead")),
-        ("office-goal", &busy, sel(&format!("goals/{}", ids.goal))),
-        ("office-idle", &idle, "/".into()),
-        ("office-turn-1", &busy, "/?turn=1".into()),
-        ("office-turn-2", &busy, "/?turn=2".into()),
-        ("office-turn-3", &busy, "/?turn=3".into()),
-        ("office-empty", &empty, "/?tab=company".into()),
-        ("office-empty-start", &empty, "/?tab=needs".into()),
-    ];
-    // One picture for each thing on the floor.
-    let elements = ELEMENTS.iter().map(|key| {
-        (
-            format!("office-el-{key}"),
-            &busy,
-            sel(&format!("elements/{key}")),
-        )
-    });
-    let pages = pages
-        .into_iter()
-        .map(|(name, base, path)| (name.to_string(), base, path))
-        .chain(elements)
         // The busy office, closed by its owner: the last picture, since
         // nothing reopens it.
-        .chain([("office-closed".to_string(), &busy, "/".to_string())]);
+        ("office-closed", &busy, "/office".into()),
+    ];
     for (name, base, path) in pages {
-        let name = name.as_str();
         if name == "office-closed" {
             let closed = studios
                 .busy

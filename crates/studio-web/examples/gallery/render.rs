@@ -88,7 +88,8 @@ pub enum Renderer {
 }
 
 /// Makes a page self-contained for Quick Look, which loads nothing: the
-/// stylesheet goes inline, with the fonts in it as data URLs.
+/// stylesheet goes inline, with the fonts in it as data URLs, and animations
+/// are switched off.
 pub struct Inliner {
     css: String,
 }
@@ -139,8 +140,10 @@ impl Inliner {
                 .find('>')
                 .ok_or("the stylesheet link isn't closed")?
             + 1;
+        // A still picture is taken as the animations begin, when the sheet that
+        // slides in is still out of sight: show every page as it ends up.
         let page = format!(
-            "{}<style>{}</style>{}",
+            "{}<style>{}</style><style>*,*::before,*::after{{animation:none!important}}</style>{}",
             &html[..start],
             self.css,
             &html[end..]

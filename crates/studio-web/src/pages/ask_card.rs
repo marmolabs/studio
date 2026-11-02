@@ -192,18 +192,9 @@ fn rule_link(ask: &AskView, project: &str) -> String {
     format!("/rules?new=1&name={}&text={}", encode(&name), encode(&text))
 }
 
-/// A command or path on one line, for a compact card.
-const CMD_LINE: &str = "truncate rounded-lg border border-line bg-bg-2 px-2.5 py-[7px] font-mono text-[12px] leading-5 text-fg";
-
-/// The command, file, change or input an ask is about. A compact card keeps
-/// a command or path to one line, and names the first question rather than
-/// asking it.
+/// The command, file, change or input an ask is about.
 #[component]
-async fn ask_target(
-    summary: Summary,
-    question: Option<String>,
-    compact: bool,
-) -> topcoat::Result<impl View> {
+async fn ask_target(summary: Summary) -> topcoat::Result<impl View> {
     let Summary {
         command,
         path,
@@ -214,37 +205,19 @@ async fn ask_target(
         ..
     } = summary;
     Ok(view! {
-        if compact {
-            if let Some(command) = command {
-                <div class=(CMD_LINE) title=(command.clone())>(command)</div>
-            } else if let Some((old, new)) = change {
-                <div class="overflow-hidden rounded-lg border border-line font-mono text-[12px] leading-[18px]">
-                    <div class="border-b border-line bg-bg-2 px-3 py-1.5 text-fg-2">(path.unwrap_or_default())</div>
-                    <div class="whitespace-pre-wrap break-all bg-bad-bg px-3 py-0.5 text-bad-fg">"- " (old)</div>
-                    <div class="whitespace-pre-wrap break-all bg-ok-bg px-3 py-0.5 text-ok-fg">"+ " (new)</div>
-                </div>
-            } else if let Some(path) = path {
-                <div class=(CMD_LINE) title=(path.clone())>(path)</div>
-            } else if let Some(text) = question {
-                <p class="text-[13px]">(text)</p>
-            } else if let Some(json) = json {
-                <div class=(format!("{CMD_LINE} max-h-40 overflow-auto"))>(json)</div>
-            }
-        } else {
-            if let Some(command) = command {
-                <pre class=(format!("max-h-48 {}", ui::CMD))>(command)</pre>
-            }
-            if let Some((old, new)) = change {
-                ask_change(path: path.unwrap_or_default(), old: old, new: new, more: more_edits)
-            } else if let Some(path) = path {
-                <pre class=(format!("max-h-48 {}", ui::CMD))>(path)</pre>
-            }
-            if outside {
-                <span>ui::pill(tone: "attn", label: "Outside the project")</span>
-            }
-            if let Some(json) = json {
-                <pre class=(format!("max-h-48 {}", ui::CMD))>(json)</pre>
-            }
+        if let Some(command) = command {
+            <pre class=(format!("max-h-48 {}", ui::CMD))>(command)</pre>
+        }
+        if let Some((old, new)) = change {
+            ask_change(path: path.unwrap_or_default(), old: old, new: new, more: more_edits)
+        } else if let Some(path) = path {
+            <pre class=(format!("max-h-48 {}", ui::CMD))>(path)</pre>
+        }
+        if outside {
+            <span>ui::pill(tone: "attn", label: "Outside the project")</span>
+        }
+        if let Some(json) = json {
+            <pre class=(format!("max-h-48 {}", ui::CMD))>(json)</pre>
         }
     })
 }
@@ -290,37 +263,14 @@ async fn said(hire: String, quote: String) -> topcoat::Result<impl View> {
 
 const NOTE_TOGGLE: &str = "inline-flex cursor-pointer select-none items-center gap-1.5 px-0.5 py-1 text-[13px] text-fg-3 hover:text-fg [&::-webkit-details-marker]:hidden";
 
-/// Reasons as sentences: "No rule allows it."
-fn sentences(reasons: &[String]) -> String {
-    reasons
-        .iter()
-        .map(|r| {
-            let r = r.trim();
-            let mut chars = r.chars();
-            let first = chars.next().map(|c| c.to_uppercase().collect::<String>());
-            let end = if r.ends_with(['.', '!', '?']) {
-                ""
-            } else {
-                "."
-            };
-            format!("{}{}{end}", first.unwrap_or_default(), chars.as_str())
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// One ask, with its answers: Allow, Deny, Always allow with the rule it
-/// would save, and a note for the agent. On its own ticket's page and in the
-/// ticket's panel it is whole, with `quote` what the agent said just before
-/// asking; `compact`, in a list of what needs the owner, it is small and has
-/// Details, which opens the ticket's panel. `now` is the clock the age is
-/// told by; 0 means the real one.
+/// would save, and a note for the agent, with `quote` what the agent said just
+/// before asking. `now` is the clock the age is told by; 0 means the real one.
 #[component]
 pub async fn ask_card(
     ask: AskView,
     project: String,
     #[default] quote: Option<String>,
-    #[default] compact: bool,
     #[default] now: u64,
     #[into]
     #[default]
@@ -338,7 +288,6 @@ pub async fn ask_card(
         })
         .collect::<Vec<_>>()
         .join(" · ");
-    let brief = sentences(&reasons);
     let quote = quote.or_else(|| summary.description.clone());
     let question = ask.kind == "question";
     let all_questions = if question {
@@ -346,7 +295,6 @@ pub async fn ask_card(
     } else {
         Vec::new()
     };
-    let first_question = all_questions.first().map(|(text, _)| text.clone());
     let always = always_prefix(&ask);
     let (rule_label, rule_href) = match ask.reasons.iter().find_map(|r| rule_named(r)) {
         Some(name) => (name.to_string(), format!("/rules?file={name}")),
@@ -356,107 +304,70 @@ pub async fn ask_card(
     let id = format!("ask-{}", ask.id);
     let clock = if now > 0 { now } else { ui::now_ms() };
     let age = opened(&ask).map(|at| super::timeline::relative(clock, at));
-    let ago = age.clone().unwrap_or_default();
-    let short = age.map(|age| age.trim_end_matches(" ago").to_string());
-    let details = super::office::select(&super::office::key("tickets", &ask.ticket));
+    let ago = age.unwrap_or_default();
     let save_title = always
         .as_ref()
         .map(|prefix| format!("Allow and save a rule for {prefix} in {project}"));
     let head = words::ask_head(&ask);
-    let title = words::ask_title(&ask);
     Ok(view! {
-        if compact {
-            <div id=(id) class="overflow-hidden rounded-[10px] border border-attn-line">
-                <div class="flex items-center gap-2 bg-attn-bg px-3 py-2 text-[12.5px] font-medium text-attn-fg">
-                    ui::icon(name: "shield-alert", small: true)
-                    <span class="font-mono">(ask.ticket.clone())</span>
-                    <span class="truncate">(title)</span>
-                    if let Some(short) = short {
-                        <span class="ml-auto shrink-0 font-normal">(short)</span>
+        <div id=(id) class="min-w-0">
+            ui::ask_frame(
+                head: view! { (head.clone()) },
+                ago: ago,
+                ask_target(summary: summary)
+                if let Some(quote) = quote {
+                    said(hire: by.clone(), quote: truncate(&quote, QUOTE_SHOWN))
+                }
+                if !question {
+                    <p class=(ui::WHY)>
+                        <span class="mr-1.5 inline-block align-[-2px]">ui::icon(name: "shield-check", small: true)</span>
+                        (why)
+                        <a href=(rule_href) class="ml-1.5 text-fg-2 underline decoration-line-3 underline-offset-3 hover:text-fg">(rule_label)</a>
+                    </p>
+                }
+                <form data-on:submit=(submit) class="flex flex-col gap-3.5">
+                    for (text, options) in all_questions {
+                        <fieldset class="flex flex-col gap-2">
+                            <legend class="mb-2 font-medium">(text.clone())</legend>
+                            <div class="flex flex-wrap gap-x-4 gap-y-2">
+                                for option in options {
+                                    <label class="flex min-h-8 items-center gap-2">
+                                        <input type="radio" name=(text.clone()) value=(option.clone()) class="accent-[var(--primary)]">
+                                        (option)
+                                    </label>
+                                }
+                            </div>
+                        </fieldset>
                     }
-                </div>
-                <form class="flex flex-col gap-2.5 px-3 pb-3 pt-2.5" data-on:submit=(submit)>
-                    ask_target(summary: summary, question: first_question, compact: true)
-                    if !question {
-                        <p class="text-[12.5px] leading-[18px] text-fg-3">(brief)</p>
-                        <input name=(MESSAGE) placeholder="Note for the agent (optional)" title="A deny with a note lets the agent carry on another way." class=(format!("{} text-[13px]", ui::INPUT))>
-                    }
-                    <div class="flex flex-wrap items-center gap-2">
-                        if !question {
-                            <button type="submit" name=(DECISION) value="approve" class=(ui::PRIMARY_SM)>"Allow"</button>
-                            <button type="submit" name=(DECISION) value="deny" class=(ui::BUTTON_SM)>"Deny"</button>
-                            if let Some(prefix) = always.clone() {
-                                <button type="submit" name=(DECISION) value=(ALWAYS) class=(ui::GHOST_SM) title=(save_title.clone().unwrap_or_default())>
-                                    "Always allow " <span class=(ui::CODE)>(prefix)</span>
-                                </button>
-                            }
-                        }
-                        <button type="button" class=(if question { ui::BUTTON_SM } else { ui::GHOST_SM }) data-on:click=(details)>
-                            (if question { "Answer" } else { "Details" })
+                    <div class=(ui::ASK_ACTIONS)>
+                        <button type="submit" name=(DECISION) value="approve" class=(ui::PRIMARY)>
+                            ui::icon(name: "check")
+                            if question { "Answer" } else { "Allow" }
                         </button>
+                        <button type="submit" name=(DECISION) value="deny" class=(ui::BUTTON)>
+                            ui::icon(name: "x")
+                            "Deny"
+                        </button>
+                        if let Some(prefix) = always {
+                            <button type="submit" name=(DECISION) value=(ALWAYS) class=(format!("{} max-[760px]:whitespace-normal", ui::GHOST)) title=(save_title.clone().unwrap_or_default())>
+                                <span>"Always allow " <span class=(ui::CODE)>(prefix)</span> " in " (project)</span>
+                            </button>
+                        }
+                        // On the right, or a row of their own on a phone or
+                        // while the note is open.
+                        <div class="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 has-[details[open]]:basis-full max-[760px]:ml-0 max-[760px]:basis-full">
+                            <details id=(format!("note-{}", ask.id)) data-preserve-attr="open" class="group [&[open]]:basis-full">
+                                <summary class=(format!("{NOTE_TOGGLE} group-open:flex group-open:w-fit"))>
+                                    ui::icon(name: "message-square-text", small: true)
+                                    "Add a note"
+                                </summary>
+                                <input name=(MESSAGE) aria-label="Note for the agent" placeholder="Sent with Deny: the agent reads it and carries on." class=(format!("mt-2 {}", ui::INPUT))>
+                            </details>
+                        </div>
                     </div>
                 </form>
-            </div>
-        } else {
-            <div id=(id) class="min-w-0">
-                ui::ask_frame(
-                    head: view! { (head.clone()) },
-                    ago: ago,
-                    ask_target(summary: summary, question: first_question, compact: false)
-                    if let Some(quote) = quote {
-                        said(hire: by.clone(), quote: truncate(&quote, QUOTE_SHOWN))
-                    }
-                    if !question {
-                        <p class=(ui::WHY)>
-                            <span class="mr-1.5 inline-block align-[-2px]">ui::icon(name: "shield-check", small: true)</span>
-                            (why)
-                            <a href=(rule_href) class="ml-1.5 text-fg-2 underline decoration-line-3 underline-offset-3 hover:text-fg">(rule_label)</a>
-                        </p>
-                    }
-                    <form data-on:submit=(submit) class="flex flex-col gap-3.5">
-                        for (text, options) in all_questions {
-                            <fieldset class="flex flex-col gap-2">
-                                <legend class="mb-2 font-medium">(text.clone())</legend>
-                                <div class="flex flex-wrap gap-x-4 gap-y-2">
-                                    for option in options {
-                                        <label class="flex min-h-8 items-center gap-2">
-                                            <input type="radio" name=(text.clone()) value=(option.clone()) class="accent-[var(--primary)]">
-                                            (option)
-                                        </label>
-                                    }
-                                </div>
-                            </fieldset>
-                        }
-                        <div class=(ui::ASK_ACTIONS)>
-                            <button type="submit" name=(DECISION) value="approve" class=(ui::PRIMARY)>
-                                ui::icon(name: "check")
-                                if question { "Answer" } else { "Allow" }
-                            </button>
-                            <button type="submit" name=(DECISION) value="deny" class=(ui::BUTTON)>
-                                ui::icon(name: "x")
-                                "Deny"
-                            </button>
-                            if let Some(prefix) = always {
-                                <button type="submit" name=(DECISION) value=(ALWAYS) class=(format!("{} max-[760px]:whitespace-normal", ui::GHOST)) title=(save_title.clone().unwrap_or_default())>
-                                    <span>"Always allow " <span class=(ui::CODE)>(prefix)</span> " in " (project)</span>
-                                </button>
-                            }
-                            // On the right, or a row of their own on a phone or
-                            // while the note is open.
-                            <div class="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 has-[details[open]]:basis-full max-[760px]:ml-0 max-[760px]:basis-full">
-                                <details id=(format!("note-{}", ask.id)) data-preserve-attr="open" class="group [&[open]]:basis-full">
-                                    <summary class=(format!("{NOTE_TOGGLE} group-open:flex group-open:w-fit"))>
-                                        ui::icon(name: "message-square-text", small: true)
-                                        "Add a note"
-                                    </summary>
-                                    <input name=(MESSAGE) aria-label="Note for the agent" placeholder="Sent with Deny: the agent reads it and carries on." class=(format!("mt-2 {}", ui::INPUT))>
-                                </details>
-                            </div>
-                        </div>
-                    </form>
-                )
-            </div>
-        }
+            )
+        </div>
     })
 }
 
@@ -475,6 +386,7 @@ mod tests {
             input,
             reasons: Vec::new(),
             at_ms: 0,
+            title: String::new(),
         }
     }
 
@@ -666,54 +578,22 @@ mod tests {
         );
     }
 
-    async fn render(ask: AskView, project: &str, compact: bool, now: u64) -> String {
+    async fn render(ask: AskView, project: &str, now: u64) -> String {
         let cx = topcoat::context::Cx::default();
         ui::html(
             &cx,
-            view! { cx => ask_card(ask: ask, project: project.to_string(), compact: compact, now: now) },
+            view! { cx => ask_card(ask: ask, project: project.to_string(), now: now) },
         )
         .await
         .unwrap()
     }
 
     #[tokio::test]
-    async fn the_compact_card_has_the_same_answers_in_a_small_form() {
+    async fn the_card_has_its_answers_the_age_and_the_note() {
         let mut a = ask("permission", "Bash", json!({"command": "cargo test"}));
         a.reasons = vec!["no rule <allows> it".into()];
         a.at_ms = 1_000_000;
-        let html = render(a.clone(), "game", true, 1_120_000).await;
-        // The same post, buttons and note as the whole card.
-        assert!(
-            html.contains("@post('/asks/ASK-1', {contentType: 'form'})"),
-            "{html}"
-        );
-        assert!(html.contains(r#"value="approve""#), "{html}");
-        assert!(html.contains(r#"value="deny""#), "{html}");
-        assert!(html.contains(r#"value="always""#), "{html}");
-        assert!(html.contains("Always allow"), "{html}");
-        assert!(
-            html.contains("Allow and save a rule for cargo test in game"),
-            "{html}"
-        );
-        assert!(html.contains(r#"name="message""#), "{html}");
-        // Details opens the ticket's panel; the age is short.
-        assert!(html.contains("Details"), "{html}");
-        assert!(html.contains("$sel = 'tickets/GAME-1'"), "{html}");
-        assert!(html.contains(">2m<"), "{html}");
-        assert!(html.contains("GAME-1"), "{html}");
-        // What the agent asked is escaped; the reason reads as a sentence.
-        assert!(
-            html.contains(r#"title="cargo test">cargo test</div>"#),
-            "{html}"
-        );
-        assert!(html.contains("No rule &lt;allows&gt; it."), "{html}");
-        assert!(!html.contains("<allows>"), "{html}");
-        // It is the small card: no frame, no note toggle.
-        assert!(!html.contains("Add a note"), "{html}");
-        assert!(!html.contains("Waiting for you"), "{html}");
-
-        // The whole card has the same actions and no Details.
-        let full = render(a, "game", false, 1_120_000).await;
+        let full = render(a, "game", 1_120_000).await;
         for same in [
             "@post('/asks/ASK-1', {contentType: 'form'})",
             r#"value="approve""#,
@@ -726,23 +606,20 @@ mod tests {
         ] {
             assert!(full.contains(same), "{same}: {full}");
         }
-        assert!(!full.contains("Details"), "{full}");
+        // What the agent asked is escaped; the reason is shown.
+        assert!(full.contains("no rule &lt;allows&gt; it"), "{full}");
+        assert!(!full.contains("<allows>"), "{full}");
     }
 
     #[tokio::test]
-    async fn a_question_is_answered_in_the_whole_card_and_opened_from_the_compact_one() {
+    async fn a_question_is_answered_in_the_card() {
         let q = ask(
             "question",
             "AskUserQuestion",
             json!([{"question": "Which <level>?", "options": ["One", "Two"]}]),
         );
-        let compact = render(q.clone(), "game", true, 0).await;
-        assert!(compact.contains("Which &lt;level&gt;?"), "{compact}");
-        assert!(compact.contains("Answer"), "{compact}");
-        assert!(compact.contains("$sel = 'tickets/GAME-1'"), "{compact}");
-        assert!(!compact.contains(r#"value="approve""#), "{compact}");
-        assert!(!compact.contains(r#"type="radio""#), "{compact}");
-        let full = render(q, "game", false, 0).await;
+        let full = render(q, "game", 0).await;
+        assert!(full.contains("Which &lt;level&gt;?"), "{full}");
         assert!(full.contains(r#"type="radio""#), "{full}");
         assert!(full.contains(r#"value="Two""#), "{full}");
         assert!(full.contains(r#"value="approve""#), "{full}");

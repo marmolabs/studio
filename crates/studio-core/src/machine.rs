@@ -93,7 +93,12 @@ pub fn apply(ticket: &Ticket, event: &Event) -> Result<Ticket, TransitionError> 
         },
 
         (TicketState::Ready, Event::Landed) => TicketState::Landed,
-        (TicketState::Ready, Event::ChangesRequested { detail }) => {
+        // Work still being checked or reviewed can be sent back too, as when
+        // the owner or a lead tells its agent something.
+        (
+            TicketState::Ready | TicketState::Checking | TicketState::Reviewing,
+            Event::ChangesRequested { detail },
+        ) => {
             let mut next = ticket.clone();
             next.state = TicketState::Queued;
             next.feedback = Some(detail.clone());
@@ -722,7 +727,9 @@ mod tests {
         assert_forbidden(checking.clone(), Event::Landed);
         assert_forbidden(checking.clone(), Event::Resumed);
         assert_forbidden(checking.clone(), Event::Retried);
-        assert_forbidden(checking, Event::ChangesRequested { detail: "x".into() });
+        // Sent back like a ready ticket, whose agent is told what to change.
+        let sent_back = apply(&checking, &Event::ChangesRequested { detail: "x".into() });
+        assert_eq!(sent_back.unwrap().state, TicketState::Queued);
 
         assert_forbidden(reviewing.clone(), Event::Claimed);
         assert_forbidden(reviewing.clone(), Event::RunStarted { run: rid() });
@@ -735,7 +742,8 @@ mod tests {
         assert_forbidden(reviewing.clone(), Event::Landed);
         assert_forbidden(reviewing.clone(), Event::Resumed);
         assert_forbidden(reviewing.clone(), Event::Retried);
-        assert_forbidden(reviewing, Event::ChangesRequested { detail: "x".into() });
+        let sent_back = apply(&reviewing, &Event::ChangesRequested { detail: "x".into() });
+        assert_eq!(sent_back.unwrap().state, TicketState::Queued);
 
         assert_forbidden(ready.clone(), Event::Claimed);
         assert_forbidden(ready.clone(), Event::RunStarted { run: rid() });

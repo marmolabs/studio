@@ -65,18 +65,34 @@ pub struct Studio {
     settings: Mutex<()>,
     /// The releases under way, one per project.
     releasing: releases::Releasing,
+    /// What the conversations with the leads keep in memory.
+    talk_state: talk::State,
+    /// What the standups keep in memory.
+    standup_state: standup::State,
+    /// What the setups through a lead keep in memory.
+    setup_state: setup::State,
+    /// What the checks of goals ready to ship keep in memory.
+    shipcheck_state: shipcheck::State,
     wake: Notify,
     notifier: crate::notify::Notifier,
 }
 
 mod asks;
+mod briefing;
 mod files;
 mod history;
 mod merging;
 mod releases;
 mod runs;
 mod settings;
+mod setup;
+mod shipcheck;
 mod snapshot;
+mod standup;
+mod talk;
+mod tell;
+#[cfg(test)]
+mod testing;
 mod tickets;
 
 pub(crate) use asks::Decision;
@@ -114,6 +130,21 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// `name` as the stem of a file's name: letters, digits, dashes and
+/// underscores stay, anything else (a slash, a dot) becomes an underscore, so
+/// a project's name can never lead out of the folder its files are kept in.
+pub(crate) fn file_stem(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// The config a studio without `studio.toml` runs with.
@@ -190,6 +221,10 @@ impl Studio {
             merged_tips: Mutex::new(HashMap::new()),
             settings: Mutex::new(()),
             releasing: releases::Releasing::default(),
+            talk_state: talk::State::default(),
+            standup_state: standup::State::default(),
+            setup_state: setup::State::default(),
+            shipcheck_state: shipcheck::State::default(),
             wake: Notify::new(),
             notifier,
         }))
@@ -714,6 +749,19 @@ impl Studio {
             Request::ApproveRelease { project } => self.approve_release(&project),
             Request::CancelRelease { project } => self.cancel_release(&project),
             Request::Releases { project } => self.list_releases(project.as_deref()),
+            Request::Talk { project, text } => self.talk(&project, &text),
+            Request::Conversation { project, after } => self.conversation(&project, after),
+            Request::Tell { task, text } => self.tell(&task, &text),
+            Request::LeadActs { project, task, act } => self.lead_acts(&project, &task, act),
+            Request::SetupProject {
+                path,
+                name,
+                lead,
+                new_lead,
+            } => self.setup_project(&path, name, lead, new_lead),
+            Request::SetupStatus { project } => self.setup_status(&project),
+            Request::AcceptSetup { project, choice } => self.accept_setup(&project, choice),
+            Request::ProposeSetup { project, proposal } => self.propose_setup(&project, proposal),
             Request::SpendByDay { days } => {
                 let store = lock(&self.store);
                 Ok(Response::ok(budget::by_day(&store, now_ms(), days)?))

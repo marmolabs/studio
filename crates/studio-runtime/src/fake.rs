@@ -2,11 +2,14 @@ use crate::Runtime;
 use crate::run::{
     Capabilities, Control, Cost, EnvReport, Outcome, Run, RunEvent, RunSpec, RuntimeError,
 };
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{Notify, mpsc};
 
 /// A scripted runtime for tests. It emits its events in order, waits for a
-/// control after every `Permission` or `Question`, and records what it got.
+/// control after every `Permission` or `Question`, and records what it got. A
+/// `Say` is recorded wherever the run is, and is never the control it waits
+/// for.
 #[derive(Clone, Default)]
 pub struct FakeRuntime {
     script: Vec<RunEvent>,
@@ -64,6 +67,17 @@ impl FakeRuntime {
         self.received.lock().map(|c| c.clone()).unwrap_or_default()
     }
 
+    /// What the runs were told with `Control::Say`, in order.
+    pub fn told(&self) -> Vec<String> {
+        self.received()
+            .into_iter()
+            .filter_map(|control| match control {
+                Control::Say { text } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Specs the runs were started with, in order.
     pub fn specs(&self) -> Vec<RunSpec> {
         self.specs.lock().map(|s| s.clone()).unwrap_or_default()
@@ -100,27 +114,28 @@ impl Runtime for FakeRuntime {
             specs.push(spec);
         }
         let (event_tx, event_rx) = mpsc::channel(64);
-        let (control_tx, mut control_rx) = mpsc::channel(16);
+        let (control_tx, control_rx) = mpsc::channel(16);
         let script = self
             .sequence
             .get(nth)
             .or(self.sequence.last())
             .unwrap_or(&self.script)
             .clone();
-        let received = Arc::clone(&self.received);
+        let mut inbox = Inbox {
+            controls: control_rx,
+            held_back: VecDeque::new(),
+            received: Arc::clone(&self.received),
+        };
         let hold = self.hold.clone();
         tokio::spawn(async move {
             let mut finished = false;
             for event in script {
+                inbox.drain();
                 if let (RunEvent::Finished { .. }, Some(hold)) = (&event, &hold) {
                     // An interrupt ends a held run early, as it would a real one.
                     tokio::select! {
                         _ = hold.notified() => {}
-                        Some(control) = control_rx.recv() => {
-                            if let Ok(mut log) = received.lock() {
-                                log.push(control);
-                            }
-                        }
+                        Some(_) = inbox.next() => {}
                     }
                 }
                 let waits = matches!(
@@ -131,13 +146,8 @@ impl Runtime for FakeRuntime {
                 if event_tx.send(event).await.is_err() {
                     return;
                 }
-                if waits {
-                    let Some(control) = control_rx.recv().await else {
-                        return;
-                    };
-                    if let Ok(mut log) = received.lock() {
-                        log.push(control);
-                    }
+                if waits && inbox.next().await.is_none() {
+                    return;
                 }
                 if finished {
                     break;
@@ -155,5 +165,50 @@ impl Runtime for FakeRuntime {
             }
         });
         Ok(Run::new(event_rx, control_tx))
+    }
+}
+
+/// What a fake run was sent. A `Say` is recorded as soon as the run sees it,
+/// wherever the run is. Any other control is kept back until the run waits for
+/// one, so a decision or an interrupt sent early still counts when it does.
+struct Inbox {
+    controls: mpsc::Receiver<Control>,
+    held_back: VecDeque<Control>,
+    received: Arc<Mutex<Vec<Control>>>,
+}
+
+impl Inbox {
+    fn record(&self, control: Control) {
+        if let Ok(mut log) = self.received.lock() {
+            log.push(control);
+        }
+    }
+
+    /// Takes in what was sent so far, without waiting.
+    fn drain(&mut self) {
+        while let Ok(control) = self.controls.try_recv() {
+            self.take(control);
+        }
+    }
+
+    fn take(&mut self, control: Control) {
+        if matches!(control, Control::Say { .. }) {
+            self.record(control);
+        } else {
+            self.held_back.push_back(control);
+        }
+    }
+
+    /// The next control that is not a `Say`, recorded as it is taken; waits
+    /// for it. None once the studio has dropped the run.
+    async fn next(&mut self) -> Option<Control> {
+        loop {
+            if let Some(control) = self.held_back.pop_front() {
+                self.record(control.clone());
+                return Some(control);
+            }
+            let sent = self.controls.recv().await?;
+            self.take(sent);
+        }
     }
 }

@@ -9,6 +9,7 @@ pub mod doctor;
 mod evidence;
 pub mod export;
 mod gc;
+mod leadrun;
 mod notify;
 mod quick;
 mod router;

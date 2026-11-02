@@ -64,11 +64,18 @@ cargo run -q -p studio-web --example gallery -- /tmp/gallery
 ```
 
 It starts real studios in temporary homes, with scripted agents doing the work,
-and saves a screenshot of every page at desktop and phone widths. It uses a
-Chromium browser (`$STUDIO_BROWSER` if set, else Chrome, Brave or Chromium),
-falls back to Quick Look on macOS, and with neither prints a line and exits 0.
-[crates/studio-web/design/README.md](crates/studio-web/design/README.md) says
-what the pages should look like.
+and saves a screenshot of every page at desktop and phone widths: HQ, a
+conversation for each phase a project can be in, Look closer on ready work and
+on a ready goal, the office (and with a project picked), New project, a project
+being set up in each state of its setup, the studio settings, and the task,
+hires and rules pages. Lead turns can't run in a gallery, so what the leads said
+(the shop's conversation, every lead's standup) is written into the studio's
+data folder before it is served. It uses a Chromium browser (`$STUDIO_BROWSER`
+if set, else Chrome, Brave or Chromium), falls back to Quick Look on macOS, and
+with neither prints a line and exits 0. These pictures are the reference for the
+team pages: [crates/studio-web/design/README.md](crates/studio-web/design/README.md)
+says what the pages should look like, and when a page changes on purpose, render
+the gallery again and read every picture.
 
 ## Layout
 
@@ -86,32 +93,45 @@ what the pages should look like.
   server an agent uses to reach the studio.
 - `crates/studio-web`: the web UI (Topcoat, Datastar, Tailwind), also a client
   of `studiod`. `design/` holds the design notes and prototype, `examples/` the
-  gallery, `vendor/` the fonts and icons.
+  gallery (and its studios), `vendor/` the fonts and icons.
 - `docs/`: the guides. `install.sh`: the release installer.
   `.github/workflows/`: CI and releases.
 
 ### One path through it
 
-You open `http://127.0.0.1:4870/`. `studio-web` serves the home page, the
-company floor (`office_page` in `crates/studio-web/src/pages/office/mod.rs`).
-It asks `studiod` for one `Office` snapshot, a single `Request::Office` over
-the Unix socket (`client::call`). `plan.rs` turns it into an `Hq`: a team for
-each project, with the phase, milestone, release and people that `facts.rs`
-works out. From that, `hq_scene.rs` draws the floor (on `iso.rs`'s isometric
-drawing), `hq.rs` draws the top bar and the signs, and `panel/` draws the side
-panel (`inspector.rs` the panel of a ticket, hire or goal). The page then opens
-`/office/stream`, which asks again every second (open pages share one read),
-re-renders and sends only what changed; Datastar morphs it into the page.
+You open `http://127.0.0.1:4870/`. `studio-web` serves HQ, the first of the team
+pages in `crates/studio-web/src/pages/team/` (`hq.rs`). Every team page (HQ, a
+lead's conversation in `talk.rs` and `talk/`, the Look closer sheet in
+`sheet.rs`, the office in `office.rs`, New project in `new.rs` and the studio
+settings in `settings.rs`) draws itself whole inside `shell.rs`, the team
+sidebar. It asks `studiod` for one `Office` snapshot, a single
+`Request::Office` over the Unix socket (`client::call`), and works the team
+out of it (`mod.rs`: a lead for each project, what waits for the owner, what
+was spent). The page then opens `/team/stream` (`stream.rs`), which asks again
+every second (open pages share one read), draws the page again and sends only
+what changed; Datastar morphs it into the page. A conversation also reads its
+messages from `studiod` (`Request::Conversation`).
 
 Clicking a control posts to a `studio-web` route, which sends a `Request`
-(`Land`, `Decide`, `CreateTicket` and so on). `studiod` reads it in
+(`Land`, `Decide`, `Talk`, `Tell` and so on). `studiod` reads it in
 `server.rs` and `Studio::handle` in `studio.rs` runs it. State changes are
-`Event`s: the store (`studio-store`) applies each one to the ticket with the
+`Event`s: the store (`studio-store`) applies each one to the task with the
 state machine in `studio-core/src/machine.rs` and saves it. The scheduler and
-`worker.rs` claim queued tickets, make a worktree (`studio-git`), start the
+`worker.rs` claim queued tasks, make a worktree (`studio-git`), start the
 hire's `Runtime`, judge its tool calls with the rules (`studio-core/src/policy.rs`),
 run the checks and review, and append events as they go. The next snapshot
 shows them. The CLI takes the same path with no page in between.
+
+A message to a lead is `Request::Talk`. `studiod/src/studio/talk.rs` stores it
+in `<data>/talk/<project>.jsonl` and starts a lead turn through
+`studiod/src/leadrun.rs`, which runs the lead's hire with read-only tools and
+the studio's own tools (`studio mcp --talk <project>`, in
+`crates/studio/src/mcp.rs`); each tool the lead uses comes back as a request
+and posts a card to the conversation. `studio/setup.rs` does the same for a
+new project (`studio mcp --setup <project>`, whose one tool proposes how the
+project runs, which the studio then tries), `studio/standup.rs` writes the
+standups and the one-line results, `studio/shipcheck.rs` runs a finished goal's
+checks, and `studio/tell.rs` gets a message to a running agent.
 
 ## Where to start
 
@@ -120,30 +140,27 @@ shows them. The CLI takes the same path with no page in between.
   match arm in `Studio::handle` in `crates/studiod/src/studio.rs`, and the work
   in a method under `crates/studiod/src/studio/`. Test it in
   `crates/studiod/tests/e2e.rs`. A CLI command goes in
-  `crates/studio/src/main.rs`; a page reads it with `client::call`. If the
-  floor needs it every second, add it to `OfficeView` in `api.rs` and fill it
-  in `studio/snapshot.rs` instead.
-- **A new shared room or prop on the company floor.** Add a variant to
-  `Element` in `crates/studio-web/src/pages/office/model.rs` (`ALL`, `key`,
-  `hint`), draw it with `el` in `pages/office/hq_scene.rs` (the isometric
-  primitives it uses are in `pages/office/iso.rs`), and give it a panel in
-  `pages/office/panel/elements.rs` (its title and icon, and its view). Run the
-  gallery.
-- **What a team area or its sign shows.** The data is `Team` in `model.rs`,
-  filled in by `hq` in `pages/office/plan.rs`; the rules it follows (what needs
-  the owner, which phase a project is in, which milestone) are in
-  `pages/office/facts.rs`, written once so the sign, the floor and the panel
-  tell the same story. The sign itself is in `pages/office/hq.rs`, and a team
-  area's drawing in `hq_scene.rs`. A new phase is a variant of `Phase` in
-  `model.rs`, a rule in `facts.rs`'s `phase`, and words in `hq.rs`, `hq_scene.rs`
-  and `panel/standing.rs`.
-- **A new tab.** Add it to `TABS` in `pages/office/panel/mod.rs`, with a pane in
-  `tabs` there and the view that fills it (the tabs now are `needs.rs`,
-  `projects.rs`, `company.rs`, `money.rs` and `log.rs` in `panel/`). Anything it
-  needs to read goes in the panel's `Extra` or in the `Office` snapshot.
-- **The project page.** `panel/page.rs` draws it (pipeline, milestone, the four
-  task columns, the lead), `panel/release.rs` the release card and checklist,
-  and `panel/standing.rs` works out where each project stands for it.
+  `crates/studio/src/main.rs`; a page reads it with `client::call`. If a page
+  needs it every second, add it to `OfficeView` in `api.rs` and fill it in
+  `studio/snapshot.rs` instead.
+- **A new team page.** Add a file under `pages/team/` that draws itself with
+  `shell::page` as a function of the team and the office, a route for it in
+  `pages/team/mod.rs`, and its address to the stream in `stream.rs`. Words are
+  plain and from the owner's side: task, ship, the lead. Run the gallery, add
+  the page to its list in `examples/gallery/main.rs`, and look at it.
+- **What a lead can do.** A tool of a lead's conversation is in
+  `crates/studio/src/mcp.rs` (the `--talk` mode), with the request it makes in
+  `api.rs` (`LeadActs`) and the work in `studio/talk.rs`. Its card is a
+  `TalkCard` in `api.rs`, drawn in `pages/team/talk/cards.rs`.
+- **The company floor.** The drawing is in `pages/office/` (`hq_scene.rs`, on
+  `iso.rs`'s isometric drawing; `plan.rs` and `facts.rs` work out each team
+  area and its phase; `pins.rs` the signs) and the office page in
+  `pages/team/office.rs` shows it. A new shared room or prop is a variant of
+  `Element` in `pages/office/model.rs`, drawn with `el` in `hq_scene.rs`. A new
+  phase is a variant of `Phase`, a rule in `facts.rs`'s `phase`, and its word
+  in the sidebar and the conversation's header (`pages/team/`).
+- **A face.** A hire's portrait is drawn in `pages/team/faces.rs` from the
+  hire id, with the skin, hair and shirt the floor's figures have.
 - **The release code.** `crates/studiod/src/studio/releases.rs` runs a release
   (final checks, the go-ahead, the commands, the tag) and keeps its record in
   the data folder; its requests (`StartRelease`, `ApproveRelease`,

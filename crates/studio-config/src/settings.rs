@@ -79,6 +79,34 @@ pub fn set_project_lead(
     })
 }
 
+/// Sets `daily_usd = <usd>` in the `[[projects]]` entry named `project`, or
+/// removes it when `usd` is none. Every other line and comment stays, and the
+/// result is checked and swapped in as `set_values` does.
+pub fn set_project_daily_usd(
+    paths: &StudioPaths,
+    project: &str,
+    usd: Option<f64>,
+) -> Result<(), SettingsError> {
+    rewrite(paths, |text| {
+        let value = usd.map(|usd| toml::Value::Float(usd).to_string());
+        let text = with_entry_raw(text, project, "daily_usd", value.as_deref())
+            .ok_or_else(|| SettingsError::NoProject(project.to_string()))?;
+        let config =
+            StudioConfig::parse(&text).map_err(|e| SettingsError::Unreadable(e.to_string()))?;
+        let now = config
+            .projects
+            .iter()
+            .find(|p| p.name == project)
+            .and_then(|p| p.daily_usd);
+        if now != usd {
+            return Err(SettingsError::Unreadable(format!(
+                "the daily limit of {project} could not be written there"
+            )));
+        }
+        Ok(text)
+    })
+}
+
 /// Reads studio.toml, lets `change` make the new text, checks that it loads
 /// and swaps it in whole.
 fn rewrite(
@@ -134,6 +162,11 @@ fn with_value(text: &str, table: &str, key: &str, value: &str) -> String {
 /// `text` with `key` set to the string `value` (or removed, for none) in the
 /// `[[projects]]` entry named `project`; none when no entry has that name.
 fn with_entry_value(text: &str, project: &str, key: &str, value: Option<&str>) -> Option<String> {
+    with_entry_raw(text, project, key, value.map(quoted).as_deref())
+}
+
+/// As `with_entry_value`, with `value` already written as TOML.
+fn with_entry_raw(text: &str, project: &str, key: &str, value: Option<&str>) -> Option<String> {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let mut found = None;
     for at in 0..lines.len() {
@@ -155,11 +188,11 @@ fn with_entry_value(text: &str, project: &str, key: &str, value: Option<&str>) -
     }
     let (named, existing) = found?;
     match (existing, value) {
-        (Some(i), Some(value)) => lines[i] = replaced(&lines[i], &quoted(value)),
+        (Some(i), Some(value)) => lines[i] = replaced(&lines[i], value),
         (Some(i), None) => {
             lines.remove(i);
         }
-        (None, Some(value)) => lines.insert(named + 1, format!("{key} = {}", quoted(value))),
+        (None, Some(value)) => lines.insert(named + 1, format!("{key} = {value}")),
         (None, None) => {}
     }
     let mut out = lines.join("\n");
@@ -361,6 +394,30 @@ mod tests {
         // Clearing a lead that is not there changes nothing.
         set_project_lead(&paths, "game", None).unwrap();
         assert_eq!(read(&paths), TWO.replace("lead = \"old\" # was\n", ""));
+    }
+
+    #[test]
+    fn a_projects_daily_limit_is_written_to_its_entry_only() {
+        let (_tmp, paths) = home(TWO);
+        set_project_daily_usd(&paths, "game", Some(3.5)).unwrap();
+        assert_eq!(
+            read(&paths),
+            TWO.replace(
+                "name = \"game\" # main\n",
+                "name = \"game\" # main\ndaily_usd = 3.5\n"
+            )
+        );
+        let config = StudioConfig::load(&paths).unwrap();
+        assert_eq!(config.projects[0].daily_usd, Some(3.5));
+        assert_eq!(config.projects[1].daily_usd, None);
+        // A limit already there is replaced in place, comment and all.
+        set_project_daily_usd(&paths, "game", Some(6.0)).unwrap();
+        assert!(read(&paths).contains("daily_usd = 6.0\n"));
+        assert!(!read(&paths).contains("3.5"));
+        set_project_daily_usd(&paths, "game", None).unwrap();
+        assert_eq!(read(&paths), TWO);
+        let err = set_project_daily_usd(&paths, "nope", Some(1.0));
+        assert!(matches!(err, Err(SettingsError::NoProject(_))));
     }
 
     #[test]

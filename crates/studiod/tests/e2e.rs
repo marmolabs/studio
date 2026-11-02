@@ -1778,6 +1778,143 @@ async fn gc_removes_only_what_no_open_ticket_needs() {
     );
 }
 
+/// A goal of two tasks that both landed on its branch, so that their
+/// worktrees are gone: the planner (GAME-1) filed them (GAME-2 and GAME-3).
+/// The first adds `carts.txt` with three lines, the second, which starts from
+/// what the first left, adds `session.txt` and changes a line of `carts.txt`.
+async fn a_goal_with_two_landed_tasks(setup: &Setup) -> Arc<Studio> {
+    // The producer plans on a runtime of its own, so the tasks' runs are not held.
+    let producer = "---\nname: Producer\nrole: producer\nruntime: fake-review\nmodel: fake-1\ntools: [file_ticket]\n---\nYou plan.\n";
+    fs::write(setup.paths.config_dir.join("hires/producer.md"), producer).unwrap();
+    let (planner, finish) = FakeRuntime::new(plan_script()).with_mcp().held();
+    let studio = studio_with(setup, FakeRuntime::new(script()), planner);
+    studio.spawn_scheduler();
+    let plan = ok(
+        &studio,
+        Request::CreateGoal {
+            project: "game".into(),
+            text: "Save carts".into(),
+            hire: None,
+            detail: String::new(),
+            version: None,
+        },
+    )
+    .await;
+    assert_eq!(plan["id"], "GAME-1");
+    until(async || state_of(&studio, "GAME-1").await == "working").await;
+    ok(&studio, file("GAME-1", "Store carts", "Keep them")).await;
+    ok(&studio, file("GAME-1", "Restore carts", "Bring them back")).await;
+    until(async || {
+        finish.notify_waiters();
+        state_of(&studio, "GAME-1").await == "landed"
+    })
+    .await;
+
+    an_ask(&studio).await;
+    let first = setup.repo.join(".studio/worktrees/game-2");
+    fs::write(first.join("carts.txt"), "one\ntwo\nthree\n").unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-2").await == "ready").await;
+    land(&studio, "GAME-2").await;
+
+    an_ask(&studio).await;
+    let second = setup.repo.join(".studio/worktrees/game-3");
+    fs::write(second.join("session.txt"), "restore\n").unwrap();
+    fs::write(second.join("carts.txt"), "one\nTWO\nthree\n").unwrap();
+    approve_all(&studio).await;
+    until(async || state_of(&studio, "GAME-3").await == "ready").await;
+    land(&studio, "GAME-3").await;
+    studio
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_and_its_landed_tasks_are_read_from_git_when_their_worktrees_are_gone() {
+    let setup = setup_with("", "daily_usd = 5.0", "[goals]\nmax_filed = 2");
+    let studio = a_goal_with_two_landed_tasks(&setup).await;
+    let repo = studio_git::Repo::open(&setup.repo).unwrap();
+    // The worktrees went with the landing; the branches stay.
+    assert!(repo.studio_worktrees().unwrap().is_empty());
+    assert!(!setup.repo.join(".studio/worktrees/game-2").exists());
+    for branch in ["studio/game-2", "studio/game-3"] {
+        assert!(repo.branch_exists(branch).unwrap(), "{branch}");
+    }
+
+    let stat = async |ticket: &str| {
+        let ticket = ticket.to_string();
+        ok(&studio, Request::Diffstat { ticket }).await
+    };
+    let diff = async |ticket: &str| {
+        let ticket = ticket.to_string();
+        ok(&studio, Request::Diff { ticket }).await
+    };
+    let has = |value: &Value, words: &str| value.as_str().unwrap().contains(words);
+
+    // A task's change is its kept branch against the commit it started from:
+    // the second task's is only what it added to the first one's work.
+    let first = stat("GAME-2").await;
+    assert!(has(&first, "1 file changed, 3 insertions(+)"), "{first}");
+    let second = stat("GAME-3").await;
+    assert!(
+        has(&second, "2 files changed, 2 insertions(+), 1 deletion(-)"),
+        "{second}"
+    );
+    let text = diff("GAME-3").await;
+    assert!(
+        has(&text, "+++ b/session.txt") && has(&text, "+TWO"),
+        "{text}"
+    );
+    assert!(has(&diff("GAME-2").await, "+three"));
+
+    // The goal's change, asked for by its plan ticket, is the goal's branch
+    // against the base it ships to, as git tells it.
+    let goal = stat("GAME-1").await;
+    let want = git(
+        &setup.repo,
+        &["diff", "--stat", "master...studio/goal/save-carts"],
+    );
+    assert_eq!(goal.as_str().unwrap().trim(), want);
+    assert!(has(&goal, "2 files changed, 4 insertions(+)"), "{goal}");
+    let text = diff("GAME-1").await;
+    let want = git(&setup.repo, &["diff", "master...studio/goal/save-carts"]);
+    assert_eq!(text.as_str().unwrap().trim(), want);
+    assert!(has(&text, "+++ b/carts.txt") && has(&text, "+++ b/session.txt"));
+    // All at once, as the web asks.
+    let all = ok(
+        &studio,
+        Request::Diffstats {
+            tickets: vec!["GAME-1".into(), "GAME-2".into(), "GAME-3".into()],
+        },
+    )
+    .await;
+    assert_eq!(all["GAME-1"], goal);
+    assert_eq!(all["GAME-2"], first);
+    assert_eq!(all["GAME-3"], second);
+
+    // The owner goes on with master: the goal still adds what it added.
+    commit_on(&setup.repo, "owner.txt", "mine\n", "Owner edit");
+    assert_eq!(stat("GAME-1").await, goal);
+
+    // `studio gc` clears the tasks' branches, which the goal's branch holds.
+    // The tasks have nothing more to tell, the goal still has.
+    ok(&studio, Request::Gc).await;
+    assert!(!repo.branch_exists("studio/game-2").unwrap());
+    assert!(stat("GAME-2").await.is_null());
+    assert!(diff("GAME-3").await.is_null());
+    assert_eq!(stat("GAME-1").await, goal);
+    assert_eq!(diff("GAME-1").await, text);
+
+    // Shipped, it adds nothing more to its base.
+    ok(
+        &studio,
+        Request::Merge {
+            ticket: "GAME-2".into(),
+        },
+    )
+    .await;
+    assert_eq!(stat("GAME-1").await, json!(""));
+    assert_eq!(diff("GAME-1").await, json!(""));
+}
+
 // Packs, capture evidence and gates.
 
 fn write_project(setup: &Setup, text: &str) {
@@ -4070,4 +4207,123 @@ fn doctor_flags_a_lead_that_is_not_a_hire() {
         .find(|c| !c.ok && c.label.contains("lead ghost"))
         .expect("the missing lead hire is reported");
     assert_eq!(flagged.label, "project game: lead ghost is not a hire");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_the_lead_started_gets_its_plan_card_when_the_plan_lands() {
+    let setup = setup_with("", "daily_usd = 5.0", "[goals]\nmax_filed = 2");
+    fs::write(
+        setup.paths.config_dir.join("hires/nora.md"),
+        "---\nname: Nora\nrole: lead\nruntime: fake\nmodel: fake-1\ntools: [file_ticket]\n---\nYou lead.\n",
+    )
+    .unwrap();
+    let toml = setup.paths.config_dir.join("studio.toml");
+    let text = fs::read_to_string(&toml).unwrap();
+    fs::write(
+        &toml,
+        text.replace(
+            "integration_branch = \"master\"",
+            "integration_branch = \"master\"\nlead = \"nora\"",
+        ),
+    )
+    .unwrap();
+    // The lead's turn calls start_goal, then the goal's plan runs.
+    let turn = vec![
+        RunEvent::Started {
+            session: "talk".into(),
+            model: Some("fake-1".into()),
+        },
+        RunEvent::ToolCall {
+            id: "t1".into(),
+            name: "mcp__studio__start_goal".into(),
+            input: json!({ "text": "Add a boss fight" }),
+        },
+        RunEvent::ToolResult {
+            id: "t1".into(),
+            output: r#"{"goal":"GAME-1","title":"Add a boss fight"}"#.into(),
+            is_error: false,
+        },
+        RunEvent::Finished {
+            outcome: Outcome::Success,
+            session: Some("talk".into()),
+            cost: Cost::default(),
+            summary: Some("I started the goal.".into()),
+        },
+    ];
+    let (runtime, finish) = FakeRuntime::sequence(vec![turn, plan_script()])
+        .with_mcp()
+        .held();
+    let studio = studio(&setup, runtime.clone());
+    studio.spawn_scheduler();
+
+    ok(
+        &studio,
+        Request::Talk {
+            project: "game".into(),
+            text: "Plan a boss fight".into(),
+        },
+    )
+    .await;
+    until(async || runtime.specs().len() == 1).await;
+    // What the tool does when the lead calls it: the lead plans the goal.
+    let plan = ok(
+        &studio,
+        Request::CreateGoal {
+            project: "game".into(),
+            text: "Add a boss fight".into(),
+            hire: None,
+            detail: String::new(),
+            version: None,
+        },
+    )
+    .await;
+    assert_eq!(plan["id"], "GAME-1");
+    assert_eq!(plan["hire"], "nora");
+    until(async || state_of(&studio, "GAME-1").await == "working").await;
+    // Named hires: a ticket with none is routed by the project's lead.
+    for (title, detail) in [("Boss sprite", "32x32"), ("Boss AI", "chases")] {
+        let request = Request::FileTicket {
+            ticket: "GAME-1".into(),
+            title: title.into(),
+            detail: detail.into(),
+            hire: Some("dev".into()),
+        };
+        ok(&studio, request).await;
+    }
+
+    let conversation = async || {
+        let seen = ok(
+            &studio,
+            Request::Conversation {
+                project: "game".into(),
+                after: None,
+            },
+        )
+        .await;
+        seen["messages"].as_array().unwrap().clone()
+    };
+    until(async || {
+        finish.notify_waiters();
+        conversation()
+            .await
+            .iter()
+            .any(|m| m["card"]["type"] == "plan")
+    })
+    .await;
+    let messages = conversation().await;
+    let card = messages
+        .iter()
+        .find(|m| m["card"]["type"] == "plan")
+        .unwrap();
+    assert_eq!(card["from"], json!({ "who": "lead", "hire": "nora" }));
+    assert_eq!(card["card"]["goal"], "GAME-1");
+    assert_eq!(card["card"]["title"], "Add a boss fight");
+    let titles: Vec<&str> = card["card"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Boss sprite", "Boss AI"]);
+    assert!(messages.iter().any(|m| m["text"] == "I started the goal."));
 }
