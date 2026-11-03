@@ -28,6 +28,14 @@ pub fn find_browser() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// The Chromium-family browser `$STUDIO_GALLERY_BROWSER` names, which takes
+/// the README's photos (see `devtools.rs`). With none set there are no photos.
+pub fn photo_browser() -> Option<PathBuf> {
+    std::env::var_os("STUDIO_GALLERY_BROWSER")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+}
+
 /// Loads `url` in the browser and saves a screenshot of it. Pages keep a
 /// live connection open, so a headless browser writes the screenshot but
 /// may never exit: it is stopped once the file has stopped growing.
@@ -155,8 +163,8 @@ impl Inliner {
     }
 }
 
-/// Standard base64, for the fonts' data URLs.
-fn base64(bytes: &[u8]) -> String {
+/// Standard base64, for the fonts' data URLs and a WebSocket handshake.
+pub fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -175,6 +183,31 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// What `base64` made, as bytes again.
+pub fn unbase64(text: &str) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut bits, mut held) = (0u32, 0u32);
+    for c in text.bytes() {
+        let value = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\r' | b'\n' => continue,
+            _ => return Err(format!("{:?} is not base64", char::from(c)).into()),
+        };
+        bits = bits << 6 | u32::from(value);
+        held += 6;
+        if held >= 8 {
+            held -= 8;
+            out.push((bits >> held) as u8);
+            bits &= (1 << held) - 1;
+        }
+    }
+    Ok(out)
 }
 
 fn attribute_escape(text: &str) -> String {

@@ -77,6 +77,20 @@ team pages: [crates/studio-web/design/README.md](crates/studio-web/design/README
 says what the pages should look like, and when a page changes on purpose, render
 the gallery again and read every picture.
 
+The README's two photos, `docs/office.png` and `docs/talk.png`, are made with a
+real browser, which Quick Look can't be. Set `STUDIO_GALLERY_BROWSER` to the
+binary of a Chromium-family browser and run the gallery (the browser is driven
+over DevTools, so this works in an agent's sandbox too):
+
+```sh
+STUDIO_GALLERY_BROWSER=/path/to/browser cargo run -q -p studio-web --example gallery -- /tmp/gallery
+```
+
+`/tmp/gallery/readme/office.png` is HQ of the busy studio and `talk.png` the
+shop's conversation with its lead, each 2400 pixels wide. Look at both, reduce
+each to a 256-colour palette (a third of the size), and copy them to `docs/`.
+Without the variable the gallery makes no photos and renders as before.
+
 ## Layout
 
 - `crates/studio-core`: pure logic with no I/O. Tickets, the state machine,

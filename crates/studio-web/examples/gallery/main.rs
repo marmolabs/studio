@@ -18,11 +18,21 @@
 //! renders the pages instead, the way the design references were made: the
 //! page goes in an iframe of the target width, scaled to fit 1024px. With
 //! neither it prints a line and exits 0.
+//!
+//! The README's two photos are made with a real browser instead, which Quick
+//! Look can't be: HQ of the busy studio and the shop's conversation with its
+//! lead, 2400px wide. To make them, set `STUDIO_GALLERY_BROWSER` to a
+//! Chromium-family browser's binary and run the gallery; `<out-dir>/readme/`
+//! then has `office.png` and `talk.png`. Look at them, reduce each to a
+//! 256-colour palette, and copy them to `docs/`. Without the variable there
+//! are no photos, and the pages are rendered as above. `devtools.rs` has how
+//! the browser is driven.
 
+mod devtools;
 mod render;
 mod studios;
 
-use render::{Inliner, Renderer, find_browser, has_quick_look, quick_look, shoot};
+use render::{Inliner, Renderer, find_browser, has_quick_look, photo_browser, quick_look, shoot};
 use std::error::Error;
 use std::path::Path;
 use std::process::ExitCode;
@@ -65,7 +75,17 @@ async fn run(out_dir: &Path) -> Result<()> {
 
     // Nothing to render with: say so before building any studio.
     let browser = find_browser();
-    if browser.is_none() && !has_quick_look() {
+    let photographer = photo_browser();
+    if let Some(path) = &photographer
+        && !path.is_file()
+    {
+        return Err(format!(
+            "STUDIO_GALLERY_BROWSER is not a browser's binary: {}",
+            path.display()
+        )
+        .into());
+    }
+    if browser.is_none() && !has_quick_look() && photographer.is_none() {
         println!("no Chromium browser found (set STUDIO_BROWSER); skipping the page gallery");
         return Ok(());
     }
@@ -79,6 +99,30 @@ async fn run(out_dir: &Path) -> Result<()> {
     let waiting = serve(&studios.waiting).await?;
     let leadless = serve(&studios.leadless).await?;
     let starting = serve(&studios.starting).await?;
+
+    // The README's photos come first, while the busy studio is as fresh as the
+    // pictures say and its office is open.
+    if let Some(photographer) = photographer {
+        let photos = [
+            devtools::Photo {
+                file: "office.png",
+                url: format!("{busy}/?token={TOKEN}"),
+            },
+            devtools::Photo {
+                file: "talk.png",
+                url: format!("{busy}/leads/shop?token={TOKEN}"),
+            },
+        ];
+        let profile = dir.path().join("photo-profile");
+        let readme = out_dir.join("readme");
+        for path in devtools::take(&photographer, &profile, &photos, &readme).await? {
+            println!("wrote {}", path.display());
+        }
+        // With nothing to render the pages with, the photos are all there is.
+        if browser.is_none() && !has_quick_look() {
+            return Ok(());
+        }
+    }
 
     // One profile for every page, so the login cookie carries over (cookies
     // ignore the port). Logging in also shows whether the browser works here.
