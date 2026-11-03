@@ -440,6 +440,106 @@ fn a_conflicting_goal_is_backed_out() {
     assert_eq!(git(repo.root(), &["status", "--porcelain"]), "");
 }
 
+/// A goal with two landed tickets, whose worktrees are gone: the first adds
+/// `a.txt`, the second, which starts from what the first left, adds `b.txt`
+/// and a line to the readme. Returns the goal's branch.
+fn two_landed_tickets(repo: &Repo) -> String {
+    let goal = repo.ensure_goal_branch("Daily mode", "master").unwrap();
+    let a = repo.create_worktree(&ticket("t1"), &goal).unwrap();
+    fs::write(a.path.join("a.txt"), "a\n").unwrap();
+    a.commit("Add a").unwrap();
+    assert!(matches!(
+        repo.land(&a, &goal).unwrap(),
+        LandOutcome::Merged { .. }
+    ));
+    repo.remove_worktree(&a, true).unwrap();
+    let b = repo.create_worktree(&ticket("t2"), &goal).unwrap();
+    fs::write(b.path.join("b.txt"), "b\nb\n").unwrap();
+    fs::write(b.path.join("README.md"), "hello\nmore\n").unwrap();
+    b.commit("Add b").unwrap();
+    assert!(matches!(
+        repo.land(&b, &goal).unwrap(),
+        LandOutcome::Merged { .. }
+    ));
+    repo.remove_worktree(&b, true).unwrap();
+    assert!(repo.studio_worktrees().unwrap().is_empty());
+    goal
+}
+
+#[test]
+fn a_landed_tickets_change_is_read_from_its_kept_branch() {
+    let (_dir, repo) = init();
+    two_landed_tickets(&repo);
+    // The base is kept with the branch, as the second ticket started from the
+    // first one's work.
+    let base = repo.recorded_base("studio/t2").unwrap();
+    assert_eq!(base, git(repo.root(), &["rev-parse", "studio/t2~1"]));
+    assert_ne!(base, repo.recorded_base("studio/t1").unwrap());
+    assert_eq!(repo.recorded_base("studio/nope"), None);
+
+    let diff = repo
+        .diff_between(&base, "studio/t2", false)
+        .unwrap()
+        .unwrap();
+    assert!(diff.contains("+++ b/b.txt") && diff.contains("+++ b/README.md"));
+    assert!(!diff.contains("a.txt"), "{diff}");
+    let stat = repo
+        .diff_stat_between(&base, "studio/t2", false)
+        .unwrap()
+        .unwrap();
+    assert!(stat.contains("2 files changed, 3 insertions(+)"), "{stat}");
+}
+
+#[test]
+fn a_goals_change_is_its_branch_against_the_base_it_ships_to() {
+    let (_dir, repo) = init();
+    let goal = two_landed_tickets(&repo);
+    let stat = repo
+        .diff_stat_between("master", &goal, true)
+        .unwrap()
+        .unwrap();
+    assert!(stat.contains("3 files changed, 4 insertions(+)"), "{stat}");
+    let diff = repo.diff_between("master", &goal, true).unwrap().unwrap();
+    for file in ["a.txt", "b.txt", "README.md"] {
+        assert!(diff.contains(&format!("+++ b/{file}")), "{file}: {diff}");
+    }
+
+    // The owner goes on with master: the goal still adds what it added.
+    commit_on_master(repo.root(), "owner.txt", "mine\n");
+    let after = repo.diff_between("master", &goal, true).unwrap().unwrap();
+    assert_eq!(after, diff);
+    // Counted from master's tip itself, the owner's file would be in it.
+    let naive = repo.diff_between("master", &goal, false).unwrap().unwrap();
+    assert!(naive.contains("owner.txt"), "{naive}");
+
+    // Shipped, it adds nothing more.
+    repo.merge_goal(&goal, "master").unwrap();
+    assert_eq!(
+        repo.diff_stat_between("master", &goal, true).unwrap(),
+        Some(String::new())
+    );
+}
+
+#[test]
+fn a_change_between_commits_that_are_not_there_is_none() {
+    let (_dir, repo) = init();
+    let goal = two_landed_tickets(&repo);
+    assert_eq!(
+        repo.diff_between("master", "studio/goal/nope", true)
+            .unwrap(),
+        None
+    );
+    assert_eq!(repo.diff_between("nope", &goal, true).unwrap(), None);
+    assert_eq!(
+        repo.diff_stat_between("master", "studio/nope", false)
+            .unwrap(),
+        None
+    );
+    // A name git would take for an option is not a commit.
+    assert_eq!(repo.diff_between("--output=x", &goal, false).unwrap(), None);
+    assert!(!repo.root().join("x").exists());
+}
+
 #[test]
 fn a_long_goal_gets_a_short_branch_that_git_accepts() {
     let (_tmp, repo) = init();

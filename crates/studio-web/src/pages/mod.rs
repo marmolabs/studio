@@ -6,5 +6,6 @@ pub mod evidence;
 pub mod files;
 pub mod hires;
 pub mod office;
+pub mod team;
 pub mod ticket;
 pub mod timeline;

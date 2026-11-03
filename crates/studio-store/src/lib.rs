@@ -93,6 +93,19 @@ pub struct Store {
     conn: Connection,
 }
 
+/// The query for the tickets that `filter` (a `WHERE` clause, or nothing) lets
+/// through, oldest first. Tickets made in the same millisecond come in the
+/// order they were made, which is the order of their `created` events. Their
+/// ids don't tell it, as text sorts SHOP-10 before SHOP-9, nor do their rows,
+/// which are written again at each event and so end up in the order of the
+/// latest.
+fn tickets_oldest_first(filter: &str) -> String {
+    format!(
+        "SELECT ticket FROM tickets {filter}
+         ORDER BY created_at, (SELECT MIN(seq) FROM events WHERE ticket_id = tickets.id), id"
+    )
+}
+
 impl Store {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Store> {
         if let Some(parent) = path.as_ref().parent() {
@@ -134,18 +147,18 @@ impl Store {
         }
     }
 
+    /// Every ticket, oldest first.
     pub fn tickets(&self) -> Result<Vec<Ticket>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT ticket FROM tickets ORDER BY created_at, id")?;
+        let mut stmt = self.conn.prepare(&tickets_oldest_first(""))?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         collect_tickets(rows)
     }
 
+    /// The tickets in one state, oldest first.
     pub fn tickets_in(&self, state_kind: &str) -> Result<Vec<Ticket>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT ticket FROM tickets WHERE state_kind = ?1 ORDER BY created_at, id")?;
+            .prepare(&tickets_oldest_first("WHERE state_kind = ?1"))?;
         let rows = stmt.query_map([state_kind], |row| row.get::<_, String>(0))?;
         collect_tickets(rows)
     }
@@ -227,9 +240,10 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut stmt = tx.prepare(
-            "SELECT ticket FROM tickets WHERE state_kind = 'queued' ORDER BY created_at, id LIMIT 1",
-        )?;
+        let mut stmt = tx.prepare(&format!(
+            "{} LIMIT 1",
+            tickets_oldest_first("WHERE state_kind = 'queued'")
+        ))?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut queued = collect_tickets(rows)?;
         let Some(ticket) = queued.pop() else {
@@ -274,10 +288,11 @@ impl Store {
         Ok(max)
     }
 
+    /// The tickets with a run under way, oldest first.
     pub fn in_flight(&self) -> Result<Vec<Ticket>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT ticket FROM tickets WHERE state_kind IN ('claimed', 'working', 'checking', 'reviewing') ORDER BY created_at, id",
-        )?;
+        let mut stmt = self.conn.prepare(&tickets_oldest_first(
+            "WHERE state_kind IN ('claimed', 'working', 'checking', 'reviewing')",
+        ))?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         collect_tickets(rows)
     }

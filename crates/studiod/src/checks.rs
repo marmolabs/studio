@@ -35,6 +35,66 @@ pub(crate) async fn capture(
     exec(dir, &command, CAPTURE_TIMEOUT, env).await
 }
 
+/// What one try of a command came to.
+pub(crate) struct Tried {
+    pub passed: bool,
+    pub seconds: u64,
+    /// What it printed, its output then its errors, or why it did not run.
+    pub output: String,
+}
+
+/// Runs one command to the end with the project's environment, as `run` does,
+/// and says how it went: whether it passed, how long it took and what it
+/// printed. Nothing about it is an error.
+pub(crate) async fn tried(dir: &Path, command: &[String], env: &[(String, String)]) -> Tried {
+    attempt(dir, command, TIMEOUT, env).await
+}
+
+/// `tried` for a capture command, with `{out}` in its arguments replaced by the
+/// folder to write into, as `capture` does.
+pub(crate) async fn tried_capture(
+    dir: &Path,
+    command: &[String],
+    out: &Path,
+    env: &[(String, String)],
+) -> Tried {
+    let out = out.to_string_lossy();
+    let command: Vec<String> = command.iter().map(|a| a.replace("{out}", &out)).collect();
+    attempt(dir, &command, CAPTURE_TIMEOUT, env).await
+}
+
+async fn attempt(
+    dir: &Path,
+    command: &[String],
+    timeout: Duration,
+    env: &[(String, String)],
+) -> Tried {
+    let start = std::time::Instant::now();
+    let result = output(dir, command, timeout, env).await;
+    let seconds = start.elapsed().as_secs();
+    match result {
+        Ok(Some(out)) => {
+            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&out.stderr));
+            Tried {
+                passed: out.status.success(),
+                seconds,
+                output: text,
+            }
+        }
+        Ok(None) => Tried {
+            passed: false,
+            seconds,
+            output: "there is no command to run".to_string(),
+        },
+        Err(why) => Tried {
+            passed: false,
+            seconds,
+            output: why,
+        },
+    }
+}
+
 /// Runs a gate's measure command, with `{file}` in its arguments replaced by
 /// `file` when given. Returns the command line and its output for the critic.
 /// A failure is part of the result, never an error.
@@ -146,6 +206,26 @@ mod tests {
             std::fs::read_to_string(out.join("env.txt")).unwrap(),
             "cache"
         );
+    }
+
+    #[tokio::test]
+    async fn a_try_says_how_it_went_whatever_happened() {
+        let dir = tempfile::tempdir().unwrap();
+        let passed = tried(dir.path(), &sh("echo fine; echo noise >&2"), &[]).await;
+        assert!(passed.passed);
+        assert_eq!(passed.output, "fine\nnoise\n");
+        let failed = tried(dir.path(), &sh("echo broken; exit 2"), &[]).await;
+        assert!(!failed.passed);
+        assert_eq!(failed.output, "broken\n");
+        let missing = tried(dir.path(), &["no-such-program-here".to_string()], &[]).await;
+        assert!(!missing.passed);
+        assert!(missing.output.starts_with("could not start: "));
+        assert!(!tried(dir.path(), &[], &[]).await.passed);
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let shot = ["sh", "-c", "echo shot > \"$0/a.txt\"", "{out}"].map(String::from);
+        assert!(tried_capture(dir.path(), &shot, &out, &[]).await.passed);
+        assert!(out.join("a.txt").exists());
     }
 
     #[tokio::test]

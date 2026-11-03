@@ -1,6 +1,6 @@
 //! Tickets: making and filing them, a ticket's change, and the CI tickets a watcher files.
 
-use super::{StopReason, Studio, StudioError, lock, other};
+use super::{StopReason, Studio, StudioError, goal_of, lock, other};
 use crate::api::Response;
 use crate::watch::CiWatcher;
 use crate::{gc, now_ms, worker};
@@ -10,7 +10,51 @@ use studio_config::config::ProjectEntry;
 use studio_core::event::Event;
 use studio_core::ids::{HireId, ProjectId, TicketId};
 use studio_core::ticket::{Ticket, TicketKind, TicketState};
-use studio_git::Repo;
+use studio_git::{Repo, Worktree};
+
+/// Where a ticket's change is read from.
+enum Changes {
+    /// The ticket's worktree, which holds work that is not committed yet too.
+    Worktree(Worktree),
+    /// Two commits of the repository, which git tells the change between
+    /// without any worktree.
+    Commits {
+        from: String,
+        to: String,
+        /// Only what `to` added since the two parted, as for a goal, whose
+        /// base goes on with the owner's own work.
+        since_parting: bool,
+    },
+}
+
+/// Where to read the change of `ticket` from, if anywhere:
+/// - a goal's plan ticket: the goal's branch against the base it will ship
+///   to, with no worktree needed;
+/// - a ticket with a worktree: the worktree;
+/// - a ticket that landed: its branch, which stays after its worktree went,
+///   against the commit it started from. `studio gc` clears the branch once
+///   the goal's branch holds it, and then there is nothing to read.
+fn changes_of(repo: &Repo, ticket: &Ticket) -> Result<Option<Changes>, StudioError> {
+    if ticket.kind == TicketKind::Plan {
+        return Ok(Some(Changes::Commits {
+            from: ticket.base_branch.clone(),
+            to: Repo::goal_branch_name(&goal_of(ticket)),
+            since_parting: true,
+        }));
+    }
+    if let Some(worktree) = worker::find_worktree(repo, &ticket.id)? {
+        return Ok(Some(Changes::Worktree(worktree)));
+    }
+    if ticket.state != TicketState::Landed {
+        return Ok(None);
+    }
+    let branch = Repo::ticket_branch_name(&ticket.id);
+    Ok(repo.recorded_base(&branch).map(|from| Changes::Commits {
+        from,
+        to: branch,
+        since_parting: false,
+    }))
+}
 
 pub(super) struct NewTicket {
     pub(super) project: String,
@@ -171,32 +215,44 @@ impl Studio {
         Ok(TicketId::new(format!("{prefix}-{}", count + 1)))
     }
 
-    /// `git diff --stat` of a ticket's worktree, or `None` when it is gone.
+    /// `git diff --stat` of a ticket's change (see `changes_of`), or `None`
+    /// when git has none to give.
     pub(super) fn stat(&self, id: &TicketId) -> Result<Option<String>, StudioError> {
         let ticket = self.ticket(id)?;
         let repo = Repo::open(&self.project(&ticket.project)?.path)?;
-        Ok(match worker::find_worktree(&repo, id)? {
-            Some(worktree) => Some(worktree.diff_stat()?),
+        Ok(match changes_of(&repo, &ticket)? {
+            Some(Changes::Worktree(worktree)) => Some(worktree.diff_stat()?),
+            Some(Changes::Commits {
+                from,
+                to,
+                since_parting,
+            }) => repo.diff_stat_between(&from, &to, since_parting)?,
             None => None,
         })
     }
 
+    /// A ticket's change (see `changes_of`) as a unified diff, cut at 1 MB.
     pub(super) fn diff(&self, id: &TicketId) -> Result<Response, StudioError> {
         const MAX_DIFF: usize = 1024 * 1024;
         let ticket = self.ticket(id)?;
         let repo = Repo::open(&self.project(&ticket.project)?.path)?;
-        let diff = match worker::find_worktree(&repo, id)? {
-            Some(worktree) => {
-                let mut diff = worktree.diff()?;
-                if diff.len() > MAX_DIFF {
-                    let cut = diff.floor_char_boundary(MAX_DIFF);
-                    diff.truncate(cut);
-                    diff.push_str("\n… (diff cut at 1 MB)\n");
-                }
-                Some(diff)
-            }
+        let diff = match changes_of(&repo, &ticket)? {
+            Some(Changes::Worktree(worktree)) => Some(worktree.diff()?),
+            Some(Changes::Commits {
+                from,
+                to,
+                since_parting,
+            }) => repo.diff_between(&from, &to, since_parting)?,
             None => None,
         };
+        let diff = diff.map(|mut diff| {
+            if diff.len() > MAX_DIFF {
+                let cut = diff.floor_char_boundary(MAX_DIFF);
+                diff.truncate(cut);
+                diff.push_str("\n… (diff cut at 1 MB)\n");
+            }
+            diff
+        });
         Ok(Response::ok(diff))
     }
 

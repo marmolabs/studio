@@ -20,7 +20,7 @@ on the next run.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `daily_usd` | none, required | Studio-wide cap over any rolling 24 hours. |
-| `ticket_usd` | `2.0` | Cap for one ticket across all its runs. A hire's own cap can only lower it. |
+| `ticket_usd` | `2.0` | Cap for one task across all its runs. A hire's own cap can only lower it. |
 | `run_usd` | none | Optional cap for one run. |
 | `min_run_usd` | `0.05` | A run never starts with less allowance than this. |
 
@@ -28,7 +28,7 @@ on the next run.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `max_runs` | none, required | Agents running at once, from 1 to 9 (one per desk, set in the web UI's Company tab). `0` is an error: to pause the studio, run `studio close`; `studio open` starts it again. |
+| `max_runs` | none, required | Agents running at once, from 1 to 9 (one per desk, set on the web UI's Studio page). `0` is an error: to pause the studio, run `studio close`; `studio open` starts it again. |
 
 ### `[[projects]]`
 
@@ -37,9 +37,9 @@ on the next run.
 | `name` | required | Letters, digits, `-` and `_`. |
 | `path` | required | The git repo. A relative path is read from the studio folder. |
 | `integration_branch` | none | Branch work starts from. `studio project add` sets it to the branch checked out. |
-| `daily_usd` | none | Cap for this project over any rolling 24 hours. |
-| `watch_ci` | `false` | File a fix ticket when CI fails on the integration branch. Needs `gh`. |
-| `lead` | none | The id of the hire who leads this project (see [Project leads](concepts.md#project-leads)). The hire needs `tools: [file_ticket]` to plan goals. `studio lead <project> <hire>` sets it (the hire must exist) and `studio lead <project>` clears it; the project's page in the web UI does the same. `studio doctor` flags a lead that isn't a hire. |
+| `daily_usd` | none | Cap for this project over any rolling 24 hours. What you spend talking to its lead counts here, about $0.10 to $0.25 for a reply on a strong model, and each reply is capped at $0.50. |
+| `watch_ci` | `false` | File a fix task when CI fails on the integration branch. Needs `gh`. |
+| `lead` | none | The id of the hire who leads this project (see [Project leads](concepts.md#project-leads)). The hire needs `tools: [file_ticket]` to plan goals. `studio lead <project> <hire>` sets it (the hire must exist) and `studio lead <project>` clears it; so does the project's conversation in the web UI: the card for a project without a lead (which can also hire one), or Change lead. `studio doctor` flags a lead that isn't a hire. |
 
 ### `[[packs]]`
 
@@ -71,7 +71,7 @@ doesn't report cost won't run.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `max_filed` | `8` | Most tickets one ticket's agent may file. |
+| `max_filed` | `8` | Most tasks one goal's planner may file. |
 
 ### `[watchers]`
 
@@ -123,8 +123,8 @@ This file sits in a project's root. Every field is optional.
 | `capture` | `[]` | Command that runs the project and writes screenshots into `{out}`. It gets 30 minutes, building included. |
 | `capture_paths` | `[]` | Changed-file globs that call for a capture. Empty means any change. |
 | `gates` | `[]` | Critic gates, below. |
-| `auto_land` | `false` | Land a ticket on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |
-| `env` | `{}` | Environment variables for the project's agents, checks and captures. `{repo}` in a value is the project's own checkout, so its worktrees can share a folder, such as one build folder instead of a build from scratch per ticket. `studio project add` sets one up for a Cargo project. |
+| `auto_land` | `false` | Land a task on its goal branch as soon as it is ready. A conflict sends it back to its agent to resolve, as landing by hand does. Never merges into the integration branch; that stays `studio merge`. |
+| `env` | `{}` | Environment variables for the project's agents, checks and captures. `{repo}` in a value is the project's own checkout, so its worktrees can share a folder, such as one build folder instead of a build from scratch per task. `studio project add` sets one up for a Cargo project. |
 | `release` | `[]` | Commands that publish a release, each an array, run in order once you approve it: `["./publish.sh"]`. They get `VERSION` in their environment, besides the project's `env`, and 30 minutes each. Empty means the studio can't release the project. See [Releases](#releases). |
 
 Each `[[gates]]` entry:
@@ -133,12 +133,12 @@ Each `[[gates]]` entry:
 | --- | --- | --- |
 | `name` | required | A label. |
 | `paths` | required | Changed-file globs that send the work to this gate. |
-| `hire` | required | The hire that judges the work. It can't be the ticket's own hire or run on the model that wrote the latest attempt: it falls back to the first of its `escalate` models the author didn't use, and the gate is skipped when there is none. A gate's critic is never routed tickets. |
+| `hire` | required | The hire that judges the work. It can't be the task's own hire or run on the model that wrote the latest attempt: it falls back to the first of its `escalate` models the author didn't use, and the gate is skipped when there is none. A gate's critic is never routed tasks. |
 | `prompt` | none | Extra instructions for the critic. |
 | `rounds` | `3` | Most times the gate may send work back before it asks you. |
-| `measure` | `[]` | Command run in the worktree on up to 12 changed files that match `paths`, with `{file}` in its arguments replaced by each repo-relative path: `["tools/pixel-lint", "{file}"]`. With no `{file}` it runs once. Deleted files and files reached through a symlink are skipped. The critic sees each command's output (cut to 2000 characters, 2 minute limit). A failing measurement never fails the ticket. The program can't be empty. |
+| `measure` | `[]` | Command run in the worktree on up to 12 changed files that match `paths`, with `{file}` in its arguments replaced by each repo-relative path: `["tools/pixel-lint", "{file}"]`. With no `{file}` it runs once. Deleted files and files reached through a symlink are skipped. The critic sees each command's output (cut to 2000 characters, 2 minute limit). A failing measurement never fails the task. The program can't be empty. |
 
-Changed images (png, jpg, gif) that match `paths` are given to the critic beside their shipped version. The ticket page shows them as shipped vs new pairs.
+Changed images (png, jpg, gif) that match `paths` are given to the critic beside their shipped version. The task page shows them as shipped vs new pairs.
 
 Globs are checked when the file loads; a bad one is an error.
 
@@ -181,8 +181,9 @@ A release goes in four steps:
    same 30 minute limit as any check.
 2. **Your go-ahead.** The release waits for you and the studio tells you, as it
    does for anything that needs you: a desktop notification when `[notify]`
-   is on, a bell on the project's sign, and a card in the For you tab.
-   `studio release approve <project>` gives it, or Approve in the web UI.
+   is on, a count beside its lead in the sidebar, and a card on HQ and in the
+   lead's conversation. `studio release approve <project>` gives it, or
+   Publish in the web UI.
    `studio release cancel <project>` stops a release that is still checking or
    waiting. Once you approve, it can't be stopped.
 3. **The release commands** run in order in that same checkout, on the same
@@ -215,9 +216,9 @@ One file per hire in `hires/` (or a pack's `hires/`). The file name, without
 | `runtime` | yes | `claude-code`, the only runtime today. |
 | `model` | yes | Model id or alias, like `sonnet`. |
 | `escalate` | no | Stronger models to use after each failed attempt. The last one repeats. |
-| `budget_per_ticket_usd` | no | Cap for one ticket on this hire. |
+| `budget_per_ticket_usd` | no | Cap for one task on this hire. |
 | `daily_usd` | no | Cap for this hire over any rolling 24 hours. |
-| `tools` | no | Studio tools this hire may use. `file_ticket` lets it file tickets. |
+| `tools` | no | Studio tools this hire may use. `file_ticket` lets it file tasks. |
 | `user_mcp` | no | `true` gives this hire's runs your own Claude MCP servers as well. By default they get only the studio's tools. |
 | `effort` | no | Reasoning effort: `low`, `medium`, `high`, `xhigh` or `max`. |
 

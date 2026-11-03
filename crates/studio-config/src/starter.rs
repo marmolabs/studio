@@ -289,12 +289,35 @@ pub fn add_project(
     paths: &StudioPaths,
     project: NewProject<'_>,
 ) -> Result<AddedProject, StarterError> {
-    let ProjectPlan {
-        name,
-        path,
-        template,
-        ..
-    } = check_project(paths, &project)?;
+    let plan = check_project(paths, &project)?;
+    let template = plan.template.clone();
+    let added = add_entry(paths, &project, &plan)?;
+    let checks = added.path.join(".studio.toml");
+    let text = template.unwrap_or_else(|| project_checks(&added.path));
+    let created_checks = write_new(&checks, &text)?.then_some(checks);
+    Ok(AddedProject {
+        created_checks,
+        ..added
+    })
+}
+
+/// As `add_project`, but the project gets no `.studio.toml`: its checks are
+/// left for whoever sets it up, such as its lead.
+pub fn add_project_entry(
+    paths: &StudioPaths,
+    project: NewProject<'_>,
+) -> Result<AddedProject, StarterError> {
+    let plan = check_project(paths, &project)?;
+    add_entry(paths, &project, &plan)
+}
+
+/// Appends the project `plan` was made for to studio.toml.
+fn add_entry(
+    paths: &StudioPaths,
+    project: &NewProject<'_>,
+    plan: &ProjectPlan,
+) -> Result<AddedProject, StarterError> {
+    let (name, path) = (plan.name.clone(), plan.path.clone());
     let mut entry = format!(
         "\n[[projects]]\nname = {}\npath = {}\n",
         toml_string(&name),
@@ -313,14 +336,10 @@ pub fn add_project(
         .write_all(entry.as_bytes())?;
     // Fail loudly now rather than when the daemon next starts.
     StudioConfig::load(paths)?;
-
-    let checks = path.join(".studio.toml");
-    let text = template.unwrap_or_else(|| project_checks(&path));
-    let created_checks = write_new(&checks, &text)?.then_some(checks);
     Ok(AddedProject {
         name,
         path,
-        created_checks,
+        created_checks: None,
     })
 }
 
@@ -517,6 +536,30 @@ mod tests {
             again(Some("bad name")),
             Err(StarterError::BadName(_))
         ));
+    }
+
+    #[test]
+    fn a_project_can_be_added_without_guessed_checks() {
+        let (_tmp, paths) = home();
+        init(&paths).unwrap();
+        let shop = TempDir::new().unwrap();
+        fs::write(shop.path().join("Cargo.toml"), "[package]\n").unwrap();
+        let added = add_project_entry(
+            &paths,
+            NewProject {
+                path: shop.path(),
+                name: Some("shop"),
+                integration_branch: Some("master"),
+                daily_usd: None,
+                pack: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(added.name, "shop");
+        assert!(added.created_checks.is_none());
+        assert!(!shop.path().join(".studio.toml").exists());
+        let config = StudioConfig::load(&paths).unwrap();
+        assert_eq!(config.projects[0].name, "shop");
     }
 
     #[test]

@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
@@ -23,9 +24,16 @@ const STDERR_LIMIT: usize = 4096;
 /// The longest an agent's shell command may run: 30 minutes, as a check.
 const BASH_MAX_TIMEOUT_MS: &str = "1800000";
 
+/// How long a turn's result is held back when the agent was told something
+/// during the turn. The CLI answers a message that reached it mid-turn within
+/// that turn, but one that came too late for it as a turn of its own, which
+/// begins within a moment of the result; this is how long to wait for that.
+const SAID_GRACE: Duration = Duration::from_secs(3);
+
 pub struct ClaudeCode {
     program: PathBuf,
     prefix_args: Vec<String>,
+    said_grace: Duration,
 }
 
 impl Default for ClaudeCode {
@@ -33,6 +41,7 @@ impl Default for ClaudeCode {
         ClaudeCode {
             program: PathBuf::from("claude"),
             prefix_args: Vec::new(),
+            said_grace: SAID_GRACE,
         }
     }
 }
@@ -44,6 +53,7 @@ impl ClaudeCode {
         ClaudeCode {
             program: program.into(),
             prefix_args,
+            said_grace: Duration::from_millis(300),
         }
     }
 
@@ -171,7 +181,10 @@ impl Runtime for ClaudeCode {
             stdin,
             stdout,
             stderr,
-            spec.prompt,
+            Opening {
+                prompt: spec.prompt,
+                said_grace: self.said_grace,
+            },
             control_rx,
             event_tx,
         ));
@@ -441,6 +454,8 @@ fn reply(control: Control, pending: &mut HashMap<String, Value>, next_id: &mut u
                 json!({ "subtype": "interrupt" }),
             )
         }
+        // Another message from the user, as the first prompt was.
+        Control::Say { text } => user_message(&text),
     }
 }
 
@@ -454,12 +469,20 @@ async fn write_line(stdin: &mut Option<ChildStdin>, value: &Value) {
     }
 }
 
+/// What a run starts with.
+struct Opening {
+    /// The first message to the agent.
+    prompt: String,
+    /// See `SAID_GRACE`.
+    said_grace: Duration,
+}
+
 async fn drive(
     mut child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
     stderr: ChildStderr,
-    prompt: String,
+    Opening { prompt, said_grace }: Opening,
     mut controls: mpsc::Receiver<Control>,
     events: mpsc::Sender<RunEvent>,
 ) {
@@ -477,6 +500,13 @@ async fn drive(
     let mut pending: HashMap<String, Value> = HashMap::new();
     let mut finished = false;
     let mut controls_open = true;
+    // Whether the agent was told something during the turn now under way.
+    let mut said = false;
+    // A turn's result held back until it is known that no turn follows it.
+    let mut held: Option<RunEvent> = None;
+    let mut started = false;
+    let grace = tokio::time::sleep(said_grace);
+    tokio::pin!(grace);
     loop {
         tokio::select! {
             line = lines.next_line() => {
@@ -486,9 +516,22 @@ async fn drive(
                         Parsed::Unsupported { request_id } => {
                             write_line(&mut stdin, &control_error(&request_id, "not supported")).await;
                         }
+                        // A turn begins; one that follows a held result is
+                        // the answer to what the agent was told, and the
+                        // result of the earlier turn is no longer the last.
+                        Parsed::Event(RunEvent::Started { .. }) if started => {
+                            held = None;
+                            said = false;
+                        }
                         Parsed::Event(event) => {
                             remember_input(&line, &event, &mut pending);
+                            started = true;
                             if matches!(event, RunEvent::Finished { .. }) {
+                                if said {
+                                    grace.as_mut().reset(tokio::time::Instant::now() + said_grace);
+                                    held = Some(event);
+                                    continue;
+                                }
                                 finished = true;
                                 // Closing stdin lets the CLI exit.
                                 stdin = None;
@@ -500,6 +543,13 @@ async fn drive(
             }
             control = controls.recv(), if controls_open => match control {
                 Some(control) => {
+                    if matches!(control, Control::Say { .. }) {
+                        said = true;
+                        if held.is_some() {
+                            // A turn may follow: wait for it again.
+                            grace.as_mut().reset(tokio::time::Instant::now() + said_grace);
+                        }
+                    }
                     let line = reply(control, &mut pending, &mut next_id);
                     write_line(&mut stdin, &line).await;
                 }
@@ -509,9 +559,22 @@ async fn drive(
                     let _ = child.start_kill();
                 }
             },
+            () = &mut grace, if held.is_some() => {
+                // No turn followed the result: it was the last.
+                if let Some(event) = held.take() {
+                    finished = true;
+                    stdin = None;
+                    let _ = events.send(event).await;
+                }
+            }
         }
     }
     drop(stdin);
+    if let Some(event) = held.take() {
+        // The CLI ended before the wait was over.
+        finished = true;
+        let _ = events.send(event).await;
+    }
     let status = child.wait().await;
     let stderr = stderr_task.await.unwrap_or_default();
     if !finished {
@@ -631,6 +694,28 @@ mod tests {
         let interrupt = reply(Control::Interrupt, &mut pending, &mut next);
         assert_eq!(interrupt["type"], "control_request");
         assert_eq!(interrupt["request"]["subtype"], "interrupt");
+    }
+
+    #[test]
+    fn a_message_to_the_agent_is_written_as_a_user_message() {
+        let mut pending = HashMap::new();
+        pending.insert("r1".to_string(), json!({ "file_path": "a.txt" }));
+        let mut next = 0;
+        let said = reply(
+            Control::Say {
+                text: "Use three colours.".into(),
+            },
+            &mut pending,
+            &mut next,
+        );
+        // The same line the first prompt is sent as.
+        assert_eq!(said, user_message("Use three colours."));
+        assert_eq!(said["type"], "user");
+        assert_eq!(said["message"]["role"], "user");
+        assert_eq!(said["message"]["content"], "Use three colours.");
+        // It answers no request and starts none.
+        assert_eq!(pending.len(), 1);
+        assert_eq!(next, 0);
     }
 
     #[test]

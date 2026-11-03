@@ -1,6 +1,6 @@
 //! Asks: a worker waiting on the owner, and the owner's answer.
 
-use super::{Studio, StudioError, lock};
+use super::{Studio, StudioError, lock, shorten};
 use crate::api::AskView;
 use crate::now_ms;
 use serde_json::json;
@@ -37,6 +37,23 @@ impl Studio {
         input: serde_json::Value,
         reasons: Vec<String>,
     ) -> Result<Decision, StudioError> {
+        self.ask_titled(ticket, hire, kind, tool, input, reasons, String::new())
+            .await
+    }
+
+    /// `ask`, with the call put to the owner as a short plain question,
+    /// `title` (at most 60 characters; empty when there is none).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn ask_titled(
+        &self,
+        ticket: &TicketId,
+        hire: &str,
+        kind: &str,
+        tool: &str,
+        input: serde_json::Value,
+        reasons: Vec<String>,
+        title: String,
+    ) -> Result<Decision, StudioError> {
         let id = {
             let mut next = lock(&self.next_ask);
             *next += 1;
@@ -58,6 +75,7 @@ impl Studio {
             input,
             reasons,
             at_ms: now_ms(),
+            title,
         };
         lock(&self.asks).insert(id.clone(), PendingAsk { view, reply });
         let decision = answer.await.unwrap_or_else(|_| Decision::Deny {
@@ -88,13 +106,15 @@ impl Studio {
             "multi_select": false,
         }]);
         let decision = self
-            .ask(
+            .ask_titled(
                 &ticket.id,
                 &ticket.hire.0,
                 "question",
                 "ask_owner",
                 input,
                 Vec::new(),
+                // The agent's own question is the plain one.
+                shorten(question, 60),
             )
             .await?;
         Ok(match decision {

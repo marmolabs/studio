@@ -45,9 +45,22 @@ pub(crate) async fn ask(
     cwd: &Path,
     prompt: &str,
 ) -> Result<Reply, String> {
+    ask_capped(studio, for_ticket, project, hire, cwd, prompt, QUICK_USD).await
+}
+
+/// `ask`, with the call allowed to cost at most `cap_usd`.
+pub(crate) async fn ask_capped(
+    studio: &Arc<Studio>,
+    for_ticket: Option<&TicketId>,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<Reply, String> {
     let role = &hire.role;
     let for_ticket = for_ticket.map(TicketId::to_string).unwrap_or_default();
-    if !studio.has_headroom(project, hire, QUICK_USD, &for_ticket) {
+    if !studio.has_headroom(project, hire, cap_usd, &for_ticket) {
         return Err(format!("no budget left for the {role}"));
     }
     let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
@@ -58,7 +71,7 @@ pub(crate) async fn ask(
         effort: hire.effort.clone(),
         append_system_prompt: Some(hire.prompt.clone()).filter(|p| !p.trim().is_empty()),
         max_turns: Some(1),
-        max_budget_usd: Some(QUICK_USD),
+        max_budget_usd: Some(cap_usd),
         strict_mcp: true,
         mcp_config: None,
         disallowed_tools: [
@@ -115,7 +128,9 @@ pub(crate) async fn ask(
                     summary,
                 } => {
                     session = s;
-                    if let Some(summary) = summary {
+                    // The summary is the last words again, unless the run was
+                    // cut short before it said any.
+                    if let Some(summary) = summary.filter(|s| !text.contains(s.trim())) {
                         text.push_str(&summary);
                     }
                     let (usd, reported) = if cost.reported {
@@ -175,7 +190,20 @@ pub(crate) async fn ask_model(
     cwd: &Path,
     prompt: &str,
 ) -> Result<String, String> {
-    let reply = ask(studio, Some(ticket), project, hire, cwd, prompt).await?;
+    ask_model_capped(studio, ticket, project, hire, cwd, prompt, QUICK_USD).await
+}
+
+/// `ask_model`, with the call allowed to cost at most `cap_usd`.
+pub(crate) async fn ask_model_capped(
+    studio: &Arc<Studio>,
+    ticket: &TicketId,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<String, String> {
+    let reply = ask_capped(studio, Some(ticket), project, hire, cwd, prompt, cap_usd).await?;
     studio
         .record_spend(&reply.charge(ticket))
         .map_err(|e| e.to_string())?;

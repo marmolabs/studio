@@ -1,14 +1,12 @@
-//! The home page's pieces: the top bar's counters and spend, the company
-//! floor with a sign for each project, and the side panel's frame. Each
-//! piece that changes has an `id` and is re-sent whole by the live stream.
+//! The office view's pieces: the company floor with a sign for each project,
+//! its frame and controls, and the legend. Each piece that changes has an `id`
+//! and is re-sent whole by the live stream.
 
 use topcoat::view::{BoxView, Child, Unescaped, View, ViewExt, component, view};
 
 use super::hq_scene::{self, phase_key};
-use super::inspector::Detail;
 use super::iso::looks;
-use super::model::{Doing, Hq, Phase, Pin, PinWhat, Role, Scene, Team, Turn};
-use super::panel::{self, Extra};
+use super::model::{Doing, Phase, Pin, PinWhat, Role, Scene, Team, Turn};
 use super::{Office, facts, plan, safe};
 use crate::ui;
 
@@ -18,53 +16,9 @@ const ZOOM_STEP: &str = "0.4";
 /// The most faces a sign shows before it counts the rest.
 const FACES: usize = 4;
 
-/// Sets the tab and shows it: a picked task, hire, goal or project is put
-/// away.
-fn go(tab: &str) -> String {
-    format!("$tab = '{tab}'; if ($sel) {{ $sel = ''; @get('/office/panel') }}")
-}
-
-/// One click handler for everything on the floor with a `data-sel`.
-pub const PICK: &str = "const t = evt.target.closest('[data-sel]'); if (t) { $sel = t.dataset.sel; @get('/office/panel'); window.innerWidth <= 900 && document.getElementById('hq-panel').scrollIntoView({behavior: 'smooth', block: 'start'}) }";
-/// The same from the keyboard, for floor things that aren't buttons.
-const PICK_KEY: &str = "const t = evt.target.closest('.iso [data-sel]'); if (t && (evt.key === 'Enter' || evt.key === ' ')) { evt.preventDefault(); $sel = t.dataset.sel; @get('/office/panel'); window.innerWidth <= 900 && document.getElementById('hq-panel').scrollIntoView({behavior: 'smooth', block: 'start'}) }";
-
-/// The top bar's figures.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Hud {
-    pub projects: usize,
-    /// Projects with a release under way: checking, waiting or publishing.
-    pub releasing: usize,
-    /// Everything that waits on the owner, across the projects.
-    pub needs_you: usize,
-    /// Spent in the last 24 hours.
-    pub spent: f64,
-    /// Agents at work, and how many may be at once.
-    pub working: u64,
-    pub slots: u64,
-}
-
-impl Hud {
-    pub fn of(office: &Office, hq: &Hq) -> Hud {
-        Hud {
-            projects: hq.teams.len(),
-            releasing: office
-                .projects
-                .iter()
-                .filter(|p| p.release.as_ref().is_some_and(facts::is_releasing))
-                .count(),
-            needs_you: hq.owner_needs,
-            spent: office.status.spent_24h,
-            working: office.status.running,
-            slots: office.status.max_runs,
-        }
-    }
-}
-
-/// Everything the page draws apart from the side panel.
+/// Everything the office view draws of the floor.
 #[derive(Clone, Debug)]
 pub struct Parts {
-    pub hud: Hud,
     pub scene: Scene,
     pub projects: Vec<String>,
     pub closed: bool,
@@ -73,63 +27,16 @@ pub struct Parts {
 }
 
 impl Parts {
-    /// Everything but the panel, with the floor seen from `turn`.
-    pub fn of(office: &Office, extra: &Extra, turn: Turn) -> Parts {
-        let hq = plan::hq(office, extra);
+    /// The floor seen from `turn`.
+    pub fn of(office: &Office, turn: Turn) -> Parts {
+        let hq = plan::hq(office);
         Parts {
-            hud: Hud::of(office, &hq),
             scene: hq_scene::render(&hq, turn),
             projects: hq.teams.iter().map(|t| t.project.clone()).collect(),
             closed: hq.closed,
             turn,
         }
     }
-}
-
-/// What the owner is told of the company, and what they have spent.
-#[component]
-pub async fn figures(hud: Hud) -> topcoat::Result<impl View> {
-    let needs = hud.needs_you > 0;
-    let projects = if hud.projects == 1 {
-        "project"
-    } else {
-        "projects"
-    };
-    let spent = if hud.slots > 0 {
-        format!(
-            "Spent in the last 24 hours. {} of {} agents at work.",
-            hud.working, hud.slots
-        )
-    } else {
-        "Spent in the last 24 hours".to_string()
-    };
-    Ok(view! {
-        <div id="hq-figures" class="contents">
-            <div class="stats" aria-label="The company today">
-                <button type="button" class="stat" data-on:click=(go("projects"))>
-                    <b>(hud.projects)</b>
-                    <span class="lbl">(projects)</span>
-                </button>
-                <button type="button" class="stat" data-on:click=(go("projects"))>
-                    <b>(hud.releasing)</b>
-                    <span class="lbl">"releasing"</span>
-                </button>
-                <button type="button" class=(if needs { "stat needs" } else { "stat" }) data-on:click=(go("needs"))>
-                    if needs {
-                        <span class="ping"></span>
-                    } else {
-                        <span class="dot ok"></span>
-                    }
-                    <b>(hud.needs_you)</b>
-                    <span class="lbl">"need you"</span>
-                </button>
-            </div>
-            <a href="/?tab=money" class="ml-auto flex items-baseline gap-2 whitespace-nowrap text-[12.5px] text-fg-3 hover:text-fg-2" title=(spent)>
-                <span class="max-[520px]:hidden">"Spent today"</span>
-                <b class="text-[17px] font-semibold tabular-nums text-fg">(ui::usd(hud.spent))</b>
-            </a>
-        </div>
-    })
 }
 
 /// Sets `$zoom` to `to`, an expression, keeping what is in the middle of the
@@ -143,17 +50,27 @@ fn zoom(to: &str) -> String {
     )
 }
 
-/// A quarter turn to the left or the right; the floor is fetched at once, so
-/// the turn shows without waiting for the live stream.
-const TURN_LEFT: &str = "$turn = ($turn + 3) % 4; @get('/office/scene')";
-const TURN_RIGHT: &str = "$turn = ($turn + 1) % 4; @get('/office/scene')";
+/// What a quarter turn to the left or the right does; the floor is fetched at
+/// once from `scene`, so the turn shows without waiting for the live stream.
+fn turn_left(scene: &str) -> String {
+    format!("$turn = ($turn + 3) % 4; @get('{scene}')")
+}
+
+fn turn_right(scene: &str) -> String {
+    format!("$turn = ($turn + 1) % 4; @get('{scene}')")
+}
+
 /// Q turns left and E turns right, anywhere on the page but in a field and
 /// with no modifier key held.
-const TURN_KEYS: &str = "if (!(evt.ctrlKey || evt.metaKey || evt.altKey || evt.shiftKey)) { \
-    const t = evt.target; \
-    const typing = t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select, [contenteditable]'))); \
-    const k = (evt.key || '').toLowerCase(); \
-    if (!typing && (k === 'q' || k === 'e')) { $turn = ($turn + (k === 'q' ? 3 : 1)) % 4; @get('/office/scene') } }";
+fn turn_keys(scene: &str) -> String {
+    format!(
+        "if (!(evt.ctrlKey || evt.metaKey || evt.altKey || evt.shiftKey)) {{ \
+         const t = evt.target; \
+         const typing = t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select, [contenteditable]'))); \
+         const k = (evt.key || '').toLowerCase(); \
+         if (!typing && (k === 'q' || k === 'e')) {{ $turn = ($turn + (k === 'q' ? 3 : 1)) % 4; @get('{scene}') }} }}"
+    )
+}
 
 /// Dragging the floor with the mouse while zoomed in scrolls its frame. The
 /// drag lives on the frame as `_drag`; a drag of more than 4 pixels is not a
@@ -184,9 +101,10 @@ pub async fn wrap(child: Child<'_>) -> topcoat::Result<impl View> {
     })
 }
 
-/// The view controls above the floor.
+/// The view controls above the floor. A turn fetches the floor from `scene`,
+/// the address of the page's own route that draws it.
 #[component]
-pub async fn view_controls() -> topcoat::Result<impl View> {
+pub async fn view_controls(scene: &'static str) -> topcoat::Result<impl View> {
     let out = zoom(&format!(
         "Math.max(1, Math.round(($zoom - {ZOOM_STEP}) * 10) / 10)"
     ));
@@ -195,9 +113,9 @@ pub async fn view_controls() -> topcoat::Result<impl View> {
     ));
     let pressed = "aria-pressed:bg-bg-4 aria-pressed:text-fg aria-pressed:shadow-[inset_0_0_0_1px_var(--line-2)]";
     Ok(view! {
-        <div class="view-ctl" role="toolbar" aria-label="View" data-on:keydown__window=(TURN_KEYS)>
-            <button type="button" class=(ui::GHOST_SM) aria-label="Turn left" title="Turn left (Q)" data-on:click=(TURN_LEFT)>"↺"</button>
-            <button type="button" class=(ui::GHOST_SM) aria-label="Turn right" title="Turn right (E)" data-on:click=(TURN_RIGHT)>"↻"</button>
+        <div class="view-ctl" role="toolbar" aria-label="View" data-on:keydown__window=(turn_keys(scene))>
+            <button type="button" class=(ui::GHOST_SM) aria-label="Turn left" title="Turn left (Q)" data-on:click=(turn_left(scene))>"↺"</button>
+            <button type="button" class=(ui::GHOST_SM) aria-label="Turn right" title="Turn right (E)" data-on:click=(turn_right(scene))>"↻"</button>
             <button type="button" class=(ui::GHOST_SM) aria-label="Zoom out" data-attr:disabled="$zoom <= 1" data-on:click=(out)>"−"</button>
             <button type="button" class=(ui::GHOST_SM) data-on:click="$zoom = 1">"Fit"</button>
             <button type="button" class=(ui::GHOST_SM) aria-label="Zoom in" data-attr:disabled=(format!("$zoom >= {ZOOM_MAX}")) data-on:click=(into)>"+"</button>
@@ -222,7 +140,10 @@ pub async fn legend() -> topcoat::Result<impl View> {
 /// The floor: the drawing, the signs and labels pinned over it, and the
 /// closed sign, with `sel` marked. When a project is picked, the rest of the
 /// floor fades back. Zoom and hints come from the page's signals and are put
-/// back by Datastar whenever a patch changes the element.
+/// back by Datastar whenever a patch changes the element. `pick` and `pick_key`
+/// are what a click and a key on something of the floor do. The bell on a sign
+/// that has something waiting for the owner is a link to the project's
+/// conversation, where it waits.
 #[component]
 pub async fn floor_scene(
     scene: Scene,
@@ -230,6 +151,8 @@ pub async fn floor_scene(
     closed: bool,
     sel: String,
     turn: Turn,
+    pick: &'static str,
+    pick_key: &'static str,
 ) -> topcoat::Result<impl View> {
     let style = format!("--ar: {} / {}", scene.width, scene.height);
     let class = if closed { "scene closed" } else { "scene" };
@@ -240,7 +163,7 @@ pub async fn floor_scene(
     let svg = Unescaped::new_unchecked(picked(scene.svg, &sel));
     let [f0, f1, f2, f3] = scene.forms.map(|f| f.to_string());
     Ok(view! {
-        <div id="hq-scene" class=(class) style=(style) data-turn=(turn.index().to_string()) data-focus=(focus) data-f0=(f0) data-f1=(f1) data-f2=(f2) data-f3=(f3) data-style="{'--zoom': $zoom}" data-class:show-hints="$hints" data-on:click=(PICK) data-on:keydown=(PICK_KEY)>
+        <div id="hq-scene" class=(class) style=(style) data-turn=(turn.index().to_string()) data-focus=(focus) data-f0=(f0) data-f1=(f1) data-f2=(f2) data-f3=(f3) data-style="{'--zoom': $zoom}" data-class:show-hints="$hints" data-on:click=(pick) data-on:keydown=(pick_key)>
             (svg)
             <div class="ov">
                 for pin in scene.pins {
@@ -476,10 +399,10 @@ async fn sign_card(team: Team, selected: bool) -> topcoat::Result<impl View> {
                 </span>
             </button>
             if needs > 0 {
-                <button type="button" class="bell" aria-label=(bell.clone()) title=(bell) data-on:click=(go("needs"))>
+                <a class="bell" href=(crate::pages::team::lead_href(&team.project)) aria-label=(bell.clone()) title=(bell)>
                     <svg class="bell-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7.5 2 7.5H4S6 15 6 9z"></path><path d="M10 20a2 2 0 0 0 4 0"></path></svg>
                     <b>(needs)</b>
-                </button>
+                </a>
             }
         </div>
     })
@@ -575,23 +498,6 @@ async fn pin_view(pin: Pin, projects: Vec<String>, sel: String) -> topcoat::Resu
         <div class=(class) data-for=(hint) data-pj=(pj.map(|n| n.to_string())) data-phase=(phase) style=(place)>
             (body)
         </div>
-    })
-}
-
-/// The side panel's frame; its content is the panel's own.
-#[component]
-pub async fn side(
-    office: Office,
-    detail: Detail,
-    extra: Extra,
-    sel: String,
-    tab: String,
-    history: usize,
-) -> topcoat::Result<impl View> {
-    Ok(view! {
-        <aside id="hq-panel" class="panel overflow-y-auto max-[900px]:overflow-visible max-[900px]:border-l-0! max-[900px]:border-t! max-[900px]:border-line" aria-label="What needs you, projects and the company">
-            panel::panel(office: office, detail: detail, extra: extra, sel: sel, tab: tab, history: history)
-        </aside>
     })
 }
 
@@ -700,66 +606,5 @@ mod tests {
                 ("kit".to_string(), "kit".to_string(), Role::Engineer)
             ]
         );
-    }
-
-    fn project(name: &str, release: Option<&str>) -> studiod::api::ProjectView {
-        let release = release.map(|state| {
-            serde_json::json!({
-                "project": name, "version": "1.2", "state": state, "steps": [], "started_at": 0,
-            })
-        });
-        studiod::api::ProjectView {
-            name: name.into(),
-            release: release.map(|r| serde_json::from_value(r).unwrap()),
-            ..studiod::api::ProjectView::default()
-        }
-    }
-
-    #[test]
-    fn the_hud_counts_projects_releases_and_what_waits() {
-        let hq = Hq {
-            teams: vec![
-                team(Phase::Releasing),
-                team(Phase::Building),
-                team(Phase::Live),
-            ],
-            owner_needs: 2,
-            ..Hq::default()
-        };
-        let mut office = Office {
-            status: serde_json::from_value(serde_json::json!({"spent_24h": 6.4})).unwrap(),
-            projects: vec![
-                project("shop", Some("checking")),
-                project("docs", None),
-                project("api", Some("released")),
-            ],
-            ..Office::default()
-        };
-        let hud = |office: &Office| Hud::of(office, &hq);
-        assert_eq!(
-            hud(&office),
-            Hud {
-                projects: 3,
-                releasing: 1,
-                needs_you: 2,
-                spent: 6.4,
-                working: 0,
-                slots: 0
-            }
-        );
-        // Every release under way counts, whatever phase its project shows:
-        // checking, waiting for the go-ahead or publishing, the office
-        // closed or not; one that finished, failed or was cancelled doesn't.
-        office.projects = vec![
-            project("a", Some("checking")),
-            project("b", Some("waiting")),
-            project("c", Some("publishing")),
-            project("d", Some("failed")),
-            project("e", Some("cancelled")),
-            project("f", Some("released")),
-        ];
-        assert_eq!(hud(&office).releasing, 3);
-        office.status.closed = true;
-        assert_eq!(hud(&office).releasing, 3);
     }
 }

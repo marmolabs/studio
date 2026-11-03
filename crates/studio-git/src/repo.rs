@@ -186,6 +186,66 @@ impl Repo {
             .is_ok_and(|out| out.status.success())
     }
 
+    /// The commit a ticket's work on `branch` started from, as recorded when
+    /// its worktree was made (and moved on by a merge into it). It stays with
+    /// the branch after the worktree is gone; `None` when none is recorded.
+    pub fn recorded_base(&self, branch: &str) -> Option<String> {
+        let out = output(&self.root, &["config", "--get", &base_key(branch)]).ok()?;
+        let base = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !base.is_empty()).then_some(base)
+    }
+
+    /// `git diff --stat` of what `to` holds over `from`, or `None` when
+    /// either is not a commit. With `since_parting` it is only what `to` has
+    /// added since the two parted, so what `from` has gone on with is left out.
+    pub fn diff_stat_between(
+        &self,
+        from: &str,
+        to: &str,
+        since_parting: bool,
+    ) -> Result<Option<String>> {
+        self.diff_commits(from, to, since_parting, Some("--stat"))
+    }
+
+    /// The same as a unified diff.
+    pub fn diff_between(
+        &self,
+        from: &str,
+        to: &str,
+        since_parting: bool,
+    ) -> Result<Option<String>> {
+        self.diff_commits(from, to, since_parting, None)
+    }
+
+    fn diff_commits(
+        &self,
+        from: &str,
+        to: &str,
+        since_parting: bool,
+        flag: Option<&str>,
+    ) -> Result<Option<String>> {
+        if !(self.is_commit(from)? && self.is_commit(to)?) {
+            return Ok(None);
+        }
+        let dots = if since_parting { "..." } else { ".." };
+        let range = format!("{from}{dots}{to}");
+        let mut args = vec!["diff"];
+        args.extend(flag);
+        args.extend([range.as_str(), "--"]);
+        Ok(Some(run(&self.root, &args)?))
+    }
+
+    /// Whether `rev` names a commit. A name that git would take for an option
+    /// is not one.
+    fn is_commit(&self, rev: &str) -> Result<bool> {
+        if rev.starts_with('-') {
+            return Ok(false);
+        }
+        let spec = format!("{rev}^{{commit}}");
+        let args = ["rev-parse", "--verify", "--quiet", spec.as_str()];
+        Ok(output(&self.root, &args)?.status.success())
+    }
+
     /// The commit each local branch and `HEAD` point at, from one git call.
     pub fn branch_tips(&self) -> Result<HashMap<String, String>> {
         let refs = run(&self.root, &["show-ref", "--head"])?;

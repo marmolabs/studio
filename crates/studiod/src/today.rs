@@ -45,6 +45,74 @@ pub(crate) fn from_events(
     }
 }
 
+/// What happened in a project over a stretch of time, for its lead's standup.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Day {
+    /// The tasks that passed review, by ticket id, in the order they did.
+    pub done: Vec<String>,
+    /// Goals whose plan was made.
+    pub planned: usize,
+    /// Times work went back to its agent, from review or from the owner.
+    pub sent_back: usize,
+    /// Tasks that failed.
+    pub failed: usize,
+}
+
+impl Day {
+    /// Whether nothing happened.
+    pub(crate) fn is_quiet(&self) -> bool {
+        *self == Day::default()
+    }
+
+    /// What happened in a few plain words, such as "2 tasks done, 1 sent
+    /// back": empty when nothing did.
+    pub(crate) fn words(&self) -> String {
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut parts = Vec::new();
+        if !self.done.is_empty() {
+            parts.push(plural(self.done.len(), "task done", "tasks done"));
+        }
+        if self.sent_back > 0 {
+            parts.push(format!("{} sent back", self.sent_back));
+        }
+        if self.failed > 0 {
+            parts.push(format!("{} failed", self.failed));
+        }
+        if self.planned > 0 {
+            parts.push(plural(self.planned, "goal planned", "goals planned"));
+        }
+        parts.join(", ")
+    }
+}
+
+/// What happened to the tickets of `project` in `events`: work that passed
+/// review (a ticket counts once however often it got there), plans that
+/// landed, work sent back and tickets that failed.
+pub(crate) fn project_day(project: &str, tickets: &[Ticket], events: &[StoredEvent]) -> Day {
+    let ours: HashMap<String, &Ticket> = tickets
+        .iter()
+        .filter(|t| t.project.0 == project)
+        .map(|t| (t.id.to_string(), t))
+        .collect();
+    let mut day = Day::default();
+    for stored in events {
+        let id = stored.ticket_id.to_string();
+        let Some(ticket) = ours.get(&id) else {
+            continue;
+        };
+        let plan = ticket.kind == TicketKind::Plan;
+        match &stored.event {
+            Event::ReviewPassed if !plan && !day.done.contains(&id) => day.done.push(id),
+            Event::Landed if plan => day.planned += 1,
+            Event::ChangesRequested { .. } | Event::ReviewFailed { .. } => day.sent_back += 1,
+            Event::Failed { .. } => day.failed += 1,
+            _ => {}
+        }
+    }
+    day
+}
+
 /// Each run log changed at or after `since` (epoch ms), as its ticket id and
 /// its text.
 fn fresh_logs(runs: &Path, since: u64) -> impl Iterator<Item = (String, String)> {
@@ -225,6 +293,44 @@ mod tests {
             at_ms: 0,
             event,
         }
+    }
+
+    #[test]
+    fn a_projects_day_counts_what_happened_to_its_tickets() {
+        let tickets = [
+            ticket("GAME-1", "dev", "work"),
+            ticket("GAME-2", "dev", "work"),
+            ticket("GAME-3", "producer", "plan"),
+        ];
+        let other = Ticket {
+            project: studio_core::ids::ProjectId::new("shop"),
+            ..ticket("SHOP-1", "dev", "work")
+        };
+        let tickets = [&tickets[..], &[other]].concat();
+        let events = [
+            stored("GAME-1", Event::ReviewPassed),
+            stored("GAME-1", Event::ReviewPassed),
+            stored("GAME-2", Event::ReviewFailed { detail: "x".into() }),
+            stored("GAME-2", Event::ChangesRequested { detail: "y".into() }),
+            stored("GAME-3", Event::Landed),
+            stored("GAME-3", Event::ReviewPassed),
+            stored("SHOP-1", Event::ReviewPassed),
+            stored("NONE-1", Event::ReviewPassed),
+        ];
+        let day = project_day("game", &tickets, &events);
+        assert_eq!(day.done, ["GAME-1"]);
+        assert_eq!((day.planned, day.sent_back, day.failed), (1, 2, 0));
+        assert_eq!(day.words(), "1 task done, 2 sent back, 1 goal planned");
+        assert!(!day.is_quiet());
+        let quiet = project_day("game", &tickets, &[]);
+        assert!(quiet.is_quiet());
+        assert_eq!(quiet.words(), "");
+        let busy = Day {
+            done: vec!["A".into(), "B".into()],
+            failed: 1,
+            ..Day::default()
+        };
+        assert_eq!(busy.words(), "2 tasks done, 1 failed");
     }
 
     #[test]

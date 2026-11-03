@@ -534,6 +534,39 @@ fn migrates_from_schema_version_1() {
 }
 
 #[test]
+fn tickets_made_in_the_same_millisecond_keep_the_order_they_were_made_in() {
+    let mut store = Store::open_in_memory().unwrap();
+    let ids = |tickets: Vec<Ticket>| -> Vec<String> {
+        tickets.into_iter().map(|t| t.id.to_string()).collect()
+    };
+    // Made in this order within one millisecond. As text the ids sort the
+    // other way round: "SHOP-10" comes before "SHOP-9".
+    for id in ["SHOP-9", "SHOP-10"] {
+        let (id, at, event) = created(id, "shop", 5);
+        store.append(&id, at, &event).unwrap();
+    }
+    assert_eq!(ids(store.tickets().unwrap()), ["SHOP-9", "SHOP-10"]);
+    assert_eq!(
+        ids(store.tickets_in("queued").unwrap()),
+        ["SHOP-9", "SHOP-10"]
+    );
+
+    // The first one made runs first. Claiming it writes its row again, which
+    // must not send it behind the other.
+    assert_eq!(store.claim_next(6).unwrap().unwrap().id, tid("SHOP-9"));
+    assert_eq!(ids(store.tickets().unwrap()), ["SHOP-9", "SHOP-10"]);
+    assert_eq!(ids(store.tickets_in("queued").unwrap()), ["SHOP-10"]);
+    assert_eq!(store.claim_next(7).unwrap().unwrap().id, tid("SHOP-10"));
+    assert_eq!(ids(store.in_flight().unwrap()), ["SHOP-9", "SHOP-10"]);
+
+    // Nor may making the rows again from the events, which writes them in the
+    // order of the ids as text.
+    store.rebuild_projections().unwrap();
+    assert_eq!(ids(store.tickets().unwrap()), ["SHOP-9", "SHOP-10"]);
+    assert_eq!(ids(store.in_flight().unwrap()), ["SHOP-9", "SHOP-10"]);
+}
+
+#[test]
 fn claim_takes_only_a_queued_ticket() {
     let mut store = Store::open_in_memory().unwrap();
     for (n, at) in [("t-1", 1), ("t-2", 2)] {

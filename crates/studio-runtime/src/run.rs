@@ -153,6 +153,11 @@ pub enum Control {
         answers: BTreeMap<String, String>,
     },
     Interrupt,
+    /// Says something to the agent in the middle of its work, as a new message
+    /// from the user.
+    Say {
+        text: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -203,5 +208,43 @@ impl Run {
 
     pub async fn interrupt(&self) -> Result<(), RuntimeError> {
         self.send(Control::Interrupt).await
+    }
+
+    /// Says `text` to the agent while it works.
+    pub async fn say(&self, text: &str) -> Result<(), RuntimeError> {
+        self.send(Control::Say {
+            text: text.to_string(),
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[tokio::test]
+    async fn saying_something_sends_a_message_to_the_agent() {
+        let (_events, events_in) = mpsc::channel(1);
+        let (control, mut controls) = mpsc::channel(4);
+        let run = Run::new(events_in, control);
+        run.say("Use three colours.").await.unwrap();
+        run.say("And keep it short.").await.unwrap();
+        let said = |text: &str| Some(Control::Say { text: text.into() });
+        assert_eq!(controls.recv().await, said("Use three colours."));
+        assert_eq!(controls.recv().await, said("And keep it short."));
+    }
+
+    #[tokio::test]
+    async fn saying_something_to_a_run_that_has_ended_is_an_error() {
+        let (_events, events_in) = mpsc::channel(1);
+        let (control, controls) = mpsc::channel(1);
+        let run = Run::new(events_in, control);
+        drop(controls);
+        assert!(matches!(
+            run.say("Too late.").await,
+            Err(RuntimeError::Closed)
+        ));
     }
 }

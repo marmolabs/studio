@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -8,6 +8,7 @@ use studiod::api::{FileKind, Request, call};
 use studiod::export;
 
 mod mcp;
+mod talk;
 mod up;
 
 /// Talk to a running studio (`studiod`).
@@ -112,12 +113,30 @@ enum Command {
         /// The lead's hire id (default: none, which clears the lead).
         hire: Option<String>,
     },
+    /// Talk to the lead of a project. With a message, it is sent and the
+    /// lead's reply is shown; without, the last messages are.
+    Talk {
+        /// Project name from studio.toml.
+        project: String,
+        /// What to say; the words may be given without quotes.
+        text: Vec<String>,
+    },
     /// Every ticket and its state.
     Board,
-    /// Run the studio-tools MCP server on stdio, for one ticket's agent.
+    /// Run the studio-tools MCP server on stdio, for one ticket's agent, for
+    /// a lead talking with you about a project, or for a lead setting a
+    /// project up: give exactly one of --ticket, --talk and --setup.
+    #[command(group(ArgGroup::new("mode").required(true).args(["ticket", "talk", "setup"])))]
     Mcp {
+        /// Serve this ticket's agent.
         #[arg(long)]
-        ticket: String,
+        ticket: Option<String>,
+        /// Serve the lead of this project, in conversation with you.
+        #[arg(long)]
+        talk: Option<String>,
+        /// Serve the lead of this project, setting it up.
+        #[arg(long)]
+        setup: Option<String>,
         /// studiod's socket; studiod passes it so the server needs no config.
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -285,9 +304,20 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
         Command::Init => return init(paths),
         Command::Doctor => return doctor(paths),
         Command::Export { ticket } => return export(paths, &ticket),
-        Command::Mcp { ticket, socket } => {
+        Command::Mcp {
+            ticket,
+            talk,
+            setup,
+            socket,
+        } => {
+            let mode = match (ticket, talk, setup) {
+                (Some(ticket), None, None) => mcp::Mode::Ticket(ticket),
+                (None, Some(project), None) => mcp::Mode::Talk(project),
+                (None, None, Some(project)) => mcp::Mode::Setup(project),
+                _ => return Err("give exactly one of --ticket, --talk and --setup".into()),
+            };
             let socket = socket.unwrap_or_else(|| studiod::api::socket_path(&paths.data_dir));
-            return mcp::serve(&socket, &ticket);
+            return mcp::serve(&socket, &mode);
         }
         Command::Project(ProjectCommand::Add {
             path,
@@ -298,6 +328,9 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
         }) => return add_project(paths, &path, name, branch, daily_usd, pack),
         Command::Pack(PackCommand::Add { path }) => return add_pack(paths, &path),
         Command::Lead { project, hire } => return set_lead(paths, &project, hire),
+        Command::Talk { project, text } => {
+            return talk::run(&socket, &project, &text.join(" "), json, now_ms());
+        }
         Command::Rule(RuleCommand::Test { rule, since }) => {
             return test_rule(paths, &rule, &since, json);
         }
@@ -416,7 +449,10 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
     let is_board = matches!(request, Request::Tickets);
     let is_asks = matches!(request, Request::Asks);
     let is_budget = matches!(request, Request::Budget);
-    let is_diff = matches!(request, Request::Diff { .. });
+    let diff_of = match &request {
+        Request::Diff { ticket } => Some(ticket.clone()),
+        _ => None,
+    };
     let is_release = matches!(
         request,
         Request::StartRelease { .. }
@@ -435,10 +471,10 @@ fn run(paths: &StudioPaths, command: Command, json: bool) -> Result<(), String> 
             "{}",
             serde_json::to_string_pretty(&response.data).unwrap_or_default()
         );
-    } else if is_diff {
+    } else if let Some(ticket) = diff_of {
         match response.data.as_str() {
-            Some(diff) => print!("{diff}"),
-            None => println!("its worktree is gone: the change was landed or cleaned up"),
+            Some(diff) if !diff.is_empty() => print!("{diff}"),
+            shown => println!("{}", nothing_to_show(&socket, &ticket, shown.is_some())),
         }
     } else if is_board {
         // The ETA column is a nicety: without it the board still prints.
@@ -493,6 +529,64 @@ fn project_of(socket: &std::path::Path, ticket: &str) -> Result<String, String> 
         .and_then(|t| t["project"].as_str())
         .map(str::to_string)
         .ok_or_else(|| format!("no ticket {ticket}"))
+}
+
+/// What `studio diff` says when studiod has no change to show for `ticket`,
+/// whether it answered with an empty change (`empty`) or with none. The
+/// ticket's own record, asked for here, tells what is true of it.
+fn nothing_to_show(socket: &std::path::Path, ticket: &str, empty: bool) -> String {
+    let tickets = fetch(socket, &Request::Tickets).unwrap_or_default();
+    let found = tickets
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|t| t["id"] == ticket);
+    no_change(ticket, found, empty)
+}
+
+/// Why `id` has no change to show, from what is true of it now: `ticket` is
+/// its record, if studiod listed it, and `empty` whether git gave an empty
+/// change rather than none. Where studiod reads a change from depends on the
+/// ticket: the goal's branch for a goal's plan, the worktree for a task that
+/// is not done, and for a task that landed the branch kept after its worktree
+/// went, which `studio gc` clears once the goal's branch holds it.
+fn no_change(id: &str, ticket: Option<&Value>, empty: bool) -> String {
+    let Some(ticket) = ticket else {
+        return format!("No change to show for {id}");
+    };
+    let (yet, why) = if ticket["kind"] == "plan" {
+        if empty {
+            let base = ticket["base_branch"].as_str().unwrap_or("its base");
+            (false, format!("{id}'s goal adds nothing to {base}"))
+        } else {
+            (true, format!("no task of {id}'s goal has landed"))
+        }
+    } else {
+        match (state_of(ticket).as_str(), empty) {
+            ("landed", true) => (false, format!("{id} landed without changing anything")),
+            ("landed", false) => (false, format!("{id}'s branch was cleared (studio gc)")),
+            ("cancelled", _) => (false, format!("{id} was cancelled")),
+            (_, true) => (true, format!("{id} hasn't changed anything")),
+            ("queued" | "claimed", false) => (true, format!("{id} hasn't started")),
+            _ => (false, format!("{id}'s worktree is gone")),
+        }
+    };
+    let head = if yet {
+        "No change yet"
+    } else {
+        "No change to show"
+    };
+    format!("{head}: {why}")
+}
+
+/// The state of a ticket's record: a plain state is a string, one that
+/// carries something (`held`, `asking`, `failed`) an object named by it.
+fn state_of(ticket: &Value) -> String {
+    match &ticket["state"] {
+        Value::String(s) => s.clone(),
+        Value::Object(map) => map.keys().next().cloned().unwrap_or_default(),
+        _ => String::new(),
+    }
 }
 
 /// A rule drafted from denying `ask`, which must still be waiting.
@@ -838,11 +932,7 @@ fn print_board(tickets: &Value, etas: &Value, now_ms: u64) {
         println!("No tickets yet. Create one with `studio ticket`.");
     }
     for t in tickets {
-        let state = match &t["state"] {
-            Value::String(s) => s.clone(),
-            Value::Object(map) => map.keys().next().cloned().unwrap_or_default(),
-            _ => String::new(),
-        };
+        let state = state_of(&t);
         let mut title = t["title"].as_str().unwrap_or_default().to_string();
         if t["kind"] == "plan" {
             match t["version"].as_str() {
@@ -1195,8 +1285,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        Command, Draft, draft_name, eta_text, parse_since, put_project_in_studio, put_project_lead,
-        release_lines, releases_lines, ruleable, run, status_lines,
+        Command, Draft, draft_name, eta_text, no_change, nothing_to_show, parse_since,
+        put_project_in_studio, put_project_lead, release_lines, releases_lines, ruleable, run,
+        status_lines,
     };
     use serde_json::{Value, json};
     use std::io::{BufRead, BufReader, Write};
@@ -1247,18 +1338,33 @@ mod tests {
         }
     }
 
+    /// A studiod that answers its requests with `replies`, one each in turn,
+    /// and hands the requests it got to the test.
+    fn fake_studiod_all(
+        home: &Home,
+        replies: Vec<Response>,
+    ) -> std::thread::JoinHandle<Vec<Value>> {
+        let listener = UnixListener::bind(socket_path(&home.paths.data_dir)).unwrap();
+        std::thread::spawn(move || {
+            replies
+                .into_iter()
+                .map(|reply| {
+                    let (stream, _) = listener.accept().unwrap();
+                    let mut line = String::new();
+                    BufReader::new(&stream).read_line(&mut line).unwrap();
+                    let mut writer = &stream;
+                    writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                    serde_json::from_str(&line).unwrap()
+                })
+                .collect()
+        })
+    }
+
     /// A studiod that answers one request with `reply` and hands the request
     /// it got to the test.
     fn fake_studiod(home: &Home, reply: Response) -> std::thread::JoinHandle<Value> {
-        let listener = UnixListener::bind(socket_path(&home.paths.data_dir)).unwrap();
-        std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut line = String::new();
-            BufReader::new(&stream).read_line(&mut line).unwrap();
-            let mut writer = &stream;
-            writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
-            serde_json::from_str(&line).unwrap()
-        })
+        let all = fake_studiod_all(home, vec![reply]);
+        std::thread::spawn(move || all.join().unwrap().remove(0))
     }
 
     fn sent(request: Request) -> Value {
@@ -1326,6 +1432,40 @@ mod tests {
                 project: Some("game".into())
             })
         );
+    }
+
+    #[test]
+    fn the_mcp_server_serves_exactly_one_of_a_ticket_a_talk_and_a_setup() {
+        use clap::Parser;
+        let parse = |args: &[&str]| {
+            let args = ["studio", "mcp"].into_iter().chain(args.iter().copied());
+            super::Cli::try_parse_from(args).map(|cli| cli.command)
+        };
+        let served = |args: &[&str]| match parse(args).unwrap() {
+            Command::Mcp {
+                ticket,
+                talk,
+                setup,
+                socket,
+            } => (ticket, talk, setup, socket),
+            _ => panic!("not the mcp command"),
+        };
+        assert_eq!(
+            served(&["--ticket", "GAME-1"]),
+            (Some("GAME-1".into()), None, None, None)
+        );
+        assert_eq!(
+            served(&["--talk", "shop", "--socket", "/tmp/s.sock"]),
+            (None, Some("shop".into()), None, Some("/tmp/s.sock".into()))
+        );
+        assert_eq!(
+            served(&["--setup", "garden"]),
+            (None, None, Some("garden".into()), None)
+        );
+        assert!(parse(&[]).is_err());
+        assert!(parse(&["--socket", "/tmp/s.sock"]).is_err());
+        assert!(parse(&["--ticket", "GAME-1", "--talk", "shop"]).is_err());
+        assert!(parse(&["--talk", "shop", "--setup", "garden"]).is_err());
     }
 
     #[test]
@@ -1575,6 +1715,138 @@ mod tests {
             ),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_diff_with_nothing_to_show_says_what_is_true_of_the_task() {
+        fn record(kind: &str, state: Value) -> Value {
+            json!({"id": "GARD-3", "kind": kind, "state": state, "base_branch": "main"})
+        }
+        let work = |state: Value| record("work", state);
+        let plan = |state: &str| record("plan", json!(state));
+        // What is said of a record when git gave an empty change, or none.
+        let says = |ticket: Value, empty: bool| no_change("GARD-3", Some(&ticket), empty);
+        let asking = json!({"asking": {"ask": "a1"}});
+        let held = json!({"held": {"reason": "paused"}});
+        let failed = json!({"failed": {"class": "checks", "detail": "x"}});
+
+        // A task that landed is read from the branch it kept, until `studio
+        // gc` clears the branch.
+        assert_eq!(
+            says(work(json!("landed")), false),
+            "No change to show: GARD-3's branch was cleared (studio gc)"
+        );
+        assert_eq!(
+            says(work(json!("landed")), true),
+            "No change to show: GARD-3 landed without changing anything"
+        );
+        // A task that has not begun has no worktree to read yet.
+        for state in ["queued", "claimed"] {
+            assert_eq!(
+                says(work(json!(state)), false),
+                "No change yet: GARD-3 hasn't started",
+                "{state}"
+            );
+        }
+        // One that has begun and has none has lost it.
+        for state in [json!("working"), failed.clone()] {
+            assert_eq!(
+                says(work(state.clone()), false),
+                "No change to show: GARD-3's worktree is gone",
+                "{state}"
+            );
+        }
+        // One that has not changed anything yet, wherever it has got to.
+        for state in [
+            json!("queued"),
+            json!("working"),
+            asking,
+            held,
+            json!("checking"),
+            json!("reviewing"),
+            json!("ready"),
+            failed,
+        ] {
+            assert_eq!(
+                says(work(state.clone()), true),
+                "No change yet: GARD-3 hasn't changed anything",
+                "{state}"
+            );
+        }
+        // A cancelled one, whether or not its worktree is cleared.
+        for empty in [false, true] {
+            assert_eq!(
+                says(work(json!("cancelled")), empty),
+                "No change to show: GARD-3 was cancelled"
+            );
+        }
+        // A goal's is its branch against the one it ships to.
+        for state in ["working", "landed"] {
+            assert_eq!(
+                says(plan(state), false),
+                "No change yet: no task of GARD-3's goal has landed"
+            );
+        }
+        assert_eq!(
+            says(plan("landed"), true),
+            "No change to show: GARD-3's goal adds nothing to main"
+        );
+        // A task studiod does not list.
+        assert_eq!(
+            no_change("GARD-3", None, false),
+            "No change to show for GARD-3"
+        );
+    }
+
+    #[test]
+    fn nothing_to_show_asks_studiod_which_task_it_is() {
+        let home = Home::new("nothing-to-show");
+        let tickets = json!([
+            {"id": "GARD-2", "kind": "work", "state": "queued", "base_branch": "main"},
+            {"id": "GARD-3", "kind": "work", "state": "landed", "base_branch": "main"},
+        ]);
+        let studiod = fake_studiod(&home, Response::ok(tickets));
+        let socket = socket_path(&home.paths.data_dir);
+        assert_eq!(
+            nothing_to_show(&socket, "GARD-3", false),
+            "No change to show: GARD-3's branch was cleared (studio gc)"
+        );
+        assert_eq!(studiod.join().unwrap(), sent(Request::Tickets));
+
+        // With no studiod to ask, it still says there is nothing.
+        let home = Home::new("nothing-to-show-alone");
+        assert_eq!(
+            nothing_to_show(&socket_path(&home.paths.data_dir), "GARD-3", false),
+            "No change to show for GARD-3"
+        );
+    }
+
+    #[test]
+    fn studio_diff_asks_for_the_task_only_when_there_is_no_change() {
+        let diff = || Command::Diff {
+            ticket: "GARD-3".into(),
+        };
+        let asked = || {
+            sent(Request::Diff {
+                ticket: "GARD-3".into(),
+            })
+        };
+
+        let home = Home::new("diff-change");
+        let change = "diff --git a/menu.txt b/menu.txt\n+Escape closes it\n";
+        let studiod = fake_studiod_all(&home, vec![Response::ok(change)]);
+        run(&home.paths, diff(), false).unwrap();
+        assert_eq!(studiod.join().unwrap(), [asked()]);
+
+        // A change that is nothing and a change that is not there both lead
+        // to asking which task it is.
+        for (label, nothing) in [("empty", json!("")), ("none", Value::Null)] {
+            let home = Home::new(&format!("diff-{label}"));
+            let task = json!([{"id": "GARD-3", "kind": "work", "state": "working"}]);
+            let studiod = fake_studiod_all(&home, vec![Response::ok(nothing), Response::ok(task)]);
+            run(&home.paths, diff(), false).unwrap();
+            assert_eq!(studiod.join().unwrap(), [asked(), sent(Request::Tickets)]);
+        }
     }
 
     fn draft(name: &str, text: &str) -> Draft {

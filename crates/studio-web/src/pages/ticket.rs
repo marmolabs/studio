@@ -101,7 +101,9 @@ fn mergeable(ticket: &Ticket) -> bool {
     ticket.state.kind() == "landed" && ticket.kind != TicketKind::Plan
 }
 
-/// What the ticket changed; nothing once the worktree is gone.
+/// What the ticket changed, as studiod reads it from git: from its worktree,
+/// or from its branch once it landed; for a goal's plan ticket, what the goal
+/// adds to the base it ships to. Nothing once there is none to read.
 #[derive(Clone, Debug, Default)]
 struct Changed {
     /// Each file as (path, added, removed), from the diff, which studiod
@@ -731,13 +733,12 @@ fn gate_stage(gate: &str) -> String {
     format!("{first}{} gate", chars.as_str())
 }
 
-/// Where a work ticket's goal is in the office: its plan ticket's panel.
+/// Where a work ticket's goal is looked at: its plan ticket, from the
+/// conversation with the project's lead.
 fn goal_link(ticket: &Ticket) -> Option<String> {
     let plan = ticket.parent.as_ref()?;
-    Some(format!(
-        "/?sel={}",
-        super::office::key("goals", &plan.to_string())
-    ))
+    let lead = super::team::lead_href(&ticket.project.to_string());
+    Some(format!("{lead}?look={plan}"))
 }
 
 /// The title, who filed the ticket and from which goal, and what it asks for.
@@ -1310,8 +1311,8 @@ mod tests {
         assert!(html.contains("<br />"), "{html}");
         assert!(html.contains(">producer"), "{html}");
         assert!(html.contains("filed this"), "{html}");
-        // The goal leads to its plan's panel in the office.
-        assert!(html.contains(r#"href="/?sel=goals/GAME-1""#), "{html}");
+        // The goal leads to its plan, looked at from the lead's conversation.
+        assert!(html.contains(r#"href="/leads/game?look=GAME-1""#), "{html}");
     }
 
     #[tokio::test]
@@ -1322,7 +1323,7 @@ mod tests {
             .await
             .unwrap();
         assert!(html.contains("Enemy waves"), "{html}");
-        assert!(!html.contains("sel=goals"), "{html}");
+        assert!(!html.contains("look="), "{html}");
     }
 
     #[tokio::test]

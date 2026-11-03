@@ -5,7 +5,7 @@ use super::{Studio, StudioError, goal_of, lock};
 use crate::api::JudgeView;
 use crate::budget::{DAY_MS, Reservation};
 use crate::{budget, now_ms, worker};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use studio_core::budget::Allowance;
@@ -20,6 +20,9 @@ use tokio::sync::Notify;
 pub(crate) enum StopReason {
     Cancel,
     Budget,
+    /// The ticket went back to its agent with a message, so its checks or
+    /// review no longer matter.
+    SentBack,
     /// The owner paused the ticket; it waits, held, until resumed.
     Pause,
 }
@@ -29,6 +32,10 @@ pub(crate) enum StopReason {
 pub(crate) struct Stop {
     pub(crate) notify: Notify,
     reason: Mutex<Option<StopReason>>,
+    /// Messages for the ticket's agent that its worker has not passed on yet.
+    said: Mutex<VecDeque<String>>,
+    /// Rung when a message is added to `said`.
+    pub(crate) heard: Notify,
 }
 
 impl Stop {
@@ -36,7 +43,20 @@ impl Stop {
         Stop {
             notify: Notify::new(),
             reason: Mutex::new(None),
+            said: Mutex::new(VecDeque::new()),
+            heard: Notify::new(),
         }
+    }
+
+    /// Leaves a message for the agent, for the worker to pass on to its run.
+    pub(crate) fn say(&self, text: String) {
+        lock(&self.said).push_back(text);
+        self.heard.notify_one();
+    }
+
+    /// The messages left for the agent so far, oldest first.
+    pub(crate) fn take_said(&self) -> Vec<String> {
+        lock(&self.said).drain(..).collect()
     }
 
     pub(crate) fn request(&self, reason: StopReason) {
@@ -95,6 +115,7 @@ impl Studio {
                 if let Err(err) = studio.schedule() {
                     eprintln!("scheduler: {err}");
                 }
+                studio.spawn_standups();
                 tokio::select! {
                     _ = studio.wake.notified() => {}
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -257,6 +278,11 @@ impl Studio {
 
     fn start_worker(self: &Arc<Self>, id: TicketId) {
         let stop = Arc::new(Stop::new());
+        // What the agent was told while its ticket waited is the first thing
+        // it hears.
+        for text in self.take_kept(&id.to_string()) {
+            stop.say(text);
+        }
         lock(&self.active).insert(id.to_string(), Arc::clone(&stop));
         tokio::spawn(worker::work(Arc::clone(self), id, stop));
     }

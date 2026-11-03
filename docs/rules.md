@@ -82,7 +82,7 @@ rules editor with a draft you can change before you save it:
 - Your note on the denial is the rule's reason. If you left none, the draft
   tells you to write one.
 
-When you send a ticket back, **Make it a rule for every ticket in** the project
+When you send a task back, **Make it a rule for every task in** the project
 opens a draft `guide` rule with your feedback as its text.
 
 On the command line, `studio deny <ask> -m "why" --rule` and

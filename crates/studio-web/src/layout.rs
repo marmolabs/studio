@@ -21,16 +21,17 @@ use crate::{AppConfig, client, statics, ui};
 /// The studio's mark on a dark tile, inline so no request is made for it.
 const FAVICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2318181b'/%3E%3Crect x='3.5' y='5.8' width='6.7' height='6.7' rx='1.6' fill='none' stroke='%23f4f4f5' stroke-width='1.5'/%3E%3Cpath d='M6.2 3.3h5a1.5 1.5 0 0 1 1.5 1.5v5' fill='none' stroke='%23f4f4f5' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
-/// Sidebar links: (href, label, icon), the office first.
-const WORK: [(&str, &str, &str); 1] = [OFFICE];
-/// The office is the home page.
-const OFFICE: (&str, &str, &str) = ("/", "Office", "building-2");
+/// Sidebar links: (href, label, icon), HQ first.
+const WORK: [(&str, &str, &str); 2] = [HQ, OFFICE];
+/// HQ is the home page, and the company floor has its own.
+const HQ: (&str, &str, &str) = ("/", "HQ", "inbox");
+const OFFICE: (&str, &str, &str) = ("/office", "Office", "building-2");
 const STUDIO: [(&str, &str, &str); 2] = [
     ("/hires", "Hires", "users"),
     ("/rules", "Rules", "shield-check"),
 ];
-/// Where the money meter leads: the office's Money tab.
-const MONEY: &str = "/?tab=money";
+/// Where the money meter leads: the studio settings, which have the limits.
+const MONEY: &str = "/studio";
 
 const NAV_LINK: &str = "flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2 font-medium text-fg-2 transition-colors hover:bg-bg-3 hover:text-fg aria-[current=page]:bg-bg-3 aria-[current=page]:text-fg max-[760px]:h-[30px] max-[760px]:whitespace-nowrap max-[760px]:px-2.5 max-[760px]:[&>.i]:hidden";
 
@@ -50,12 +51,12 @@ fn title(path: &str, query: &str) -> (String, Option<String>) {
         })
     };
     match (first, parts.next()) {
-        ("tickets", Some(id)) => ("Office".into(), Some(id.to_owned())),
+        ("tickets", Some(id)) => ("HQ".into(), Some(id.to_owned())),
         ("hires", None) => match param("file").filter(|f| !f.is_empty()) {
             Some(file) => ("Hires".into(), Some(file)),
             None => ("Hires".into(), None),
         },
-        ("", _) => ("Office".into(), None),
+        ("", _) => ("HQ".into(), None),
         (name, _) => {
             let label = WORK
                 .iter()
@@ -154,8 +155,9 @@ pub async fn theme_form(switches: [Switch; 2]) -> topcoat::Result<impl View> {
 pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
     let config = app_context::<AppConfig>(cx);
     let path = uri(cx).path().to_owned();
-    // The office has its own top bar, so it needs none of the sidebar's.
-    let home = path == OFFICE.0;
+    // The team pages draw their own frame and sidebar, so they need none of
+    // this one's.
+    let home = crate::pages::team::owns(&path);
     // The shell still renders when studiod is down; the page says why.
     let status: client::Status = if home {
         client::Status::default()
@@ -168,11 +170,12 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
         .path_and_query()
         .map_or("/", |p| p.as_str())
         .to_owned();
+    let streaming = crate::pages::team::live(&here);
     let query = uri(cx).query().unwrap_or_default().to_owned();
     let (page, crumb) = title(&path, &query);
     // A crumb leads back to the page it is in.
     let crumb_home = if path.starts_with("/tickets") {
-        OFFICE.0
+        HQ.0
     } else {
         "/hires"
     };
@@ -207,9 +210,15 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                 (Unescaped::new_unchecked(statics::ICONS))
                 (Unescaped::new_unchecked(ui::GLYPHS))
                 if home {
-                    // The office draws its own top bar and side panel; a
-                    // reply to an action shows over the floor.
-                    <div id="notice" class="toast fixed bottom-4 left-1/2 z-20 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 text-[13px] empty:hidden" aria-live="polite"></div>
+                    // The team pages draw their own frame; a reply to an action
+                    // shows over the page. A team page keeps itself up to date
+                    // from one stream, opened here so that a patch of the page
+                    // never replaces the element that holds it.
+                    // Above the box a conversation is written in, not over it.
+                    <div id="notice" class="toast fixed bottom-32 left-1/2 z-20 w-[min(560px,calc(100vw-32px))] -translate-x-1/2 text-[13px] empty:hidden" aria-live="polite"></div>
+                    if streaming {
+                        <div id="team-live" hidden="" data-init=(crate::pages::team::OPEN_STREAM)></div>
+                    }
                     (slot)
                 } else {
                 <div class="flex min-h-screen max-[760px]:flex-col">
@@ -287,7 +296,7 @@ pub async fn shell(cx: &Cx, slot: Slot<'_>) -> topcoat::Result<impl View> {
                                 <h1 class="min-w-0 shrink-0 truncate text-[15px] font-semibold leading-5 tracking-[-0.005em]">(page)</h1>
                             }
                         </header>
-                        <main class="mx-auto flex w-full max-w-[1200px] flex-col has-[#office]:max-w-[1480px] gap-7 px-8 pb-18 pt-7 max-[760px]:gap-6 max-[760px]:px-4 max-[760px]:pb-14 max-[760px]:pt-5">
+                        <main class="mx-auto flex w-full max-w-[1200px] flex-col gap-7 px-8 pb-18 pt-7 max-[760px]:gap-6 max-[760px]:px-4 max-[760px]:pb-14 max-[760px]:pt-5">
                             <div id="notice" class="empty:hidden"></div>
                             (slot)
                         </main>
@@ -378,7 +387,7 @@ mod tests {
 
     #[test]
     fn the_top_bar_names_the_page() {
-        assert_eq!(title("/", ""), ("Office".into(), None));
+        assert_eq!(title("/", ""), ("HQ".into(), None));
         assert_eq!(title("/hires", ""), ("Hires".into(), None));
         assert_eq!(
             title("/hires", "file=dev"),
@@ -386,7 +395,7 @@ mod tests {
         );
         assert_eq!(
             title("/tickets/GAME-3", ""),
-            ("Office".into(), Some("GAME-3".into()))
+            ("HQ".into(), Some("GAME-3".into()))
         );
     }
 

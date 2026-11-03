@@ -71,6 +71,13 @@ pub fn matches_any(globs: &[String], files: &[String]) -> bool {
         .any(|m| files.iter().any(|f| m.is_match(f)))
 }
 
+/// Whether `glob` compiles; if not, why.
+pub fn check_glob(glob: &str) -> Result<(), String> {
+    globset::Glob::new(glob)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Error, Debug)]
 pub enum ProjectConfigError {
     #[error("io error: {0}")]
@@ -83,6 +90,8 @@ pub enum ProjectConfigError {
     EmptyMeasure(String),
     #[error("`{0}` is not an environment variable name")]
     EnvName(String),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl ProjectConfig {

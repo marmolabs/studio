@@ -6,6 +6,7 @@
 //! release lives only in memory: a release still under way when studiod
 //! starts again is failed.
 
+use super::shipcheck::Checkout;
 use super::{Studio, StudioError, lock, other, shorten};
 use crate::api::{ReleaseState, ReleaseStep, ReleaseView, Response};
 use crate::budget::DAY_MS;
@@ -272,16 +273,15 @@ impl Studio {
             Ok(repo) => repo,
             Err(err) => return self.finish_failed(&job, err.to_string()),
         };
-        let dir = match repo.create_release_worktree(&job.id.to_string(), &job.commit) {
-            Ok(dir) => dir,
+        let checkout = match Checkout::new(&repo, &job.id.to_string(), &job.commit) {
+            Ok(checkout) => checkout,
             Err(err) => {
                 return self.finish_failed(&job, format!("can't check out the release: {err}"));
             }
         };
-        let result = self.drive(&job, &mut rx, &repo, &dir).await;
-        if let Err(err) = repo.remove_release_worktree(&dir) {
-            eprintln!("release: can't remove {}: {err}", dir.display());
-        }
+        let result = self.drive(&job, &mut rx, &repo, checkout.dir()).await;
+        // The checkout goes before the release is marked as ended.
+        drop(checkout);
         match result {
             Ok(Course::Published) => self.finish(&job, |v| {
                 v.state = ReleaseState::Released;

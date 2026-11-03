@@ -6,6 +6,7 @@ use crate::api::Response;
 use crate::worker;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 use studio_core::event::Event;
 use studio_core::ids::TicketId;
 use studio_core::ticket::{Ticket, TicketKind, TicketState};
@@ -41,7 +42,7 @@ impl Studio {
     /// If the goal branch has moved on and conflicts with it, the branch is
     /// merged into the ticket's worktree instead, and the ticket goes back to
     /// its agent to resolve the conflicts.
-    pub(crate) fn land(&self, id: &TicketId) -> Result<Landing, StudioError> {
+    pub(crate) fn land(self: &Arc<Self>, id: &TicketId) -> Result<Landing, StudioError> {
         let ticket = self.ticket(id)?;
         if ticket.state != TicketState::Ready {
             return Err(other(format!("{id} is {}, not ready", ticket.state.kind())));
@@ -53,6 +54,8 @@ impl Studio {
         match repo.land(&worktree, &branch)? {
             LandOutcome::Merged { sha } => {
                 let ticket = self.append(id, Event::Landed)?;
+                // That may have finished the goal's tasks.
+                self.after_landing(&ticket);
                 // The worktree goes, so its evidence moves to the data folder;
                 // if that fails, the worktree stays for `studio gc`. Anything
                 // else left in it came from checks after the last commit.
