@@ -25,11 +25,13 @@ you to ship. Nothing is pushed, and agents never see your credentials.
 > on a repo you have backed up, keep its budget low, set a spending limit in
 > your Claude account too, and read what it ships before you do.
 
-<p align="center"><img src="docs/office.png" alt="HQ: the team sidebar with a lead for each project, and a standup from each lead with the questions and work that wait for you" width="900"></p>
+<p align="center"><img src="docs/office.png" alt="HQ, the morning round-up: a sidebar with a lead for each project, and a standup from each lead with the questions to answer and the finished work to ship" width="900"></p>
 
 ## Talk to your leads
 
 The web UI is a team sidebar and a page for each thing you do.
+
+<p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and a note to Dev shows as a card. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
 
 - **HQ** is your morning round-up. Each lead has a line, its standup in a
   sentence or two, and under it the cards that wait for you: a question, work
