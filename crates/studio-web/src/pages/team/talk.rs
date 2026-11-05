@@ -60,13 +60,19 @@ pub struct Said {
     thinking: bool,
 }
 
+impl Said {
+    pub fn of(conversation: &ConversationView) -> Said {
+        Said {
+            messages: conversation.messages.len(),
+            last: conversation.messages.last().map(|message| message.id),
+            thinking: conversation.thinking,
+        }
+    }
+}
+
 impl Reads {
     pub fn said(&self) -> Said {
-        Said {
-            messages: self.convo.messages.len(),
-            last: self.convo.messages.last().map(|m| m.id),
-            thinking: self.convo.thinking,
-        }
+        Said::of(&self.convo)
     }
 }
 

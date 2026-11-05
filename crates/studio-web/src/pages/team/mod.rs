@@ -17,6 +17,7 @@ mod faces;
 mod hq;
 mod new;
 mod office;
+mod person;
 mod settings;
 mod sheet;
 mod shell;
@@ -267,8 +268,17 @@ fn progress(office: &Office, project: &str, phase: Phase) -> f64 {
 /// anything a folder's name can, so each byte outside letters, digits and
 /// `-_.~` is escaped.
 pub(crate) fn lead_href(project: &str) -> String {
-    let mut href = String::from("/leads/");
-    for byte in project.bytes() {
+    escaped_path("/leads/", project)
+}
+
+/// The address of a hire's direct conversation.
+pub(crate) fn person_href(hire: &str) -> String {
+    escaped_path("/people/", hire)
+}
+
+fn escaped_path(prefix: &str, id: &str) -> String {
+    let mut href = String::from(prefix);
+    for byte in id.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 href.push(char::from(byte));
@@ -279,11 +289,10 @@ pub(crate) fn lead_href(project: &str) -> String {
     href
 }
 
-/// Whether `path` is a team page, which draws the team sidebar itself: HQ at
-/// the root and the pages under `/leads`, `/office`, `/new` and `/studio`.
+/// Whether `path` is a team page, which draws the team sidebar itself.
 pub fn owns(path: &str) -> bool {
     let first = path.trim_matches('/').split('/').next().unwrap_or_default();
-    matches!(first, "" | "leads" | "office" | "new" | "studio")
+    matches!(first, "" | "leads" | "people" | "office" | "new" | "studio")
 }
 
 /// Whether the layout opens the one stream of the team pages for the page at
@@ -418,6 +427,19 @@ async fn lead_page(cx: &Cx) -> topcoat::Result<impl View> {
     Ok(view! { talk::talk(team: team, parts: parts, sheet: sheet) })
 }
 
+/// A direct conversation with one hire.
+#[page("/people/{id}")]
+async fn person_page(cx: &Cx) -> topcoat::Result<impl View> {
+    let hire = path_param::<Id>(cx).to_owned();
+    let config = app_context::<AppConfig>(cx);
+    let (office, team) = read(cx).await?;
+    let conversation = person::read(config, &hire).await;
+    let Some(parts) = person::parts(&office, &hire, conversation) else {
+        return Err(not_found().into());
+    };
+    Ok(view! { person::person_view(team: team, parts: parts) })
+}
+
 #[query_params(error = bad_request)]
 struct Turned {
     /// The corner the floor is seen from, in quarter turns.
@@ -488,6 +510,25 @@ async fn talk_to_lead(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchEl
     };
     match client::call::<serde_json::Value>(&config.socket, request).await {
         // The message shows in the thread, so there is nothing more to say.
+        Ok(_) => Ok(ui::clear_notice()),
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+/// The owner's message to one hire's read-only conversation.
+#[route(POST "/people/{id}/talk")]
+async fn talk_to_person(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let hire = path_param::<Id>(cx).to_owned();
+    let text = form.text.trim();
+    if text.is_empty() {
+        return ui::notice(cx, "Write something to send.".into(), true).await;
+    }
+    let request = Request::TalkToHire {
+        hire,
+        text: text.to_string(),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
         Ok(_) => Ok(ui::clear_notice()),
         Err(err) => ui::notice(cx, err.to_string(), true).await,
     }
@@ -849,14 +890,27 @@ mod tests {
 
     #[test]
     fn the_team_pages_are_told_from_the_rest() {
-        for path in ["/", "/leads/shop", "/office", "/new", "/studio"] {
+        for path in [
+            "/",
+            "/leads/shop",
+            "/people/dev",
+            "/office",
+            "/new",
+            "/studio",
+        ] {
             assert!(owns(path), "{path}");
         }
         for path in ["/hires", "/rules", "/tickets/GAME-1", "/newt", "/hq"] {
             assert!(!owns(path), "{path}");
         }
         // The layout opens the one stream for the pages it draws.
-        for path in ["/", "/leads/shop?look=SHOP-1", "/new", "/studio"] {
+        for path in [
+            "/",
+            "/leads/shop?look=SHOP-1",
+            "/people/dev",
+            "/new",
+            "/studio",
+        ] {
             assert!(live(path), "{path}");
         }
         // The office opens it itself, again whenever the pick or the corner
@@ -911,8 +965,10 @@ mod tests {
     }
 
     #[test]
-    fn a_projects_name_is_escaped_in_the_address_of_its_conversation() {
+    fn conversation_addresses_escape_their_project_or_hire() {
         assert_eq!(lead_href("shop"), "/leads/shop");
+        assert_eq!(person_href("dev"), "/people/dev");
+        assert_eq!(person_href("a/b?c#d"), "/people/a%2Fb%3Fc%23d");
         assert_eq!(
             lead_href("pocket-garden_2.0~x"),
             "/leads/pocket-garden_2.0~x"

@@ -30,7 +30,8 @@ The studio works like a small company:
   nobody to talk to there.
 
 On the web UI's office view, each project has a team area with a sign, and the
-lounge holds the hires with nothing to do.
+lounge holds the hires with nothing to do. Picking a person or their task opens
+that hire's own card and direct conversation, including someone in the lounge.
 
 ## Projects
 
@@ -145,6 +146,20 @@ ready, the lead's message has the card of how the project runs. **Use these**
 writes the chosen checks, capture, release and protected paths to the
 project's `.studio.toml` (keeping what else is in it) and the daily budget to
 `studio.toml`. Nothing is written before that.
+
+## Talking directly to an employee
+
+Every hire has a persistent, read-only conversation at `/people/<hire>`, reached
+by picking the person or one of their tasks in the office. The hire gets its
+current and recent assignments, their briefs and results, the last 20 messages,
+and read access to the project of its current work. It cannot edit files, run
+commands, browse, or use the studio's action tools. To steer an active run, use
+the separate message control beside its task.
+
+Messages are kept in `<data>/people/<hire>.jsonl`. One reply runs at a time for
+each hire; a message sent meanwhile is answered by the next turn. A reply is
+capped at $0.25 and charged to `<project>/people/<hire>`, under the studio,
+project and hire budget limits.
 
 ## Messaging an agent
 

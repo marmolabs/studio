@@ -158,6 +158,22 @@ What happens depends on where the task is:
 
 The task's run log gets a note, "Message from the owner: ...".
 
+## Talk to any employee
+
+Pick a person or their task in **The office**, then **Talk to** them. This opens
+their own persistent conversation at `/people/<hire>`, with their current and
+recent assignments beside it. Ask what they are doing, what blocks them or what
+they finished; their replies can draw on those assignments, results and the
+current project's files.
+
+This conversation is read-only and cannot act on tasks. To change what a running
+agent is doing, use the message control beside its active task instead. Direct
+replies are capped at $0.25 and count against the relevant project and hire's
+budgets.
+
+HQ also has **Company activity**: the last 24 hours across every project, newest
+first, with links to the person and task behind each event.
+
 ## Your first task
 
 From a terminal, or by asking the lead:
@@ -371,17 +387,21 @@ page and the rail is hidden.
   the call fails, a plain line such as "2 tasks done, 1 sent back. 1 waits for
   you."). Below a lead's line are the cards that wait for you in that project:
   questions, work ready to ship and a release that wants your go-ahead. Leads
-  with something for you come first. A last line gives the day's totals: tasks
-  done, sent back, spent.
+  with something for you come first. Company activity shows the last 24 hours
+  across every project, newest first, with person and task links. A last line
+  gives the day's totals: tasks done, sent back, spent.
 - **A conversation** (`/leads/<project>`) is the thread with one lead, newest
   at the bottom. See [Talk to a lead](#talk-to-a-lead).
+- **An employee's conversation** (`/people/<hire>`) is their own persistent,
+  read-only thread, with current and recent work beside it. See
+  [Talk to any employee](#talk-to-any-employee).
 - **Look closer** (`?look=<id>` on a conversation) is the sheet over it. See
   [Look closer and ship](#look-closer-and-ship).
 - **The office** (`/office`) is the company floor: a team area for each
   project, around the owner's office, the lounge, and the review room and QA lab
-  every project shares. Click a sign or a person and a card for that project's
-  lead floats up, with **Talk to** the lead and **What's ready**. The arrows (or
-  Q and E) turn the floor.
+  every project shares. A sign opens its lead's card; a person or task opens
+  that employee's own card, with **Talk to** them. The arrows (or Q and E) turn
+  the floor.
 - **New project** (`/new`) hires a lead for a project. See
   [Add a project](#add-a-project).
 - **Studio** (`/studio`, the gear in the sidebar) holds the money limits (the

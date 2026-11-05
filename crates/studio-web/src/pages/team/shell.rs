@@ -19,6 +19,8 @@ pub enum Here {
     Hq,
     /// A lead's conversation, by project.
     Lead(String),
+    /// A direct conversation, by hire.
+    Person(String),
     Office,
     New,
     Studio,
