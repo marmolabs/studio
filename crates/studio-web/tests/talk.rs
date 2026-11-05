@@ -148,6 +148,18 @@ fn answer(request: &Request, flags: &Flags) -> Response {
             Response::ok(conversation(thinking))
         }
         Request::Conversation { .. } => Response::ok(json!({"messages": [], "thinking": false})),
+        Request::HireConversation { hire, .. } if hire == "dev" => Response::ok(json!({
+            "messages": [
+                {"id": 1, "at": NOW - 10 * MINUTE, "from": {"who": "owner"},
+                 "text": "How is the drawer going?"},
+                {"id": 2, "at": NOW - 9 * MINUTE, "from": {"who": "lead", "hire": "dev"},
+                 "text": "The interactions work; I am checking keyboard focus."},
+            ],
+            "thinking": thinking,
+        })),
+        Request::HireConversation { .. } => {
+            Response::ok(json!({"messages": [], "thinking": false}))
+        }
         // What git says of each: the goal's own (its branch against the base
         // it ships to, which is not the sum of what its tasks changed, as the
         // second task rewrote some of the first one's lines), its tasks', the
@@ -193,6 +205,9 @@ fn answer(request: &Request, flags: &Flags) -> Response {
         ),
         Request::Talk { text, .. } => Response::ok(json!({
             "id": 9, "at": 5, "from": {"who": "owner"}, "text": text,
+        })),
+        Request::TalkToHire { text, .. } => Response::ok(json!({
+            "id": 3, "at": NOW, "from": {"who": "owner"}, "text": text,
         })),
         Request::Tell { task, .. } => Response::ok(json!({"task": task, "how": "live"})),
         _ => Response::ok(Value::Null),
@@ -792,6 +807,63 @@ async fn a_goal_whose_checks_failed_says_so_before_it_is_shipped() {
 }
 
 #[tokio::test]
+async fn an_employee_has_a_persistent_conversation_and_their_own_work() {
+    let web = Web::start().await;
+    let html = web.page("/people/dev").await;
+    assert!(by_id(&html, "person-head").text().contains("Talk to Dev"));
+    let thread = by_id(&html, "talk-thread").text();
+    assert!(thread.contains("How is the drawer going?"), "{thread}");
+    assert!(thread.contains("I am checking keyboard focus."), "{thread}");
+    assert!(by_id(&html, "composer").attr_has("data-on:submit", "/people/dev/talk"));
+    let rail = by_id(&html, "person-rail").text();
+    assert!(
+        rail.contains("Cart drawer") && rail.contains("shop · working"),
+        "{rail}"
+    );
+    assert!(rail.contains("Add a discount field"), "{rail}");
+    assert!(has_id(&html, "person-tell-SHOP-1"));
+
+    web.post("/people/dev/talk", &[("text", "What is left?")])
+        .await;
+    assert!(web.sent().contains(&Request::TalkToHire {
+        hire: "dev".into(),
+        text: "What is left?".into(),
+    }));
+    assert_eq!(web.get("/people/nobody").await.status(), 404);
+}
+
+#[tokio::test]
+async fn hq_has_a_company_wide_activity_feed_with_people_and_task_links() {
+    let web = Web::start().await;
+    let html = web.page("/").await;
+    let feed = by_id(&html, "company-activity");
+    let text = feed.text();
+    assert!(text.contains("Company activity Last 24 hours"), "{text}");
+    assert!(
+        text.contains("Dev started working on Cart drawer"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Dev landed the work on Bring the cart back on sign-in"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Dev landed the work on Store carts in the database"),
+        "{text}"
+    );
+    let newest = text.find("Cart drawer").unwrap();
+    let older = text.find("Bring the cart back").unwrap();
+    assert!(newest < older, "{text}");
+    let links = named(feed.inner_html(), "a");
+    assert!(links.iter().any(|link| link.attr_is("href", "/people/dev")));
+    assert!(
+        links
+            .iter()
+            .any(|link| link.attr_is("href", "/tickets/SHOP-1"))
+    );
+}
+
+#[tokio::test]
 async fn the_office_has_the_floor_a_hint_and_no_old_panel() {
     let web = Web::start().await;
     let html = web.page("/office").await;
@@ -819,7 +891,7 @@ async fn the_office_has_the_floor_a_hint_and_no_old_panel() {
 }
 
 #[tokio::test]
-async fn picking_a_sign_or_a_person_shows_their_leads_card() {
+async fn picking_a_person_or_their_task_shows_that_persons_card() {
     let web = Web::start().await;
     let peek = |sel: &str| {
         let datastar = json!({"sel": sel, "turn": 0}).to_string();
@@ -840,40 +912,41 @@ async fn picking_a_sign_or_a_person_shows_their_leads_card() {
     };
     // What a pick draws at once is the floor and the card, as one patch.
     let card_of = |patch: &str| by_id(patch, "office-peek").inner_html().to_string();
-    for sel in ["projects/shop", "hires/nora", "hires/dev", "tickets/SHOP-1"] {
-        let patch = peek(sel).await;
-        assert!(has_id(&patch, "hq-scene"), "{sel}");
-        assert!(
-            sel != "projects/shop" || patch.contains("data-picked"),
-            "{sel}: the pick is marked"
-        );
-        let card = card_of(&patch);
+    let patch = peek("projects/shop").await;
+    assert!(has_id(&patch, "hq-scene") && patch.contains("data-picked"));
+    let card = card_of(&patch);
+    let text = text_of(&card);
+    assert!(
+        text.contains("Nora") && text.contains("The logo's done"),
+        "{text}"
+    );
+    let links: Vec<(String, String)> = named(&card, "a")
+        .iter()
+        .map(|a| (a.text(), a.attr("href").unwrap()))
+        .collect();
+    assert_eq!(
+        links,
+        [
+            ("Talk to Nora".into(), "/leads/shop".into()),
+            ("What's ready".into(), "/leads/shop?look=SHOP-2".into()),
+        ]
+    );
+
+    for (sel, name, href) in [
+        ("hires/nora", "Nora", "/people/nora"),
+        ("hires/dev", "Dev", "/people/dev"),
+        ("tickets/SHOP-1", "Dev", "/people/dev"),
+        // Someone in the lounge has a card even without a project or task.
+        ("hires/writer", "Writer", "/people/writer"),
+    ] {
+        let card = card_of(&peek(sel).await);
         let text = text_of(&card);
-        assert!(text.contains("Nora"), "{sel}: {text}");
-        assert!(
-            text.contains("Leads shop · Building")
-                || text.contains("Leads shop · v0.3 waits for you"),
-            "{sel}: {text}"
-        );
-        // Its standup, a count of what waits, and the two ways on.
-        assert!(
-            text.contains("The logo's done. Two things wait for you."),
-            "{sel}: {text}"
-        );
-        let links: Vec<(String, String)> = named(&card, "a")
-            .iter()
-            .map(|a| (a.text(), a.attr("href").unwrap()))
-            .collect();
-        assert_eq!(
-            links,
-            [
-                ("Talk to Nora".into(), "/leads/shop".into()),
-                ("What's ready".into(), "/leads/shop?look=SHOP-2".into()),
-            ],
-            "{sel}"
-        );
+        assert!(text.contains(&format!("Talk to {name}")), "{sel}: {text}");
+        let links = named(&card, "a");
+        assert_eq!(links.len(), 1, "{sel}");
+        assert!(links[0].attr_is("href", href), "{sel}");
     }
-    // Picking something no lead owns, or nothing, clears the card.
+    // Picking a shared room, an unknown project, or nothing clears the card.
     for sel in ["", "elements/lounge", "projects/garden"] {
         let patch = peek(sel).await;
         assert!(has_id(&patch, "office-peek"), "{sel}");
@@ -932,6 +1005,21 @@ async fn the_conversation_keeps_up_through_the_one_stream_of_the_team_pages() {
     // the office doesn't show, is sent as it comes.
     web.flags.thinking.store(true, Ordering::Relaxed);
     let next = patch_with(&mut reply, "Nora is replying").await;
+    assert!(has_id(&next, "talk-thread"), "{next}");
+}
+
+#[tokio::test]
+async fn an_employees_conversation_keeps_up_through_the_team_stream() {
+    let web = Web::start().await;
+    let mut reply = web.get("/team/stream?at=%2Fpeople%2Fdev").await;
+    let first = patch_with(&mut reply, r#"id="person-rail""#).await;
+    assert!(
+        has_id(&first, "person-head") && has_id(&first, "composer"),
+        "{first}"
+    );
+    assert!(first.contains("I am checking keyboard focus."), "{first}");
+    web.flags.thinking.store(true, Ordering::Relaxed);
+    let next = patch_with(&mut reply, "Dev is replying").await;
     assert!(has_id(&next, "talk-thread"), "{next}");
 }
 

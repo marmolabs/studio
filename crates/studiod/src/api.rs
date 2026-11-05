@@ -320,6 +320,19 @@ pub enum Request {
         #[serde(default)]
         after: Option<u64>,
     },
+    /// The owner's message to one hire, kept in that hire's persistent,
+    /// read-only conversation. Answers the stored `TalkMessage`.
+    TalkToHire {
+        hire: String,
+        text: String,
+    },
+    /// The messages of one hire's conversation, oldest first, and whether the
+    /// hire is working on a reply. Answers the `ConversationView`.
+    HireConversation {
+        hire: String,
+        #[serde(default)]
+        after: Option<u64>,
+    },
     /// Tells a task's agent something: a running task hears it in its live
     /// session, one that waits in checks, review or ready goes back with it as
     /// a note, a queued one keeps it for its next run, and a finished one is an
@@ -394,11 +407,11 @@ pub enum LeadAct {
     Tell { text: String },
 }
 
-/// One message of a project's conversation, kept as a line of
-/// `<data>/talk/<project>.jsonl`.
+/// One message of a lead or direct-hire conversation, kept as a line of its
+/// JSONL file under `<data>/talk/` or `<data>/people/`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TalkMessage {
-    /// Counts up from 1 in each project's conversation.
+    /// Counts up from 1 in each conversation.
     pub id: u64,
     /// When it was posted, in epoch milliseconds.
     pub at: u64,
@@ -460,13 +473,13 @@ pub struct PlanTask {
     pub hire: Option<String>,
 }
 
-/// The answer to `Request::Conversation`.
+/// The answer to `Request::Conversation` or `Request::HireConversation`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConversationView {
     /// Oldest first.
     #[serde(default)]
     pub messages: Vec<TalkMessage>,
-    /// The lead is working on a reply.
+    /// The lead or hire is working on a reply.
     pub thinking: bool,
 }
 

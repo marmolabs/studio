@@ -34,7 +34,7 @@ use topcoat::{
 
 use super::office::{Picked, clean};
 use super::talk::thread::Sizes;
-use super::{Team, hq, new, office, settings, sheet, talk};
+use super::{Team, hq, new, office, person, settings, sheet, talk};
 use crate::pages::office::model::Turn;
 use crate::pages::office::{Office, SHARED_FOR, safe, shared};
 use crate::{AppConfig, live, ui};
@@ -51,6 +51,10 @@ pub enum Spot {
     Lead {
         project: String,
         look: Option<String>,
+    },
+    /// A hire's direct conversation.
+    Person {
+        hire: String,
     },
     /// The company floor, seen from the corner `turn`, with `sel` picked.
     Office {
@@ -89,6 +93,9 @@ impl Spot {
                     .map(|look| safe(&look))
                     .filter(|look| !look.is_empty()),
             }),
+            ["people", hire] if !hire.is_empty() => Some(Spot::Person {
+                hire: unescape(hire),
+            }),
             _ => None,
         }
     }
@@ -109,6 +116,7 @@ enum Extra {
     Hq(Sizes),
     /// A conversation, with the sizes of what is ready to ship and the budget.
     Lead(Box<talk::Reads>),
+    Person(studiod::api::ConversationView),
     /// What one task may cost, when a limit is set.
     Studio(Option<f64>),
 }
@@ -120,6 +128,7 @@ enum Extra {
 enum Seen {
     Nothing,
     Lead(talk::Said),
+    Person(talk::Said),
     Studio(Option<f64>),
 }
 
@@ -130,6 +139,7 @@ impl Extra {
             Spot::Lead { project, .. } => {
                 Extra::Lead(Box::new(talk::read(config, office, project, memo).await))
             }
+            Spot::Person { hire } => Extra::Person(person::read(config, hire).await),
             Spot::Hq => Extra::Hq(talk::sizes_of_all(config, office, memo).await),
             Spot::Studio => Extra::Studio(settings::ticket_usd(config).await),
             Spot::Office { .. } | Spot::New => Extra::Nothing,
@@ -142,6 +152,7 @@ impl Extra {
             // office shows, so HQ is as the office says.
             Extra::Nothing | Extra::Hq(_) => Seen::Nothing,
             Extra::Lead(reads) => Seen::Lead(reads.said()),
+            Extra::Person(conversation) => Seen::Person(talk::Said::of(conversation)),
             Extra::Studio(usd) => Seen::Studio(*usd),
         }
     }
@@ -166,6 +177,10 @@ fn draw<'a>(
             let parts = talk::parts(&team, &office, &project, &reads)?;
             view! { cx => talk::talk(team: team, parts: parts, sheet: sheet) }.boxed()
         }
+        (Spot::Person { hire }, Extra::Person(conversation)) => {
+            let parts = person::parts(&office, &hire, conversation)?;
+            view! { cx => person::person_view(team: team, parts: parts) }.boxed()
+        }
         (Spot::Office { sel, turn }, _) => {
             view! { cx => office::office_view(team: team, office: office, turn: turn, sel: sel) }
                 .boxed()
@@ -175,7 +190,7 @@ fn draw<'a>(
             view! { cx => settings::settings(team: team, office: office, ticket_usd: ticket_usd) }
                 .boxed()
         }
-        (Spot::Hq | Spot::Lead { .. } | Spot::Studio, _) => return None,
+        (Spot::Hq | Spot::Lead { .. } | Spot::Person { .. } | Spot::Studio, _) => return None,
     })
 }
 
@@ -303,6 +318,14 @@ mod tests {
             lead("shop", Some("abc"))
         );
         assert_eq!(Spot::of("/leads/shop?look="), lead("shop", None));
+        assert_eq!(
+            Spot::of("/people/dev"),
+            Some(Spot::Person { hire: "dev".into() })
+        );
+        assert_eq!(
+            Spot::of("/people/a%2Bb"),
+            Some(Spot::Person { hire: "a+b".into() })
+        );
     }
 
     #[test]

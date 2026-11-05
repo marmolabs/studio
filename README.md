@@ -36,7 +36,8 @@ The web UI is a team sidebar and a page for each thing you do.
 - **HQ** is your morning round-up. Each lead has a line, its standup in a
   sentence or two, and under it the cards that wait for you: a question, work
   that is ready to ship, a release that wants your go-ahead. Leads with
-  something for you come first.
+  something for you come first. Company activity shows the last 24 hours across
+  every project, with links to each person and task.
 - **A lead's page** is a conversation. Ask "How's it going?", or say "Plan the
   checkout flow for 0.5" or "Tell Dev to close the drawer on outside clicks".
   The lead reads the project, answers in plain words, and can start a goal,
@@ -47,13 +48,17 @@ The web UI is a team sidebar and a page for each thing you do.
   messages. A project that has no lead (HQ says so, with a link) has a card
   in place of the message box: hire a lead for it, or pick one you have. Change
   lead in the header picks another, hires a new one, or leaves it with none.
+- **An employee's page** is a persistent, read-only conversation with any hire.
+  Ask about their assignments and recent results, with their current and recent
+  work beside the thread. An active task has a separate control to message its
+  live run.
 - **Look closer** opens ready work over the conversation: a summary, the checks,
   the review, whether protected paths were touched, the files with their
   diffs and the branch to try. **Ship to main**, or **Send back with a note**.
   A goal is checked as a whole before it ships.
-- **The office** is the company floor, with a card for each lead when you pick
-  a sign or a person. **Studio** has the money limits, the desks, the hires and
-  the rules.
+- **The office** is the company floor. Pick a sign for its lead, or a person or
+  their task for that employee's own card and conversation. **Studio** has the
+  money limits, the desks, the hires and the rules.
 
 Adding a project is a conversation too: **New project** takes a folder and
 hires a lead for it. The lead reads the repository and shows how the project

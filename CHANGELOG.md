@@ -111,6 +111,13 @@ budget limits low.
   review or ready goes back to its agent with the message as the note, a
   queued or held one keeps it for when it next starts, and a finished one
   can't be told. The task's run log notes it, "Message from the owner: ...".
+- Every hire also has a persistent, read-only conversation at `/people/<hire>`.
+  Pick a person or their task in the office to talk to that person, see their
+  current and recent work, and ask about their assignments and results. Direct
+  replies are capped at $0.25 and count against the relevant budgets. Steering
+  an active run remains a separate task-message action.
+- HQ's Company activity feed shows the last 24 hours across every project,
+  newest first, with links to the person and task behind each event.
 
 ### Looking closer and shipping
 

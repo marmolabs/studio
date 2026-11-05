@@ -16,7 +16,7 @@ use super::shell::{self, Here};
 use super::stream::OPEN;
 use super::talk::look_href;
 use super::talk::thread::{self, Person};
-use super::{Team, faces, lead_href};
+use super::{Team, faces, lead_href, person_href};
 use crate::pages::office::hq::{self, Parts};
 use crate::pages::office::model::{Element, Turn};
 use crate::pages::office::{Office, facts, gather, key, safe};
@@ -32,19 +32,21 @@ pub struct Picked {
     pub turn: i64,
 }
 
-/// The card of a project's lead, shown beside the floor while one of that
-/// project's signs or people is picked.
+/// The card beside the floor: a project lead for a sign, or the actual person
+/// picked on a hire or one of their tasks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peek {
     pub project: String,
-    /// The lead; none when nobody leads the project.
+    /// The person shown; none for a project without a lead.
     pub lead: Option<Person>,
+    /// A direct person pick links to `/people`, rather than the project's lead.
+    pub direct: bool,
+    pub role_words: String,
     pub tint: usize,
     pub phase_words: String,
     pub needs: usize,
-    /// What the lead says of the project: its standup, or the facts.
     pub line: String,
-    /// What `?look=` opens, when something is ready to ship.
+    /// What `?look=` opens for a project card, when something is ready to ship.
     pub ready: Option<String>,
 }
 
@@ -100,8 +102,33 @@ fn project_of(office: &Office, sel: &str) -> Option<String> {
     }
 }
 
-/// The card to show for the pick `sel`, if it is a project's.
+/// The card to show for the pick `sel`: the actual person for a person or
+/// task pick, and the project's lead for its sign or goal.
 pub fn peek_for(team: &Team, office: &Office, sel: &str) -> Option<Peek> {
+    let (kind, id) = sel.split_once('/')?;
+    if kind == "hires" {
+        let hire = office
+            .status
+            .team
+            .iter()
+            .find(|member| safe(&member.id) == id)?
+            .id
+            .clone();
+        return direct_peek(team, office, &hire, project_of(office, sel), None);
+    }
+    if kind == "tickets" {
+        let ticket = office
+            .tickets
+            .iter()
+            .find(|ticket| safe(&ticket.id.to_string()) == id)?;
+        return direct_peek(
+            team,
+            office,
+            &ticket.hire.to_string(),
+            Some(ticket.project.to_string()),
+            Some(ticket),
+        );
+    }
     let project = project_of(office, sel)?;
     let entry = team.lead(&project)?;
     let lead = thread::lead_of(office, &project);
@@ -121,11 +148,64 @@ pub fn peek_for(team: &Team, office: &Office, sel: &str) -> Option<Peek> {
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| facts_line(office, &project)),
         lead,
+        direct: false,
+        role_words: String::new(),
         tint: entry.tint,
         phase_words: entry.phase_words.clone(),
         needs: entry.needs,
         ready,
         project,
+    })
+}
+
+fn direct_peek(
+    team: &Team,
+    office: &Office,
+    hire: &str,
+    project: Option<String>,
+    selected: Option<&studio_core::ticket::Ticket>,
+) -> Option<Peek> {
+    let member = office.member(hire)?;
+    let person = Person::of(office, hire);
+    let mut tasks: Vec<_> = office
+        .tickets
+        .iter()
+        .filter(|task| task.hire.to_string() == hire)
+        .collect();
+    tasks.sort_by_key(|task| task.created_at);
+    tasks.reverse();
+    let current = selected.or_else(|| {
+        tasks
+            .iter()
+            .find(|task| !matches!(task.state.kind(), "landed" | "failed" | "cancelled"))
+            .or_else(|| tasks.first())
+            .copied()
+    });
+    let project = project
+        .or_else(|| current.map(|task| task.project.to_string()))
+        .unwrap_or_default();
+    let tint = team.lead(&project).map_or(0, |entry| entry.tint);
+    let (phase_words, line) = match current {
+        Some(task) if matches!(task.state.kind(), "landed" | "failed" | "cancelled") => (
+            "Free".to_string(),
+            format!("Most recently: {} · {}", task.title, task.project),
+        ),
+        Some(task) => (
+            ui::shown(&task.state).to_string(),
+            format!("{} · {}", task.title, task.project),
+        ),
+        None => ("Free".to_string(), "No tasks assigned yet.".to_string()),
+    };
+    Some(Peek {
+        project,
+        lead: Some(person),
+        direct: true,
+        role_words: member.role.clone(),
+        tint,
+        phase_words,
+        needs: 0,
+        line,
+        ready: None,
     })
 }
 
@@ -227,6 +307,8 @@ async fn lead_card(peek: Peek) -> topcoat::Result<impl View> {
     let Peek {
         project,
         lead,
+        direct,
+        role_words,
         tint,
         phase_words,
         needs,
@@ -246,14 +328,31 @@ async fn lead_card(peek: Peek) -> topcoat::Result<impl View> {
     } else {
         format!("Open {project}")
     };
+    let talk_href = if direct {
+        person_href(&seed)
+    } else {
+        lead_href(&project)
+    };
+    let label = if direct {
+        format!("{name}, {role_words}")
+    } else {
+        format!("{name}, lead of {project}")
+    };
     Ok(view! {
-        <section class="flex flex-col gap-3 rounded-2xl border border-line-2 bg-bg-2 p-4 shadow-pop" aria-label=(format!("{name}, lead of {project}"))>
+        <section class="flex flex-col gap-3 rounded-2xl border border-line-2 bg-bg-2 p-4 shadow-pop" aria-label=(label)>
             <div class="flex items-center gap-3">
                 faces::face(seed: seed, role: role, tint: tint, size: 40)
                 <span class="min-w-0 flex-1">
                     <b class="block text-[15px] font-semibold leading-5">(name)</b>
                     <span class="block text-[12.5px] text-fg-3">
-                        if lead.is_some() { "Leads " (project.clone()) } else { (project.clone()) }
+                        if direct {
+                            (role_words)
+                            if !project.is_empty() { " · " (project.clone()) }
+                        } else if lead.is_some() {
+                            "Leads " (project.clone())
+                        } else {
+                            (project.clone())
+                        }
                         " · " (phase_words)
                     </span>
                 </span>
@@ -263,7 +362,7 @@ async fn lead_card(peek: Peek) -> topcoat::Result<impl View> {
             </div>
             <p>(line)</p>
             <div class="flex flex-wrap gap-2">
-                <a href=(lead_href(&project)) class=(ui::PRIMARY_SM)>(talk)</a>
+                <a href=(talk_href) class=(ui::PRIMARY_SM)>(talk)</a>
                 if let Some(look) = ready {
                     <a href=(look_href(&project, &look)) class=(ui::GHOST_SM)>"What's ready"</a>
                 }
@@ -344,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_a_lead_and_the_people_at_work_show_their_projects_lead() {
+    fn a_pick_keeps_the_person_and_project_it_belongs_to() {
         let (team, office) = studio(vec![
             ticket("S-1", "shop", json!("working"), "dev"),
             ticket("A-1", "api", json!("landed"), "dev"),

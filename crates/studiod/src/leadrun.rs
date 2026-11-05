@@ -1,11 +1,10 @@
-//! A lead's run: a project's lead hire started on its own, for a moment, to
-//! answer the owner or to read a project and propose how it runs. It reads the
-//! project and uses the studio's tools in one mode, nothing else; it has a
-//! cap on what it may spend and a time limit; and what it costs is charged to
-//! the task `{project}/talk`, which has no ticket behind it.
+//! A hire's read-only run, started for a moment to answer the owner or to read
+//! a project and propose how it runs. It may read the project and, in the lead
+//! modes, use the studio's tools. It has a cost cap and a time limit; what it
+//! costs is charged to a synthetic task, which has no ticket behind it.
 //!
-//! The talk engine, the setup run and the standups share this, so each of them
-//! only decides what to ask and what to do with the answer.
+//! Lead talks, direct employee talks, setup runs and standups share this, so
+//! each of them only decides what to ask and what to do with the answer.
 
 use crate::budget::Meter;
 use crate::studio::{Studio, file_stem};
@@ -50,21 +49,25 @@ pub(crate) enum Tools {
     Talk,
     /// A lead setting a project up: `studio mcp --setup <project>`.
     Setup,
+    /// A hire answering the owner directly: project reading, no studio tools.
+    ReadOnly,
 }
 
-/// One run of a project's lead.
+/// One read-only run of a project's hire.
 pub(crate) struct LeadRun<'a> {
-    /// The project the lead leads, which pays for the run.
+    /// The project whose repository is read and whose budget pays for the run.
     pub project: &'a str,
-    /// The lead: its model, effort and prompt are the run's.
+    /// The hire: its model, effort and prompt are the run's.
     pub hire: &'a Hire,
     /// Where the run works: the project's repository.
     pub cwd: &'a Path,
-    /// What the lead is asked.
+    /// What the hire is asked.
     pub prompt: String,
     pub tools: Tools,
+    /// A separate ledger id for this run, or the project's usual talk id.
+    pub charge_task: Option<&'a str>,
     /// The most the run may cost, in dollars. The run is refused when the
-    /// studio, the project or the lead has less than this left for the day.
+    /// studio, the project or the hire has less than this left for the day.
     pub cap_usd: f64,
     pub max_turns: u32,
 }
@@ -115,19 +118,19 @@ async fn go(
         cwd,
         prompt,
         tools,
+        charge_task,
         cap_usd,
         max_turns,
     } = lead;
     let who = called(hire);
-    let task = talk_task(project);
+    let task = charge_task.map_or_else(|| talk_task(project), TicketId::new);
     if !studio.has_headroom(project, hire, cap_usd, &task.to_string()) {
         return Err(format!("no budget left for {who}"));
     }
     let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
     let mcp = if runtime.capabilities().mcp {
-        let path = write_config(studio, project, tools)
-            .map_err(|e| format!("{who}'s tools could not be set up: {e}"))?;
-        Some(path)
+        write_config(studio, project, tools)
+            .map_err(|e| format!("{who}'s tools could not be set up: {e}"))?
     } else {
         None
     };
@@ -157,7 +160,7 @@ async fn go(
     };
     let (finish, stopped) = match tokio::time::timeout(
         limit,
-        drive(&mut run, &mut tally, cwd, &mut *observe, false),
+        drive(&mut run, &mut tally, cwd, tools, &mut *observe, false),
     )
     .await
     {
@@ -165,9 +168,11 @@ async fn go(
         Err(_) => {
             // Too long: stop it, and give it a moment to say what it cost.
             let _ = run.interrupt().await;
-            let drained =
-                tokio::time::timeout(DRAIN, drive(&mut run, &mut tally, cwd, &mut *observe, true))
-                    .await;
+            let drained = tokio::time::timeout(
+                DRAIN,
+                drive(&mut run, &mut tally, cwd, tools, &mut *observe, true),
+            )
+            .await;
             (drained.ok().flatten(), true)
         }
     };
@@ -241,6 +246,7 @@ async fn drive(
     run: &mut Run,
     tally: &mut Tally,
     cwd: &Path,
+    tools: Tools,
     observe: &mut (dyn FnMut(&RunEvent) + Send),
     stopping: bool,
 ) -> Option<Finish> {
@@ -281,7 +287,7 @@ async fn drive(
                 let verdict = if stopping {
                     Err("The studio is stopping this run.".to_string())
                 } else {
-                    allowed(&tool, &input, cwd)
+                    allowed(&tool, &input, cwd, tools)
                 };
                 let _ = match verdict {
                     Ok(()) => run.allow(&request_id).await,
@@ -317,32 +323,39 @@ async fn drive(
     None
 }
 
-/// Whether a lead may make a tool call: use one of the studio's tools, or read
-/// inside its project. If not, why, in words for the lead.
-fn allowed(tool: &str, input: &Value, cwd: &Path) -> Result<(), String> {
+/// Whether a hire may make a tool call: read inside its project, plus the
+/// studio's tools when this run has them. If not, why, in words for the hire.
+fn allowed(tool: &str, input: &Value, cwd: &Path, tools: Tools) -> Result<(), String> {
     if tool.starts_with(STUDIO_TOOLS) {
-        return Ok(());
+        return if tools == Tools::ReadOnly {
+            Err(
+                "This conversation is read-only: the studio's action tools are not available."
+                    .to_string(),
+            )
+        } else {
+            Ok(())
+        };
     }
     if !READING.contains(&tool) {
         return Err(format!(
-            "{tool} isn't allowed here: a lead reads the project and uses the studio's \
-             tools, nothing else."
+            "{tool} isn't allowed here: this conversation can only read the project."
         ));
     }
     let (_, outside) = tool_paths(input, cwd);
     if outside {
-        return Err("A lead may only read inside its project.".to_string());
+        return Err("A hire may only read inside its project.".to_string());
     }
     Ok(())
 }
 
 /// Writes the config that gives the run the studio's tools in the mode of
 /// `tools`, next to the project's other files of that kind: in `<data>/talk/`
-/// or `<data>/setup/`.
-fn write_config(studio: &Studio, project: &str, tools: Tools) -> std::io::Result<PathBuf> {
+/// or `<data>/setup/`. A read-only conversation gets no config.
+fn write_config(studio: &Studio, project: &str, tools: Tools) -> std::io::Result<Option<PathBuf>> {
     let (folder, mode) = match tools {
         Tools::Talk => ("talk", "--talk"),
         Tools::Setup => ("setup", "--setup"),
+        Tools::ReadOnly => return Ok(None),
     };
     let path = studio
         .paths
@@ -353,7 +366,7 @@ fn write_config(studio: &Studio, project: &str, tools: Tools) -> std::io::Result
         std::fs::create_dir_all(dir)?;
     }
     std::fs::write(&path, mcp_config(&studio.paths, mode, project).to_string())?;
-    Ok(path)
+    Ok(Some(path))
 }
 
 /// What to call a lead in a message: the name in its file, else its id.
@@ -452,6 +465,7 @@ mod tests {
                 cwd: &self.repo,
                 prompt: "How's it going?".into(),
                 tools: Tools::Talk,
+                charge_task: None,
                 cap_usd: 0.5,
                 max_turns: 8,
             }
@@ -600,6 +614,25 @@ mod tests {
                 json!(["mcp", mode, "shop", "--socket", socket.to_string_lossy()])
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_direct_employee_conversation_has_no_action_tools() {
+        let events = vec![
+            started(),
+            ask("tool", "mcp__studio__cancel", json!({"task": "SHOP-3"})),
+            finished(Outcome::Success, Some("I can't do that here."), 0.01),
+        ];
+        let lead = Lead::new(FakeRuntime::new(events).with_mcp());
+        let read_only = LeadRun {
+            tools: Tools::ReadOnly,
+            ..lead.talk()
+        };
+        run(&lead.studio, read_only).await.unwrap();
+        assert_eq!(lead.runtime.specs()[0].mcp_config, None);
+        let answers = answers(&lead.runtime);
+        assert_eq!(answers.len(), 1);
+        assert!(answers[0].1.as_deref().unwrap().contains("read-only"));
     }
 
     #[tokio::test]

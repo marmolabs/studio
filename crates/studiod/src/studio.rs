@@ -67,6 +67,8 @@ pub struct Studio {
     releasing: releases::Releasing,
     /// What the conversations with the leads keep in memory.
     talk_state: talk::State,
+    /// What the direct conversations with every hire keep in memory.
+    people_state: people::State,
     /// What the standups keep in memory.
     standup_state: standup::State,
     /// What the setups through a lead keep in memory.
@@ -82,6 +84,7 @@ mod briefing;
 mod files;
 mod history;
 mod merging;
+mod people;
 mod releases;
 mod runs;
 mod settings;
@@ -222,6 +225,7 @@ impl Studio {
             settings: Mutex::new(()),
             releasing: releases::Releasing::default(),
             talk_state: talk::State::default(),
+            people_state: people::State::default(),
             standup_state: standup::State::default(),
             setup_state: setup::State::default(),
             shipcheck_state: shipcheck::State::default(),
@@ -751,6 +755,8 @@ impl Studio {
             Request::Releases { project } => self.list_releases(project.as_deref()),
             Request::Talk { project, text } => self.talk(&project, &text),
             Request::Conversation { project, after } => self.conversation(&project, after),
+            Request::TalkToHire { hire, text } => self.talk_to_hire(&hire, &text),
+            Request::HireConversation { hire, after } => self.hire_conversation(&hire, after),
             Request::Tell { task, text } => self.tell(&task, &text),
             Request::LeadActs { project, task, act } => self.lead_acts(&project, &task, act),
             Request::SetupProject {
