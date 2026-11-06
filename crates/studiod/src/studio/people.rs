@@ -220,7 +220,10 @@ impl Studio {
     /// The project whose files this hire may read, and all of its assignments.
     /// Current work picks the project; otherwise the latest assignment, a
     /// project the hire leads, or the studio's first project does.
-    fn hire_context(&self, hire: &Hire) -> Result<(ProjectEntry, Vec<Ticket>), StudioError> {
+    pub(super) fn hire_context(
+        &self,
+        hire: &Hire,
+    ) -> Result<(ProjectEntry, Vec<Ticket>), StudioError> {
         let tickets = lock(&self.store).tickets()?;
         let mut mine: Vec<Ticket> = tickets
             .into_iter()
@@ -318,7 +321,7 @@ impl Studio {
     }
 }
 
-fn assignment_state(studio: &Studio, tasks: &[Ticket]) -> String {
+pub(super) fn assignment_state(studio: &Studio, tasks: &[Ticket]) -> String {
     if tasks.is_empty() {
         return "No tasks have been assigned to you yet.".to_string();
     }

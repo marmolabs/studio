@@ -117,6 +117,8 @@ impl Studio {
             standups: self.standups(),
             ship_checks: self.ship_checks(),
             setups: self.setups(),
+            operations: self.operations(),
+            rooms: self.room_summaries(),
             now,
             tickets,
             projects: self.project_views(),

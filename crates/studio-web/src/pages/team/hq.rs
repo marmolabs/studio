@@ -5,7 +5,9 @@
 
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{Ticket, TicketKind};
-use studiod::api::{AskView, CheckState, ReleaseState, ReleaseView, ShipCheck};
+use studiod::api::{
+    AskView, CheckState, ManagerAction, OperationState, ReleaseState, ReleaseView, ShipCheck,
+};
 use topcoat::view::{Child, View, component, view};
 
 use super::shell::{self, Here};
@@ -47,6 +49,9 @@ pub struct Waiting {
     /// Tasks held for the owner.
     pub held: Vec<Ticket>,
     pub ships: Vec<Ship>,
+    /// Actions proposed by the project's manager.
+    pub actions: Vec<ManagerAction>,
+    pub reviewing: bool,
     /// A release that waits for the go-ahead.
     pub release: Option<ReleaseView>,
 }
@@ -54,7 +59,11 @@ pub struct Waiting {
 impl Waiting {
     /// How many things wait.
     pub fn count(&self) -> usize {
-        self.asks.len() + self.held.len() + self.ships.len() + usize::from(self.release.is_some())
+        self.asks.len()
+            + self.held.len()
+            + self.ships.len()
+            + self.actions.len()
+            + usize::from(self.release.is_some())
     }
 }
 
@@ -77,6 +86,18 @@ pub fn waiting(office: &Office, project: &str, sizes: &Sizes) -> Waiting {
             .cloned()
             .collect(),
         ships: ships(office, project, sizes),
+        actions: office
+            .operations
+            .actions
+            .iter()
+            .filter(|action| action.project == project && action.state == OperationState::Pending)
+            .cloned()
+            .collect(),
+        reviewing: office
+            .operations
+            .reviewing
+            .iter()
+            .any(|reviewing| reviewing == project),
         release: office
             .project(project)
             .and_then(|view| view.release.clone())
@@ -394,6 +415,8 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
         asks,
         held,
         ships,
+        actions,
+        reviewing,
         release,
     } = waiting;
     let href = lead_href(&entry.project);
@@ -405,8 +428,12 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
     let seed = entry.lead.clone().unwrap_or_else(|| entry.project.clone());
     // A project without a lead has a row of its own that says so, which is
     // something to do for the owner, though not something that waits.
-    let cards =
-        !asks.is_empty() || !held.is_empty() || !ships.is_empty() || release.is_some() || !led;
+    let cards = !asks.is_empty()
+        || !held.is_empty()
+        || !ships.is_empty()
+        || !actions.is_empty()
+        || release.is_some()
+        || !led;
     let project = entry.project.clone();
     Ok(view! {
         <section class="grid grid-cols-[40px_minmax(0,1fr)] gap-x-3" aria-label=(if led { format!("{} leads {}", entry.name, entry.project) } else { format!("{} has no lead", entry.project) }) data-lead=(entry.project.clone())>
@@ -418,6 +445,9 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
                     if led { <span class="text-[12.5px] text-fg-3">(from)</span> }
                 </a>
                 <p class="text-[15px] leading-[1.5] [overflow-wrap:anywhere]">ui::prose(text: text)</p>
+                if led {
+                    <div>super::operations::review_button(project: project.clone(), reviewing: reviewing)</div>
+                }
                 if !led {
                     no_lead_row(project: project.clone())
                 }
@@ -430,6 +460,9 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
                 for ship in ships {
                     ship_row(ship: ship, project: project.clone())
                 }
+                for action in actions {
+                    super::operations::action_row(action: action)
+                }
                 if let Some(release) = release {
                     release_row(release: release, project: project.clone())
                 }
@@ -441,7 +474,7 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
 /// A card that waits for the owner: a tile in the colour of what it is, the
 /// title, a line under it, and the buttons in `child`.
 #[component]
-async fn card(
+pub(super) async fn card(
     tone: &'static str,
     #[into] title: String,
     #[into] meta: Child<'_>,

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{Ticket, TicketKind};
 use studio_git::Repo;
-use studiod::api::{CheckState, Request};
+use studiod::api::{CheckState, EvidenceFile, Request};
 use topcoat::view::{View, component, view};
 
 use super::lead_href;
@@ -59,6 +59,8 @@ pub struct Sheet {
     pub review: Tile,
     pub protected: Tile,
     pub tasks: Vec<Row>,
+    /// Screenshots and clips of each task, grouped by ticket id.
+    pub evidence: Vec<(String, Vec<EvidenceFile>)>,
     pub added: u64,
     pub removed: u64,
     /// The whole change as a unified diff.
@@ -81,6 +83,7 @@ struct Task {
     lines: Option<(u64, u64)>,
     events: Vec<client::Stamped>,
     log: String,
+    evidence: Vec<EvidenceFile>,
 }
 
 /// What was read for the sheet of one piece of work.
@@ -148,7 +151,7 @@ pub async fn gather(
         let lines = lines_of(&ticket.id.to_string());
         async move {
             let task = ticket.id.to_string();
-            let (events, log) = tokio::join!(
+            let (events, log, evidence) = tokio::join!(
                 client::call::<Vec<client::Stamped>>(
                     &config.socket,
                     Request::Events {
@@ -160,12 +163,19 @@ pub async fn gather(
                 tokio::fs::read_to_string(
                     config.data_dir.join("runs").join(format!("{task}.jsonl"))
                 ),
+                client::call::<Vec<EvidenceFile>>(
+                    &config.socket,
+                    Request::Evidence {
+                        ticket: task.clone(),
+                    },
+                ),
             );
             Task {
                 ticket,
                 lines,
                 events: events.unwrap_or_default(),
                 log: log.unwrap_or_default(),
+                evidence: evidence.unwrap_or_default(),
             }
         }
     }))
@@ -274,6 +284,11 @@ fn build(
         review: review_tile(office, &tasks),
         protected: protected_tile(&tasks),
         tasks: rows,
+        evidence: tasks
+            .iter()
+            .filter(|task| !task.evidence.is_empty())
+            .map(|task| (task.ticket.id.to_string(), task.evidence.clone()))
+            .collect(),
         added,
         removed,
         diff,
@@ -492,6 +507,7 @@ pub async fn sheet(work: Sheet) -> topcoat::Result<impl View> {
         review,
         protected,
         tasks,
+        evidence,
         added,
         removed,
         diff,
@@ -573,6 +589,12 @@ pub async fn sheet(work: Sheet) -> topcoat::Result<impl View> {
                             }
                         </ul>
                     </section>
+                    for (task, captures) in evidence {
+                        <section class="flex flex-col gap-2" aria-label=(format!("Evidence for {task}"))>
+                            <h3 class="text-[12px] font-medium uppercase text-fg-3">"Visual proof · " (task.clone())</h3>
+                            crate::pages::evidence::screenshots(ticket: task, files: captures)
+                        </section>
+                    }
                     if files > 0 {
                         <section class="flex flex-col gap-2">
                             <h3 class="text-[12px] font-medium uppercase text-fg-3">(files) if files == 1 { " file" } else { " files" }</h3>
@@ -668,6 +690,7 @@ mod tests {
                 .map(|e| serde_json::from_value(json!({"at_ms": 1, "event": e})).unwrap())
                 .collect(),
             log: log.iter().map(|l| format!("{l}\n")).collect(),
+            evidence: Vec::new(),
         }
     }
 

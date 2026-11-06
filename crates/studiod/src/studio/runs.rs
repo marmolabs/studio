@@ -116,6 +116,7 @@ impl Studio {
                     eprintln!("scheduler: {err}");
                 }
                 studio.spawn_standups();
+                studio.spawn_operations();
                 tokio::select! {
                     _ = studio.wake.notified() => {}
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {}
