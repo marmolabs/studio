@@ -467,16 +467,22 @@ async fn rooms_home() -> topcoat::Result<Response> {
     Err(redirect_permanent("/rooms/company").into())
 }
 
+#[query_params(error = bad_request)]
+struct RoomHistory {
+    before: Option<u64>,
+}
+
 /// A persistent company or project room.
 #[page("/rooms/{id}")]
 async fn room_page(cx: &Cx) -> topcoat::Result<impl View> {
     let room = path_param::<Id>(cx).to_owned();
+    let before = query_params::<RoomHistory>(cx)?.before;
     let config = app_context::<AppConfig>(cx);
     let (office, team) = read(cx).await?;
     if !office.rooms.iter().any(|summary| summary.id == room) {
         return Err(not_found().into());
     }
-    let conversation = rooms::read(config, &room).await;
+    let conversation = rooms::read(config, &room, before).await;
     Ok(
         view! { rooms::room_view(team: team, office: office, room: room, conversation: conversation) },
     )

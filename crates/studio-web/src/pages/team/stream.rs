@@ -58,6 +58,7 @@ pub enum Spot {
     },
     Room {
         room: String,
+        before: Option<u64>,
     },
     /// The company floor, seen from the corner `turn`, with `sel` picked.
     Office {
@@ -103,6 +104,7 @@ impl Spot {
             }),
             ["rooms", room] if !room.is_empty() => Some(Spot::Room {
                 room: unescape(room),
+                before: asked("before").and_then(|before| before.parse().ok()),
             }),
             _ => None,
         }
@@ -125,7 +127,7 @@ enum Extra {
     /// A conversation, with the sizes of what is ready to ship and the budget.
     Lead(Box<talk::Reads>),
     Person(studiod::api::ConversationView),
-    Room(studiod::api::ConversationView),
+    Room(studiod::api::RoomView),
     /// What one task may cost, when a limit is set.
     Studio(Option<f64>),
 }
@@ -150,7 +152,7 @@ impl Extra {
                 Extra::Lead(Box::new(talk::read(config, office, project, memo).await))
             }
             Spot::Person { hire } => Extra::Person(person::read(config, hire).await),
-            Spot::Room { room } => Extra::Room(rooms::read(config, room).await),
+            Spot::Room { room, before } => Extra::Room(rooms::read(config, room, *before).await),
             Spot::Hq => Extra::Hq(talk::sizes_of_all(config, office, memo).await),
             Spot::Studio => Extra::Studio(settings::ticket_usd(config).await),
             Spot::Office { .. } | Spot::Company | Spot::New => Extra::Nothing,
@@ -164,7 +166,7 @@ impl Extra {
             Extra::Nothing | Extra::Hq(_) => Seen::Nothing,
             Extra::Lead(reads) => Seen::Lead(reads.said()),
             Extra::Person(conversation) => Seen::Person(talk::Said::of(conversation)),
-            Extra::Room(conversation) => Seen::Room(talk::Said::of(conversation)),
+            Extra::Room(conversation) => Seen::Room(talk::Said::of_room(conversation)),
             Extra::Studio(usd) => Seen::Studio(*usd),
         }
     }
@@ -193,7 +195,7 @@ fn draw<'a>(
             let parts = person::parts(&office, &hire, conversation)?;
             view! { cx => person::person_view(team: team, parts: parts) }.boxed()
         }
-        (Spot::Room { room }, Extra::Room(conversation)) => {
+        (Spot::Room { room, .. }, Extra::Room(conversation)) => {
             if !office.rooms.iter().any(|summary| summary.id == room) {
                 return None;
             }

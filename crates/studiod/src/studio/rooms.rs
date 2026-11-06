@@ -2,11 +2,11 @@
 //! id; a mentioned hire answers with read-only project context and no actions.
 
 use super::{Studio, StudioError, file_stem, lock, other};
-use crate::api::{ConversationView, Response, RoomSummary, TalkFrom, TalkMessage};
+use crate::api::{Response, RoomSummary, RoomView, TalkFrom, TalkMessage};
 use crate::leadrun::{self, LeadRun, Tools};
 use crate::now_ms;
-use std::collections::BTreeSet;
-use std::io::Write;
+use std::collections::{BTreeSet, HashMap};
+use std::io::{Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use studio_config::config::ProjectEntry;
@@ -16,11 +16,34 @@ use studio_core::rule::Hire;
 const ROOM_USD: f64 = 0.25;
 const ROOM_TURNS: u32 = 6;
 const HISTORY: usize = 30;
+const ROOM_PAGE: usize = 200;
+const ROOM_PAGE_MAX: usize = 500;
+const READ_CHUNK: u64 = 16 * 1024;
 
 #[derive(Default)]
 pub(super) struct State {
     files: Mutex<()>,
-    replying: Mutex<BTreeSet<(String, String)>>,
+    turns: Mutex<HashMap<(String, String), RoomTurn>>,
+    summaries: Mutex<HashMap<String, CachedSummary>>,
+}
+
+#[derive(Default)]
+struct RoomTurn {
+    running: bool,
+    answered: Option<u64>,
+}
+
+#[derive(Clone, Default)]
+struct CachedSummary {
+    count: u64,
+    last: Option<TalkMessage>,
+    stamp: Option<Stamp>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    modified: Option<std::time::SystemTime>,
+    bytes: u64,
 }
 
 impl Studio {
@@ -54,13 +77,28 @@ impl Studio {
         Ok(Response::ok(message))
     }
 
-    pub(super) fn room(&self, room: &str, after: Option<u64>) -> Result<Response, StudioError> {
+    pub(super) fn room(
+        &self,
+        room: &str,
+        after: Option<u64>,
+        before: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<Response, StudioError> {
         self.room_project(room)?;
-        Ok(Response::ok(ConversationView {
-            messages: self.room_messages(room, after)?,
-            thinking: lock(&self.rooms_state.replying)
+        let limit = limit.unwrap_or(ROOM_PAGE).clamp(1, ROOM_PAGE_MAX);
+        let (messages, has_more) = if after.is_some() {
+            (self.room_messages(room, after)?, false)
+        } else {
+            self.room_page(room, before, limit)?
+        };
+        let total = self.room_summary(room).count;
+        Ok(Response::ok(RoomView {
+            messages,
+            thinking: lock(&self.rooms_state.turns)
                 .iter()
-                .any(|(in_room, _)| in_room == room),
+                .any(|((in_room, _), turn)| in_room == room && turn.running),
+            total,
+            has_more,
         }))
     }
 
@@ -96,6 +134,14 @@ impl Studio {
             })
             .and_then(|mut file| file.write_all(line.as_bytes()))
             .map_err(|error| other(format!("can't save the room message: {error}")))?;
+        lock(&self.rooms_state.summaries).insert(
+            room.to_string(),
+            CachedSummary {
+                count: message.id,
+                last: Some(message.clone()),
+                stamp: stamp(&path),
+            },
+        );
         Ok(message)
     }
 
@@ -109,6 +155,42 @@ impl Studio {
             .into_iter()
             .filter(|message| after.is_none_or(|after| message.id > after))
             .collect())
+    }
+
+    fn room_page(
+        &self,
+        room: &str,
+        before: Option<u64>,
+        limit: usize,
+    ) -> Result<(Vec<TalkMessage>, bool), StudioError> {
+        let _files = lock(&self.rooms_state.files);
+        read_page(&room_file(&self.paths.data_dir, room), before, limit)
+    }
+
+    fn room_summary(&self, room: &str) -> CachedSummary {
+        let path = room_file(&self.paths.data_dir, room);
+        let stamp = stamp(&path);
+        if let Some(cached) = lock(&self.rooms_state.summaries).get(room)
+            && cached.stamp == stamp
+        {
+            return cached.clone();
+        }
+        let cached = if stamp.is_some() {
+            let _files = lock(&self.rooms_state.files);
+            let messages = parse(&read(&path).unwrap_or_default());
+            CachedSummary {
+                count: messages.last().map_or(0, |message| message.id),
+                last: messages.last().cloned(),
+                stamp,
+            }
+        } else {
+            CachedSummary {
+                stamp,
+                ..CachedSummary::default()
+            }
+        };
+        lock(&self.rooms_state.summaries).insert(room.to_string(), cached.clone());
+        cached
     }
 
     pub(super) fn room_summaries(&self) -> Vec<RoomSummary> {
@@ -127,12 +209,12 @@ impl Studio {
         }));
         rooms
             .map(|mut summary| {
-                let messages = self.room_messages(&summary.id, None).unwrap_or_default();
-                summary.count = messages.len() as u64;
-                summary.last = messages.last().cloned();
-                summary.thinking = lock(&self.rooms_state.replying)
+                let cached = self.room_summary(&summary.id);
+                summary.count = cached.count;
+                summary.last = cached.last;
+                summary.thinking = lock(&self.rooms_state.turns)
                     .iter()
-                    .any(|(room, _)| room == &summary.id);
+                    .any(|((room, _), turn)| room == &summary.id && turn.running);
                 summary
             })
             .collect()
@@ -140,18 +222,68 @@ impl Studio {
 
     fn wake_room(self: &Arc<Self>, room: &str, hire: Hire) {
         let key = (room.to_string(), hire.id.0.clone());
-        if !lock(&self.rooms_state.replying).insert(key.clone()) {
-            return;
+        {
+            let mut turns = lock(&self.rooms_state.turns);
+            let turn = turns.entry(key.clone()).or_default();
+            if turn.running {
+                return;
+            }
+            turn.running = true;
         }
         let studio = Arc::clone(self);
         let room = room.to_string();
         tokio::spawn(async move {
-            studio.room_reply(&room, &hire).await;
-            lock(&studio.rooms_state.replying).remove(&key);
+            loop {
+                let answered = lock(&studio.rooms_state.turns)
+                    .get(&key)
+                    .and_then(|turn| turn.answered);
+                let covered = studio.room_reply(&room, &hire, answered).await;
+                let mut turns = lock(&studio.rooms_state.turns);
+                let turn = turns.entry(key.clone()).or_default();
+                if covered.is_some() {
+                    turn.answered = covered;
+                }
+                if covered.is_none()
+                    || studio
+                        .unanswered_room(&room, &hire.id.0, turn.answered)
+                        .is_empty()
+                {
+                    turn.running = false;
+                    return;
+                }
+            }
         });
     }
 
-    async fn room_reply(self: &Arc<Self>, room: &str, hire: &Hire) {
+    fn unanswered_room(&self, room: &str, hire: &str, answered: Option<u64>) -> Vec<TalkMessage> {
+        let messages = self.room_messages(room, None).unwrap_or_default();
+        let since = answered.unwrap_or_else(|| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| matches!(&message.from, TalkFrom::Lead { hire: said } if said == hire))
+                .map_or(0, |message| message.id)
+        });
+        messages
+            .into_iter()
+            .filter(|message| {
+                message.id > since
+                    && message.from == TalkFrom::Owner
+                    && mentions_hire(&message.text, hire)
+            })
+            .collect()
+    }
+
+    async fn room_reply(
+        self: &Arc<Self>,
+        room: &str,
+        hire: &Hire,
+        answered: Option<u64>,
+    ) -> Option<u64> {
+        let upto = self.room_messages(room, None).ok()?.last()?.id;
+        if self.unanswered_room(room, &hire.id.0, answered).is_empty() {
+            return None;
+        }
         let result = self.room_reply_run(room, hire).await;
         match result {
             Ok(reply) if !reply.trim().is_empty() => {
@@ -177,15 +309,19 @@ impl Studio {
                 }
             }
         }
+        Some(upto)
     }
 
     async fn room_reply_run(self: &Arc<Self>, room: &str, hire: &Hire) -> Result<String, String> {
-        let (assigned_project, tasks) =
+        let (assigned_project, mut tasks) =
             self.hire_context(hire).map_err(|error| error.to_string())?;
-        let project = self
-            .room_project(room)
-            .map_err(|error| error.to_string())?
-            .unwrap_or(assigned_project);
+        let project = match self.room_project(room).map_err(|error| error.to_string())? {
+            Some(project) => {
+                tasks.retain(|ticket| ticket.project.0 == project.name);
+                project
+            }
+            None => assigned_project,
+        };
         let messages = self
             .room_messages(room, None)
             .map_err(|error| error.to_string())?;
@@ -235,14 +371,22 @@ impl Studio {
     }
 }
 
+fn mention_ids(text: &str) -> BTreeSet<&str> {
+    text.split(|character: char| {
+        !(character.is_ascii_alphanumeric() || matches!(character, '@' | '-' | '_' | '.'))
+    })
+    .filter_map(|word| word.strip_prefix('@'))
+    .map(|id| id.trim_end_matches('.'))
+    .filter(|id| !id.is_empty())
+    .collect()
+}
+
+fn mentions_hire(text: &str, hire: &str) -> bool {
+    mention_ids(text).contains(hire)
+}
+
 fn mentioned(studio: &Studio, text: &str) -> Vec<Hire> {
-    let ids = text
-        .split(|character: char| {
-            !(character.is_ascii_alphanumeric() || matches!(character, '@' | '-' | '_' | '.'))
-        })
-        .filter_map(|word| word.strip_prefix('@'))
-        .filter(|id| !id.is_empty())
-        .collect::<BTreeSet<_>>();
+    let ids = mention_ids(text);
     let mut hires = studio
         .all_hires()
         .into_iter()
@@ -256,6 +400,61 @@ fn room_file(data_dir: &Path, room: &str) -> PathBuf {
     data_dir
         .join("rooms")
         .join(format!("{}.jsonl", file_stem(room)))
+}
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(Stamp {
+        modified: metadata.modified().ok(),
+        bytes: metadata.len(),
+    })
+}
+
+fn read_page(
+    path: &Path,
+    before: Option<u64>,
+    limit: usize,
+) -> Result<(Vec<TalkMessage>, bool), StudioError> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), false));
+        }
+        Err(error) => return Err(other(format!("can't read {}: {error}", path.display()))),
+    };
+    let mut remaining = file
+        .seek(SeekFrom::End(0))
+        .map_err(|error| other(format!("can't read {}: {error}", path.display())))?;
+    let mut bytes = Vec::new();
+    loop {
+        let messages = parse(&String::from_utf8_lossy(&bytes))
+            .into_iter()
+            .filter(|message| before.is_none_or(|before| message.id < before))
+            .count();
+        if messages >= limit || remaining == 0 {
+            break;
+        }
+        let take = remaining.min(READ_CHUNK);
+        let start = remaining - take;
+        file.seek(SeekFrom::Start(start))
+            .and_then(|_| {
+                let mut chunk = vec![0; take as usize];
+                file.read_exact(&mut chunk)?;
+                chunk.extend(std::mem::take(&mut bytes));
+                bytes = chunk;
+                Ok(())
+            })
+            .map_err(|error| other(format!("can't read {}: {error}", path.display())))?;
+        remaining = start;
+    }
+    let mut messages = parse(&String::from_utf8_lossy(&bytes))
+        .into_iter()
+        .filter(|message| before.is_none_or(|before| message.id < before))
+        .collect::<Vec<_>>();
+    let start = messages.len().saturating_sub(limit);
+    let messages = messages.split_off(start);
+    let has_more = messages.first().is_some_and(|message| message.id > 1);
+    Ok((messages, has_more))
 }
 
 fn read(path: &Path) -> Result<String, StudioError> {
@@ -297,16 +496,33 @@ mod tests {
     }
 
     fn rooms(reply: &str) -> Rooms {
+        rooms_with(FakeRuntime::new(vec![RunEvent::Finished {
+            outcome: Outcome::Success,
+            session: Some("s1".into()),
+            cost: Cost {
+                usd: 0.03,
+                reported: true,
+                ..Cost::default()
+            },
+            summary: Some(reply.into()),
+        }]))
+    }
+
+    fn rooms_with(runtime: FakeRuntime) -> Rooms {
         let home = tempfile::tempdir().unwrap();
         let repo = home.path().join("shop");
+        let api = home.path().join("api");
         std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&api).unwrap();
         std::fs::write(
             home.path().join("studio.toml"),
             format!(
                 "[budget]\ndaily_usd = 5.0\n\n[concurrency]\nmax_runs = 2\n\n\
                  [prices.fake-1]\ninput_per_mtok = 1.0\noutput_per_mtok = 5.0\n\n\
-                 [[projects]]\nname = \"shop\"\npath = \"{}\"\n",
-                repo.display()
+                 [[projects]]\nname = \"shop\"\npath = \"{}\"\n\n\
+                 [[projects]]\nname = \"api\"\npath = \"{}\"\n",
+                repo.display(),
+                api.display()
             ),
         )
         .unwrap();
@@ -316,16 +532,6 @@ mod tests {
             "---\nname: Dev\nrole: engineer\nruntime: fake\nmodel: fake-1\n---\nYou build the shop.\n",
         )
         .unwrap();
-        let runtime = FakeRuntime::new(vec![RunEvent::Finished {
-            outcome: Outcome::Success,
-            session: Some("s1".into()),
-            cost: Cost {
-                usd: 0.03,
-                reported: true,
-                ..Cost::default()
-            },
-            summary: Some(reply.into()),
-        }]);
         let mut runtimes: HashMap<String, Arc<dyn Runtime>> = HashMap::new();
         runtimes.insert("fake".into(), Arc::new(runtime.clone()));
         let studio = Studio::open(
@@ -340,11 +546,13 @@ mod tests {
         }
     }
 
-    async fn messages(studio: &Arc<Studio>, room: &str) -> ConversationView {
+    async fn messages(studio: &Arc<Studio>, room: &str) -> RoomView {
         let response = studio
             .handle(Request::Room {
                 room: room.into(),
                 after: None,
+                before: None,
+                limit: None,
             })
             .await;
         assert!(response.ok, "{:?}", response.error);
@@ -388,6 +596,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_mention_during_a_reply_gets_the_next_turn() {
+        let answer = |text: &str| {
+            vec![RunEvent::Finished {
+                outcome: Outcome::Success,
+                session: Some("s1".into()),
+                cost: Cost::default(),
+                summary: Some(text.into()),
+            }]
+        };
+        let (runtime, release) =
+            FakeRuntime::sequence(vec![answer("First answer"), answer("Second answer")]).held();
+        let rooms = rooms_with(runtime);
+        for text in ["@dev first question", "@dev second question"] {
+            let sent = rooms
+                .studio
+                .handle(Request::TalkToRoom {
+                    room: "company".into(),
+                    text: text.into(),
+                })
+                .await;
+            assert!(sent.ok);
+            if text.contains("first") {
+                for _ in 0..100 {
+                    if !rooms.runtime.specs().is_empty() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+        assert_eq!(rooms.runtime.specs().len(), 1);
+        release.notify_one();
+        for _ in 0..100 {
+            if rooms.runtime.specs().len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(rooms.runtime.specs().len(), 2);
+        release.notify_one();
+        for _ in 0..100 {
+            let view = messages(&rooms.studio, "company").await;
+            if view.messages.len() == 4 && !view.thinking {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let view = messages(&rooms.studio, "company").await;
+        assert_eq!(view.messages.len(), 4);
+        assert_eq!(view.messages[2].text, "First answer");
+        assert_eq!(view.messages[3].text, "Second answer");
+    }
+
+    #[tokio::test]
+    async fn a_project_room_does_not_include_other_project_assignments() {
+        let rooms = rooms("Scoped answer");
+        for (project, title, detail) in [
+            ("shop", "Shop drawer", "Public shop brief"),
+            ("api", "Private API migration", "Secret API brief"),
+        ] {
+            let made = rooms
+                .studio
+                .handle(Request::CreateTicket {
+                    project: project.into(),
+                    title: title.into(),
+                    goal: String::new(),
+                    hire: "dev".into(),
+                    base: None,
+                    detail: detail.into(),
+                })
+                .await;
+            assert!(made.ok, "{:?}", made.error);
+        }
+        let sent = rooms
+            .studio
+            .handle(Request::TalkToRoom {
+                room: "shop".into(),
+                text: "@dev What are you doing?".into(),
+            })
+            .await;
+        assert!(sent.ok);
+        for _ in 0..100 {
+            if !rooms.runtime.specs().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let prompt = &rooms.runtime.specs()[0].prompt;
+        assert!(prompt.contains("Public shop brief"), "{prompt}");
+        assert!(!prompt.contains("Private API migration"), "{prompt}");
+        assert!(!prompt.contains("Secret API brief"), "{prompt}");
+    }
+
+    #[tokio::test]
     async fn announcements_do_not_spend_and_rooms_are_validated() {
         let rooms = rooms("Never called");
         let sent = rooms
@@ -408,6 +710,46 @@ mod tests {
             })
             .await;
         assert!(!missing.ok);
+    }
+
+    #[test]
+    fn room_history_is_bounded_and_can_page_backwards() {
+        let rooms = rooms("Hi");
+        for n in 1..=5 {
+            rooms
+                .studio
+                .post_room("company", TalkFrom::Owner, &format!("Message {n}"))
+                .unwrap();
+        }
+        let page = |before, limit| {
+            let response = rooms
+                .studio
+                .room("company", None, before, Some(limit))
+                .unwrap();
+            serde_json::from_value::<RoomView>(response.data).unwrap()
+        };
+        let latest = page(None, 2);
+        assert_eq!(latest.total, 5);
+        assert!(latest.has_more);
+        assert_eq!(
+            latest.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [4, 5]
+        );
+        let earlier = page(Some(4), 2);
+        assert!(earlier.has_more);
+        assert_eq!(
+            earlier.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [2, 3]
+        );
+        let first = page(Some(2), 2);
+        assert!(!first.has_more);
+        assert_eq!(first.messages.iter().map(|m| m.id).collect::<Vec<_>>(), [1]);
+        let summary = rooms.studio.room_summaries().remove(0);
+        assert_eq!(summary.count, 5);
+        assert_eq!(
+            summary.last.map(|message| message.text),
+            Some("Message 5".to_string())
+        );
     }
 
     #[test]

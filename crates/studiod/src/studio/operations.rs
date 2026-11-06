@@ -29,6 +29,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 #[derive(Default)]
 pub(super) struct State {
     saved: Mutex<Option<Saved>>,
+    problem: Mutex<Option<String>>,
     reviewing: Mutex<BTreeSet<String>>,
     looked: Mutex<Option<Instant>>,
 }
@@ -59,8 +60,12 @@ struct ModelAction {
 }
 
 impl Studio {
-    pub(crate) fn runtime_mode(&self) -> RuntimeMode {
-        self.read_operations().settings.mode
+    pub(crate) fn runtime_mode(&self) -> Result<RuntimeMode, StudioError> {
+        self.read_operations();
+        if let Some(problem) = lock(&self.operations_state.problem).clone() {
+            return Err(other(format!("new runs are stopped: {problem}")));
+        }
+        Ok(self.read_operations().settings.mode)
     }
 
     pub(super) fn operations(&self) -> OperationsView {
@@ -77,6 +82,7 @@ impl Studio {
                 .collect(),
             reviews,
             actions,
+            problem: lock(&self.operations_state.problem).clone(),
         }
     }
 
@@ -84,30 +90,43 @@ impl Studio {
         self.paths.data_dir.join("operations.json")
     }
 
+    fn load_operations(&self) -> Saved {
+        let path = self.operations_path();
+        let result = match std::fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Saved::default();
+            }
+            Err(error) => Err(error.to_string()),
+        };
+        match result {
+            Ok(saved) => saved,
+            Err(error) => {
+                let problem = format!(
+                    "{} is unreadable: {error}; it was not overwritten",
+                    path.display()
+                );
+                eprintln!("operations: {problem}");
+                *lock(&self.operations_state.problem) = Some(problem);
+                Saved::default()
+            }
+        }
+    }
+
     fn read_operations(&self) -> Saved {
         let mut kept = lock(&self.operations_state.saved);
-        kept.get_or_insert_with(|| {
-            std::fs::read_to_string(self.operations_path())
-                .ok()
-                .and_then(|text| serde_json::from_str(&text).ok())
-                .unwrap_or_default()
-        })
-        .clone()
+        kept.get_or_insert_with(|| self.load_operations()).clone()
     }
 
     fn update_operations(&self, change: impl FnOnce(&mut Saved)) -> Result<Saved, StudioError> {
         let mut kept = lock(&self.operations_state.saved);
-        let mut saved = kept
-            .get_or_insert_with(|| {
-                std::fs::read_to_string(self.operations_path())
-                    .ok()
-                    .and_then(|text| serde_json::from_str(&text).ok())
-                    .unwrap_or_default()
-            })
-            .clone();
+        let mut saved = kept.get_or_insert_with(|| self.load_operations()).clone();
+        if let Some(problem) = lock(&self.operations_state.problem).clone() {
+            return Err(other(problem));
+        }
         change(&mut saved);
         saved.reviews.truncate(MAX_REVIEWS);
-        saved.actions.truncate(MAX_AUDIT);
+        retain_actions(&mut saved.actions);
         let path = self.operations_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -152,10 +171,39 @@ impl Studio {
         Ok(Response::ok(saved.settings))
     }
 
+    /// A process that stops after claiming an action leaves it marked as
+    /// interrupted, never pending for an automatic second execution.
+    pub(crate) fn recover_operations(&self) -> Result<(), StudioError> {
+        let interrupted = self
+            .read_operations()
+            .actions
+            .iter()
+            .any(|action| action.state == OperationState::Executing);
+        if interrupted {
+            self.update_operations(|saved| {
+                for action in saved
+                    .actions
+                    .iter_mut()
+                    .filter(|action| action.state == OperationState::Executing)
+                {
+                    action.state = OperationState::Failed;
+                    action.result =
+                        "Interrupted by a restart; inspect the work before proposing it again"
+                            .to_string();
+                    action.resolved_at = Some(now_ms());
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     pub(super) fn review_operations(
         self: &Arc<Self>,
         project: &str,
     ) -> Result<Response, StudioError> {
+        if let Some(problem) = self.operations().problem {
+            return Err(other(problem));
+        }
         let entry = self.project(&ProjectId::new(project))?;
         if self.lead_of(project).is_none() {
             return Err(other(format!("{project} has no lead to review it")));
@@ -185,7 +233,8 @@ impl Studio {
             }
         }
         let settings = self.read_operations().settings;
-        if !settings.autopilot || self.is_closed() {
+        if lock(&self.operations_state.problem).is_some() || !settings.autopilot || self.is_closed()
+        {
             return;
         }
         let now = now_ms();
@@ -371,17 +420,47 @@ impl Studio {
         found.ok_or_else(|| other(format!("no pending manager action {id}")))
     }
 
+    fn claim_operation(&self, id: &str) -> Result<ManagerAction, StudioError> {
+        let mut found = None;
+        self.update_operations(|saved| {
+            if let Some(action) = saved
+                .actions
+                .iter_mut()
+                .find(|action| action.id == id && action.state == OperationState::Pending)
+            {
+                action.state = OperationState::Executing;
+                found = Some(action.clone());
+            }
+        })?;
+        found.ok_or_else(|| other(format!("no pending manager action {id}")))
+    }
+
+    fn finish_operation(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut ManagerAction),
+    ) -> Result<ManagerAction, StudioError> {
+        let mut found = None;
+        self.update_operations(|saved| {
+            if let Some(action) = saved
+                .actions
+                .iter_mut()
+                .find(|action| action.id == id && action.state == OperationState::Executing)
+            {
+                change(action);
+                action.resolved_at = Some(now_ms());
+                found = Some(action.clone());
+            }
+        })?;
+        found.ok_or_else(|| other(format!("manager action {id} is not executing")))
+    }
+
     fn execute_operation(
         self: &Arc<Self>,
         id: &str,
         note: Option<String>,
     ) -> Result<Response, StudioError> {
-        let action = self
-            .read_operations()
-            .actions
-            .into_iter()
-            .find(|action| action.id == id && action.state == OperationState::Pending)
-            .ok_or_else(|| other(format!("no pending manager action {id}")))?;
+        let action = self.claim_operation(id)?;
         let project = action.project.clone();
         let response = match &action.act {
             ManagerAct::StartGoal { goal, detail } => self.dispatch(Request::CreateGoal {
@@ -427,7 +506,7 @@ impl Studio {
             Ok(response) => response,
             Err(error) => {
                 let message = error.to_string();
-                self.change_operation(id, |action| {
+                self.finish_operation(id, |action| {
                     action.state = OperationState::Failed;
                     action.result = message;
                 })?;
@@ -438,7 +517,7 @@ impl Studio {
             let error = response
                 .error
                 .unwrap_or_else(|| "action failed".to_string());
-            self.change_operation(id, |action| {
+            self.finish_operation(id, |action| {
                 action.state = OperationState::Failed;
                 action.result = error.clone();
             })?;
@@ -451,7 +530,7 @@ impl Studio {
         if let Some(note) = note.filter(|note| !note.trim().is_empty()) {
             result.push_str(&format!(" · {note}"));
         }
-        let action = self.change_operation(id, |action| {
+        let action = self.finish_operation(id, |action| {
             action.state = OperationState::Executed;
             action.result = result.clone();
         })?;
@@ -468,6 +547,20 @@ impl Studio {
         )?;
         Ok(Response::ok(action))
     }
+}
+
+fn retain_actions(actions: &mut Vec<ManagerAction>) {
+    let (mut active, mut resolved): (Vec<_>, Vec<_>) =
+        std::mem::take(actions).into_iter().partition(|action| {
+            matches!(
+                action.state,
+                OperationState::Pending | OperationState::Executing
+            )
+        });
+    let excess = resolved.len().saturating_sub(MAX_AUDIT);
+    resolved.drain(..excess);
+    active.extend(resolved);
+    *actions = active;
 }
 
 fn automatic(autonomy: Autonomy, act: &ManagerAct) -> bool {
@@ -653,6 +746,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn simultaneous_approvals_execute_an_action_only_once() {
+        let company = company(
+            r#"{"summary":"Delegate once.","actions":[{"title":"Build once","act":{"do":"create_task","title":"Only one","detail":"","hire":"dev"}}]}"#,
+        );
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let action = company.studio.operations().actions[0].id.clone();
+        let decide = || Request::DecideOperation {
+            action: action.clone(),
+            approve: true,
+            note: None,
+        };
+        let (first, second) = tokio::join!(
+            company.studio.handle(decide()),
+            company.studio.handle(decide()),
+        );
+        assert_ne!(first.ok, second.ok, "exactly one approval must win");
+        assert_eq!(lock(&company.studio.store).tickets().unwrap().len(), 1);
+        assert_eq!(
+            company.studio.operations().actions[0].state,
+            OperationState::Executed
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_execution_never_becomes_pending_again() {
+        let company = company(
+            r#"{"summary":"Delegate once.","actions":[{"title":"Build once","act":{"do":"create_task","title":"Only one","detail":"","hire":"dev"}}]}"#,
+        );
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let action = company.studio.operations().actions[0].id.clone();
+        company.studio.claim_operation(&action).unwrap();
+        company.studio.recover_operations().unwrap();
+        let action = &company.studio.operations().actions[0];
+        assert_eq!(action.state, OperationState::Failed);
+        assert!(action.result.contains("Interrupted"));
+    }
+
+    #[tokio::test]
     async fn an_action_the_engine_refuses_is_marked_failed_not_left_pending() {
         let company = company("Never called");
         let made = company
@@ -748,6 +881,62 @@ mod tests {
         assert!(operations.actions.is_empty());
         assert_eq!(operations.reviews[0].usd, 0.0);
         assert!(company.studio.runtime("not-configured").is_ok());
+    }
+
+    #[test]
+    fn audit_retention_keeps_unresolved_and_the_newest_resolved_actions() {
+        let action = |id: usize, state| ManagerAction {
+            id: format!("a{id}"),
+            review: "r1".into(),
+            project: "shop".into(),
+            lead: "nora".into(),
+            title: format!("Action {id}"),
+            reason: String::new(),
+            act: ManagerAct::Pause { task: "S-1".into() },
+            state,
+            at: id as u64,
+            resolved_at: None,
+            result: String::new(),
+        };
+        let mut actions = (0..=MAX_AUDIT)
+            .map(|id| action(id, OperationState::Executed))
+            .collect::<Vec<_>>();
+        actions.push(action(MAX_AUDIT + 1, OperationState::Pending));
+        retain_actions(&mut actions);
+        assert_eq!(actions.len(), MAX_AUDIT + 1);
+        assert!(!actions.iter().any(|action| action.id == "a0"));
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.id == format!("a{}", MAX_AUDIT + 1))
+        );
+        actions.push(action(MAX_AUDIT + 2, OperationState::Executing));
+        retain_actions(&mut actions);
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.id == format!("a{}", MAX_AUDIT + 2))
+        );
+    }
+
+    #[test]
+    fn malformed_operations_storage_is_preserved_and_fails_closed() {
+        let company = company("Never called");
+        let path = company.studio.paths.data_dir.join("operations.json");
+        std::fs::write(&path, "not json").unwrap();
+        let reopened = Studio::open(
+            StudioPaths::resolve(Some(company._home.path().to_path_buf())),
+            HashMap::new(),
+        )
+        .unwrap();
+        assert!(reopened.operations().problem.is_some());
+        assert!(
+            reopened
+                .set_operations(Some(true), None, None, None)
+                .is_err()
+        );
+        assert!(reopened.runtime("fake").is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "not json");
     }
 
     #[test]

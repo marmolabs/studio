@@ -187,7 +187,10 @@ without individual approval:
 
 Automatic reviews are off by default, run only while the office is open, and use
 the configured interval (5 minutes to 24 hours). Shipping and publishing always
-need the owner at every level.
+need the owner at every level. Actions are claimed atomically so concurrent
+approvals cannot execute them twice. An interrupted claim becomes failed on
+restart. If `operations.json` is unreadable, it is preserved, the UI shows the
+problem, and changes and new model runs are blocked until it is repaired.
 
 ## Simulation and live runtimes
 
@@ -208,7 +211,10 @@ room at `/rooms/<project>`. Owner messages and announcements are stored in
 for a reply. A mentioned hire gets the room history, its assignments and
 read-only access to the relevant project. It cannot act on tasks. Each reply is
 capped at $0.25 and charged to `<project>/rooms/<room>`. Messages without a
-valid mention start no model run and cost nothing.
+valid mention start no model run and cost nothing. A mention that arrives during
+a reply gets the next turn. Project-room prompts include only that project's
+assignments; the company room can include cross-project assignments. Pages show
+at most 200 messages, with **Earlier messages** for older history.
 
 The company page (`/company`) shows each goal and the tasks under it, their
 owners, states, next actions and ticket spend. Its scorecard uses ticket events

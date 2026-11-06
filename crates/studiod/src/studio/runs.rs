@@ -6,6 +6,7 @@ use crate::api::JudgeView;
 use crate::budget::{DAY_MS, Reservation};
 use crate::{budget, now_ms, worker};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use studio_core::budget::Allowance;
@@ -69,6 +70,21 @@ impl Stop {
 
     pub(crate) fn reason(&self) -> Option<StopReason> {
         *lock(&self.reason)
+    }
+}
+
+static NEXT_EXTRA_RUN: AtomicU64 = AtomicU64::new(1);
+
+/// Holds a small run's allowance until its spend is recorded.
+pub(crate) struct ExtraRun {
+    studio: Arc<Studio>,
+    key: String,
+}
+
+impl Drop for ExtraRun {
+    fn drop(&mut self) {
+        lock(&self.studio.reservations).remove(&self.key);
+        self.studio.wake.notify_one();
     }
 }
 
@@ -350,37 +366,50 @@ impl Studio {
         Ok(decision)
     }
 
-    /// Whether a small extra call costing `usd` fits under the studio, project
-    /// and hire daily limits, counting live reservations.
-    /// Whether `usd` more fits under the daily limits. `for_ticket` names the
-    /// running ticket the spend is for, whose own reservation already covers it.
-    pub(crate) fn has_headroom(
-        &self,
+    /// Reserves a small run under every daily limit, with a unique key even
+    /// when several runs share one synthetic ledger id.
+    pub(crate) fn reserve_extra(
+        self: &Arc<Self>,
         project: &str,
         hire: &Hire,
         usd: f64,
-        for_ticket: &str,
-    ) -> bool {
+        ledger: &str,
+        covered_by: &str,
+    ) -> Result<Option<ExtraRun>, StudioError> {
         let config = self.config();
         let project_day = config
             .projects
             .iter()
-            .find(|p| p.name == project)
-            .and_then(|p| p.daily_usd);
-        // A call made for a running ticket is part of that run, so the run's
-        // own reservation doesn't count against it.
-        let mut reservations = lock(&self.reservations).clone();
-        reservations.remove(for_ticket);
-        budget::has_headroom(
+            .find(|entry| entry.name == project)
+            .and_then(|entry| entry.daily_usd);
+        let mut reservations = lock(&self.reservations);
+        let mut others = reservations.clone();
+        others.remove(covered_by);
+        if !budget::has_headroom(
             &lock(&self.store),
             &config.budget,
             (project, project_day),
             hire,
-            &reservations,
+            &others,
             now_ms(),
             usd,
-        )
-        .unwrap_or(false)
+        )? {
+            return Ok(None);
+        }
+        let serial = NEXT_EXTRA_RUN.fetch_add(1, Ordering::Relaxed);
+        let key = format!("{ledger}#extra-{serial}");
+        reservations.insert(
+            key.clone(),
+            Reservation {
+                project: project.to_string(),
+                hire: hire.id.0.clone(),
+                usd,
+            },
+        );
+        Ok(Some(ExtraRun {
+            studio: Arc::clone(self),
+            key,
+        }))
     }
 
     pub(crate) fn release(&self, ticket: &TicketId) {

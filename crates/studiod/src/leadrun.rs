@@ -124,9 +124,12 @@ async fn go(
     } = lead;
     let who = called(hire);
     let task = charge_task.map_or_else(|| talk_task(project), TicketId::new);
-    if !studio.has_headroom(project, hire, cap_usd, &task.to_string()) {
+    let Some(_reservation) = studio
+        .reserve_extra(project, hire, cap_usd, &task.to_string(), &task.to_string())
+        .map_err(|error| error.to_string())?
+    else {
         return Err(format!("no budget left for {who}"));
-    }
+    };
     let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
     let mcp = if runtime.capabilities().mcp {
         write_config(studio, project, tools)
@@ -688,6 +691,50 @@ mod tests {
         let room = Lead::with_day(FakeRuntime::new(script("Hi.", 0.07)), 0.5);
         assert!(run(&room.studio, room.talk()).await.is_ok());
         assert_eq!(room.runtime.specs().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_concurrent_lead_run_cannot_spend_another_runs_reservation() {
+        let (runtime, release) = FakeRuntime::new(script("Hi.", 0.07)).held();
+        // After the first run costs $0.07, another full-cap run still fits.
+        let lead = Lead::with_day(runtime, 0.58);
+        let studio = Arc::clone(&lead.studio);
+        let hire = lead.hire.clone();
+        let repo = lead.repo.clone();
+        let first = tokio::spawn(async move {
+            run(
+                &studio,
+                LeadRun {
+                    project: "shop",
+                    hire: &hire,
+                    cwd: &repo,
+                    prompt: "First".into(),
+                    tools: Tools::Talk,
+                    charge_task: None,
+                    cap_usd: 0.5,
+                    max_turns: 8,
+                },
+            )
+            .await
+        });
+        for _ in 0..100 {
+            if !lead.runtime.specs().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(lead.runtime.specs().len(), 1);
+        let refused = run(&lead.studio, lead.talk()).await;
+        assert_eq!(refused, Err("no budget left for Nora".to_string()));
+        assert_eq!(lead.runtime.specs().len(), 1);
+        release.notify_one();
+        assert!(first.await.unwrap().is_ok());
+        // The reservation goes away, so another full-cap allowance is available.
+        let again = lead
+            .studio
+            .reserve_extra("shop", &lead.hire, 0.5, "shop/talk", "shop/talk")
+            .unwrap();
+        assert!(again.is_some());
     }
 
     #[tokio::test]
