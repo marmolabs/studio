@@ -2,7 +2,7 @@
 //! router): cheap, tool-less, capped, and charged to a ticket.
 
 use crate::budget::Meter;
-use crate::studio::Studio;
+use crate::studio::{ExtraRun, Studio};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +22,7 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 pub(crate) struct Reply {
     pub answer: Result<String, String>,
     spend: Spend,
+    _reservation: ExtraRun,
 }
 
 impl Reply {
@@ -60,9 +61,12 @@ pub(crate) async fn ask_capped(
 ) -> Result<Reply, String> {
     let role = &hire.role;
     let for_ticket = for_ticket.map(TicketId::to_string).unwrap_or_default();
-    if !studio.has_headroom(project, hire, cap_usd, &for_ticket) {
+    let Some(reservation) = studio
+        .reserve_extra(project, hire, cap_usd, &for_ticket, &for_ticket)
+        .map_err(|error| error.to_string())?
+    else {
         return Err(format!("no budget left for the {role}"));
-    }
+    };
     let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
     let spec = RunSpec {
         cwd: cwd.to_path_buf(),
@@ -178,6 +182,7 @@ pub(crate) async fn ask_capped(
     Ok(Reply {
         answer: outcome.map(|()| text),
         spend,
+        _reservation: reservation,
     })
 }
 

@@ -68,6 +68,14 @@ impl Said {
             thinking: conversation.thinking,
         }
     }
+
+    pub fn of_room(room: &studiod::api::RoomView) -> Said {
+        Said {
+            messages: room.messages.len(),
+            last: room.messages.last().map(|message| message.id),
+            thinking: room.thinking,
+        }
+    }
 }
 
 impl Reads {

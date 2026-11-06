@@ -23,6 +23,12 @@
 - A simulation/live switch lets new conversations and reviews use local scripted
   responses with zero model cost, while preserving company history and leaving
   already-running agents to finish.
+- Manager actions are claimed atomically and interrupted executions are marked
+  failed on restart. Conversational and quick model runs reserve their budgets
+  before starting. Room replies queue follow-up mentions, project rooms only
+  include their own assignments, and room history has cursor pagination and
+  cached summaries. Malformed operations state is preserved and blocks new runs
+  rather than being silently overwritten.
 
 ## 0.1.0
 

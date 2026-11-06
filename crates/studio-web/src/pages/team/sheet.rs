@@ -224,14 +224,7 @@ fn build(
 
     let (checks, failed) = match goal {
         Some(goal) => goal_checks(office, &goal.plan.id.to_string()),
-        None => (
-            Tile {
-                tone: "ok",
-                title: "Checks",
-                words: "passed".to_string(),
-            },
-            None,
-        ),
+        None => (task_checks(&tasks[0]), None),
     };
     let summary = match goal {
         Some(goal) => super::goal_said(office, goal),
@@ -298,6 +291,24 @@ fn build(
         branch,
         folder,
     }
+}
+
+/// The latest check state the task itself recorded, not an assumption from
+/// whether it happens to be ready to ship.
+fn task_checks(task: &Task) -> Tile {
+    let latest = task
+        .events
+        .iter()
+        .rev()
+        .find_map(|stored| match &stored.event {
+            TicketEvent::ChecksStarted => Some(("neutral", "Checks", "running…".to_string())),
+            TicketEvent::ChecksPassed => Some(("ok", "Checks", "passed".to_string())),
+            TicketEvent::ChecksFailed { detail } => Some(("bad", "Checks failed", detail.clone())),
+            _ => None,
+        });
+    let (tone, title, words) =
+        latest.unwrap_or_else(|| ("neutral", "Checks", "not run yet".to_string()));
+    Tile { tone, title, words }
 }
 
 /// What the checks of a goal's branch came to.
@@ -700,6 +711,29 @@ mod tests {
 
     fn went_on() -> serde_json::Value {
         json!({"at": 2, "event": {"type": "text", "text": "Going on."}})
+    }
+
+    #[test]
+    fn the_check_tile_uses_the_tasks_latest_real_check_event() {
+        let none = task("S-1", &[], &[]);
+        assert_eq!(task_checks(&none).words, "not run yet");
+        let running = task("S-1", &[json!({"type":"checks_started"})], &[]);
+        assert_eq!(task_checks(&running).words, "running…");
+        let failed = task(
+            "S-1",
+            &[
+                json!({"type":"checks_passed"}),
+                json!({"type":"checks_failed", "detail":"2 failed"}),
+            ],
+            &[],
+        );
+        let tile = task_checks(&failed);
+        assert_eq!(
+            (tile.tone, tile.title, tile.words.as_str()),
+            ("bad", "Checks failed", "2 failed")
+        );
+        let passed = task("S-1", &[json!({"type":"checks_passed"})], &[]);
+        assert_eq!(task_checks(&passed).tone, "ok");
     }
 
     #[test]

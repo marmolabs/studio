@@ -7,7 +7,7 @@ use topcoat::view::{Child, View, component, view};
 use super::shell::{self, Here};
 use super::talk::fill;
 use super::talk::thread::Person;
-use super::{Team, clock, faces};
+use super::{Team, clock, faces, person_href};
 use crate::pages::office::Office;
 use crate::{AppConfig, client, ui};
 
@@ -92,6 +92,11 @@ pub fn parts(office: &Office, hire: &str, conversation: ConversationView) -> Opt
     })
 }
 
+fn composer_send(hire: &str) -> String {
+    let target = serde_json::to_string(&format!("{}/talk", person_href(hire))).unwrap_or_default();
+    format!("if ($_draft.trim()) {{ @post({target}, {{contentType: 'form'}}); $_draft = '' }}")
+}
+
 #[component]
 pub async fn person_view(team: Team, parts: Parts) -> topcoat::Result<impl View> {
     let Parts {
@@ -117,9 +122,7 @@ pub async fn person_view(team: Team, parts: Parts) -> topcoat::Result<impl View>
     } else {
         "Assigned"
     };
-    let send = format!(
-        "if ($_draft.trim()) {{ @post('/people/{hire}/talk', {{contentType: 'form'}}); $_draft = '' }}"
-    );
+    let send = composer_send(&hire);
     Ok(view! {
         shell::page(team: team, here: Here::Person(hire.clone()),
             rail: Child::new(view! {
@@ -298,5 +301,12 @@ mod tests {
         assert_eq!(model.current[0].id.to_string(), "A-1");
         assert_eq!(model.recent[0].id.to_string(), "S-1");
         assert!(parts(&office, "nobody", ConversationView::default()).is_none());
+    }
+
+    #[test]
+    fn the_composer_escapes_and_quotes_the_employee_address() {
+        let send = composer_send("a'b");
+        assert!(send.contains("\"/people/a%27b/talk\""), "{send}");
+        assert!(!send.contains("/people/a'b/talk"), "{send}");
     }
 }

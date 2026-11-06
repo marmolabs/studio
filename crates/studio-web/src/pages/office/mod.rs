@@ -36,6 +36,8 @@ pub struct Office {
     /// Every ticket's `OFFICE_KINDS` events over the last 24 hours, oldest
     /// first.
     pub recent: Vec<client::Happened>,
+    /// When each ticket's current active, held, asking or failed state began.
+    pub state_since: BTreeMap<String, u64>,
     /// Total spend of each ticket, including its live run.
     pub spend: BTreeMap<String, f64>,
     /// Lines added and removed by each ready ticket, by id.
@@ -199,6 +201,7 @@ fn office_of(said: OfficeView, now: u64) -> topcoat::Result<Office> {
         tickets: said.tickets,
         asks: said.asks,
         recent,
+        state_since: said.state_since,
         spend: said.spend,
         sizes: said.sizes.into_iter().collect(),
         judges: said

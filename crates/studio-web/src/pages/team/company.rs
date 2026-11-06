@@ -176,15 +176,20 @@ fn scorecard(office: &Office) -> Scorecard {
         if matches!(state, "asking" | "held" | "failed") {
             blocked += 1;
             let since = office
-                .last(&id, |event| {
-                    matches!(
-                        event,
-                        TicketEvent::AskOpened { .. }
-                            | TicketEvent::Held { .. }
-                            | TicketEvent::Failed { .. }
-                    )
+                .state_since
+                .get(&id)
+                .copied()
+                .or_else(|| {
+                    office.last(&id, |event| {
+                        matches!(
+                            event,
+                            TicketEvent::AskOpened { .. }
+                                | TicketEvent::Held { .. }
+                                | TicketEvent::Failed { .. }
+                        )
+                    })
                 })
-                .unwrap_or(ticket.created_at);
+                .unwrap_or(office.now);
             blocked_ms += office.now.saturating_sub(since);
         }
     }
@@ -477,11 +482,13 @@ async fn manager_log(actions: Vec<ManagerAction>, now: u64) -> topcoat::Result<i
                                 <span class="text-[12px] text-fg-3">(action.project) " · " (clock::said(action.at, now))</span>
                                 <span class=(format!("ml-auto text-[12px] font-medium {}", match action.state {
                                     OperationState::Pending => "text-attn-fg",
+                                    OperationState::Executing => "text-run-fg",
                                     OperationState::Executed => "text-ok-fg",
                                     OperationState::Failed => "text-bad-fg",
                                     OperationState::Rejected => "text-fg-3",
                                 }))>(match action.state {
                                     OperationState::Pending => "Needs approval",
+                                    OperationState::Executing => "Executing",
                                     OperationState::Executed => "Executed",
                                     OperationState::Rejected => "Rejected",
                                     OperationState::Failed => "Failed",
@@ -519,6 +526,9 @@ pub async fn company(team: Team, office: Office) -> topcoat::Result<impl View> {
                     </div>
                     <a href="/" class=(ui::BUTTON)>"Open approval inbox" if pending > 0 { " · " (pending) }</a>
                 </header>
+                if let Some(problem) = office.operations.problem.clone() {
+                    <p class="rounded-xl border border-bad-line bg-bad-bg px-4 py-3 text-[13px] text-bad-fg" role="alert">(problem) " New model runs and setting changes are blocked."</p>
+                }
                 <div class="grid grid-cols-3 gap-3 max-[600px]:grid-cols-1" aria-label="Company now">
                     <div class=(ui::CARD)><b class="block text-[24px] font-semibold tabular-nums">(working)</b><span class="text-[12.5px] text-fg-3">"being worked on"</span></div>
                     <div class=(ui::CARD)><b class="block text-[24px] font-semibold tabular-nums">(blocked)</b><span class="text-[12.5px] text-fg-3">"blocked or failed"</span></div>
@@ -625,5 +635,26 @@ mod tests {
         assert_eq!(score.projects[0].spend, 2.0);
         assert_eq!(score.workload[0].delivered, 1);
         assert_eq!(score.workload[0].role, "engineer");
+    }
+
+    #[test]
+    fn blocked_time_uses_the_current_state_timestamp_or_zero_when_unknown() {
+        let ticket = |id: &str| {
+            serde_json::from_value::<Ticket>(json!({
+                "id":id, "project":"shop", "title":"Failed work", "goal":"",
+                "hire":"dev", "state":{"failed":{"class":"tooling","detail":"no"}},
+                "attempts":1, "base_branch":"main", "created_at":1_000,
+            }))
+            .unwrap()
+        };
+        let mut office = Office {
+            tickets: vec![ticket("S-1"), ticket("S-2")],
+            now: 100_000,
+            ..Office::default()
+        };
+        office.state_since.insert("S-1".into(), 50_000);
+        let score = scorecard(&office);
+        assert_eq!(score.blocked, 2);
+        assert_eq!(score.blocked_ms, 50_000);
     }
 }

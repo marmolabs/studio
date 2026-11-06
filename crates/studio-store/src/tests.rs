@@ -6,8 +6,8 @@ use std::thread;
 use crate::Store;
 use rusqlite::Connection;
 use studio_core::event::Event;
-use studio_core::ids::{HireId, ProjectId, RunId, TicketId};
-use studio_core::ticket::{HeldReason, Ticket, TicketState};
+use studio_core::ids::{AskId, HireId, ProjectId, RunId, TicketId};
+use studio_core::ticket::{FailureClass, HeldReason, Ticket, TicketState};
 
 fn tid(id: &str) -> TicketId {
     TicketId::new(id)
@@ -353,6 +353,48 @@ fn state_since_is_the_last_claim_or_hold() {
     let since = store.state_since().unwrap();
     assert_eq!(since.len(), 2, "{since:?}");
     assert_eq!((since["t-run"], since["t-held"]), (2, 8));
+}
+
+#[test]
+fn state_since_also_times_asks_and_failures() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (asking, _, event) = created("t-ask", "p-1", 1);
+    store.append(&asking, 1, &event).unwrap();
+    store.append(&asking, 2, &Event::Claimed).unwrap();
+    store
+        .append(
+            &asking,
+            3,
+            &Event::RunStarted {
+                run: RunId::new("run"),
+            },
+        )
+        .unwrap();
+    store
+        .append(
+            &asking,
+            4,
+            &Event::AskOpened {
+                ask: AskId::new("a1"),
+            },
+        )
+        .unwrap();
+    let (failed, _, event) = created("t-failed", "p-1", 4);
+    store.append(&failed, 4, &event).unwrap();
+    store.append(&failed, 5, &Event::Claimed).unwrap();
+    store
+        .append(
+            &failed,
+            6,
+            &Event::Failed {
+                class: FailureClass::Tooling,
+                detail: "no tool".into(),
+            },
+        )
+        .unwrap();
+    let since = store.state_since().unwrap();
+    assert_eq!(since.len(), 2, "{since:?}");
+    assert_eq!((since["t-ask"], since["t-failed"]), (4, 6));
 }
 
 #[test]

@@ -79,8 +79,7 @@ pub enum Request {
     /// project's setup stands. One request instead of eight, for pages that
     /// stay open all day.
     Office,
-    /// When each running ticket's latest run began and each held ticket was
-    /// held, by ticket id.
+    /// When each ticket's current active, held, asking or failed state began.
     StateSince,
     Asks,
     Decide {
@@ -365,6 +364,12 @@ pub enum Request {
         room: String,
         #[serde(default)]
         after: Option<u64>,
+        /// Read messages before this id for history pagination.
+        #[serde(default)]
+        before: Option<u64>,
+        /// Maximum messages in a page; the backend applies a bounded default.
+        #[serde(default)]
+        limit: Option<usize>,
     },
     /// Tells a task's agent something: a running task hears it in its live
     /// session, one that waits in checks, review or ready goes back with it as
@@ -633,6 +638,8 @@ impl ManagerAct {
 pub enum OperationState {
     #[default]
     Pending,
+    /// Claimed by one executor; not another approval's to run.
+    Executing,
     Executed,
     Rejected,
     Failed,
@@ -669,6 +676,9 @@ pub struct OperationsView {
     /// Newest first, including their outcome.
     #[serde(default)]
     pub actions: Vec<ManagerAction>,
+    /// A storage problem that blocks changes and new model runs.
+    #[serde(default)]
+    pub problem: Option<String>,
 }
 
 impl OperationsView {
@@ -691,6 +701,17 @@ pub struct RoomSummary {
     pub last: Option<TalkMessage>,
     pub count: u64,
     pub thinking: bool,
+}
+
+/// One bounded page of a room's persistent history.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RoomView {
+    #[serde(default)]
+    pub messages: Vec<TalkMessage>,
+    pub thinking: bool,
+    pub total: u64,
+    pub has_more: bool,
 }
 
 /// A hire to make for a project, as its lead.
@@ -1177,6 +1198,9 @@ pub struct OfficeView {
     /// The `OFFICE_KINDS` events of the last 24 hours, oldest first: the
     /// newest `RECENT_EVENTS` of them.
     pub events: Vec<StoredEvent>,
+    /// When each ticket's current active, held, asking or failed state began.
+    #[serde(default)]
+    pub state_since: BTreeMap<String, u64>,
     /// What each ticket has cost, as `Request::TicketSpends` answers.
     pub spend: BTreeMap<String, f64>,
     /// Landed work tickets whose goal branch is merged.

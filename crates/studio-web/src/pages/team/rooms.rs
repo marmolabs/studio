@@ -1,4 +1,4 @@
-use studiod::api::{ConversationView, Request, RoomSummary, TalkFrom, TalkMessage};
+use studiod::api::{Request, RoomSummary, RoomView, TalkFrom, TalkMessage};
 use topcoat::view::{View, component, view};
 
 use super::shell::{self, Here};
@@ -7,16 +7,22 @@ use super::{Team, clock, faces, person_href, room_href};
 use crate::pages::office::Office;
 use crate::{AppConfig, client, ui};
 
-pub async fn read(config: &AppConfig, room: &str) -> ConversationView {
-    client::call(
+pub async fn read(config: &AppConfig, room: &str, before: Option<u64>) -> RoomView {
+    let mut view: RoomView = client::call(
         &config.socket,
         Request::Room {
             room: room.to_string(),
             after: None,
+            before,
+            limit: None,
         },
     )
     .await
-    .unwrap_or_default()
+    .unwrap_or_default();
+    if view.total == 0 {
+        view.total = view.messages.len() as u64;
+    }
+    view
 }
 
 #[component]
@@ -85,7 +91,7 @@ pub async fn room_view(
     team: Team,
     office: Office,
     room: String,
-    conversation: ConversationView,
+    conversation: RoomView,
 ) -> topcoat::Result<impl View> {
     let Some(summary) = office
         .rooms
@@ -104,6 +110,14 @@ pub async fn room_view(
         "@post('{}/talk', {{contentType: 'form'}}); $_room_draft = ''",
         room_href(&room)
     );
+    let earlier = if conversation.has_more {
+        conversation
+            .messages
+            .first()
+            .map(|message| format!("{}?before={}", room_href(&room), message.id))
+    } else {
+        None
+    };
     Ok(view! {
         shell::page(team: team, here: Here::Rooms, flush: true,
             <div id="room-page" class="flex min-h-0 flex-1" data-signals="{_room_draft: ''}">
@@ -122,10 +136,13 @@ pub async fn room_view(
                                 (if let Some(project) = project { format!("Project room · {project}") } else { "Everyone across the company".to_string() })
                             </p>
                         </div>
-                        <span class="text-[12px] text-fg-3">(conversation.messages.len()) if conversation.messages.len() == 1 { " message" } else { " messages" }</span>
+                        <span class="text-[12px] text-fg-3">(conversation.total) if conversation.total == 1 { " message" } else { " messages" }</span>
                     </header>
                     <div id="room-thread" class="talk-thread">
                         <div class="mx-auto flex w-full max-w-[780px] flex-col gap-5 px-5 py-6">
+                            if let Some(earlier) = earlier {
+                                <a href=(earlier) class=(ui::BUTTON_SM)>"Earlier messages"</a>
+                            }
                             if conversation.messages.is_empty() {
                                 <div class="py-12 text-center">
                                     <b class="block text-[15px] font-semibold">"Start the conversation"</b>
@@ -167,10 +184,12 @@ mod tests {
         let request = Request::Room {
             room: "my shop".into(),
             after: None,
+            before: Some(10),
+            limit: Some(50),
         };
         assert_eq!(
             serde_json::to_value(request).unwrap(),
-            serde_json::json!({"cmd":"room","room":"my shop","after":null})
+            serde_json::json!({"cmd":"room","room":"my shop","after":null,"before":10,"limit":50})
         );
     }
 }

@@ -412,14 +412,19 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// When each running ticket's latest run began (its last claim) and each
-    /// held ticket was held (its last hold), by ticket id.
+    /// When the current state began: the latest claim for active work, and the
+    /// latest hold, ask or failure for work waiting in those states.
     pub fn state_since(&self) -> Result<std::collections::BTreeMap<String, u64>> {
         let mut stmt = self.conn.prepare(
             "SELECT e.ticket_id, MAX(e.at_ms) FROM tickets t JOIN events e ON e.ticket_id = t.id
-             WHERE t.state_kind IN ('claimed', 'working', 'checking', 'reviewing', 'held')
+             WHERE t.state_kind IN ('claimed', 'working', 'checking', 'reviewing', 'held', 'asking', 'failed')
                AND json_extract(e.event, '$.type') =
-                   CASE t.state_kind WHEN 'held' THEN 'held' ELSE 'claimed' END
+                   CASE t.state_kind
+                       WHEN 'held' THEN 'held'
+                       WHEN 'asking' THEN 'ask_opened'
+                       WHEN 'failed' THEN 'failed'
+                       ELSE 'claimed'
+                   END
              GROUP BY e.ticket_id",
         )?;
         let rows = stmt.query_map([], |row| {

@@ -60,6 +60,9 @@ pub async fn settings(
             <div class="mx-auto flex w-full max-w-[640px] flex-col gap-5">
                 <h1 class=(ui::PAGE_TITLE)>"Studio settings"</h1>
                 part(title: "Manager autonomy", note: "How often leads review their projects, and what they may do without you.",
+                    if let Some(problem) = office.operations.problem.clone() {
+                        <p class="rounded-lg border border-bad-line bg-bad-bg px-3 py-2 text-[13px] text-bad-fg" role="alert">(problem) " New model runs and setting changes are blocked."</p>
+                    }
                     operations::controls(settings: office.operations.settings.clone())
                 )
                 part(title: "Money", note: "What the studio may spend. Agents stop when a limit is reached.",

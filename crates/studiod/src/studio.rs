@@ -107,7 +107,7 @@ mod tickets;
 pub(crate) use asks::Decision;
 use asks::PendingAsk;
 pub(crate) use merging::{Landing, MERGE_SOURCE, goal_of};
-pub(crate) use runs::{Stop, StopReason, quota_retry_at};
+pub(crate) use runs::{ExtraRun, Stop, StopReason, quota_retry_at};
 use tickets::{NewTicket, shorten};
 
 /// `studio.toml` as last read, and when to look at the file again.
@@ -210,7 +210,7 @@ impl Studio {
         releases::recover(&paths.data_dir, &config.projects);
         let modified = config_modified(&paths);
         let last_ask = store.max_ask_number()?;
-        Ok(Arc::new(Studio {
+        let studio = Arc::new(Studio {
             paths,
             config: Mutex::new(LiveConfig {
                 config: Arc::new(config),
@@ -239,7 +239,9 @@ impl Studio {
             shipcheck_state: shipcheck::State::default(),
             wake: Notify::new(),
             notifier,
-        }))
+        });
+        studio.recover_operations()?;
+        Ok(studio)
     }
 
     /// `studio.toml` as it is now. An edit takes effect within a second; a
@@ -402,7 +404,7 @@ impl Studio {
     }
 
     pub(crate) fn runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
-        if self.runtime_mode() == crate::api::RuntimeMode::Simulation {
+        if self.runtime_mode()? == crate::api::RuntimeMode::Simulation {
             return Ok(Arc::new(studio_runtime::SimulatedRuntime));
         }
         self.runtimes
@@ -781,7 +783,12 @@ impl Studio {
                 mode,
             } => self.set_operations(autopilot, review_minutes, autonomy, mode),
             Request::TalkToRoom { room, text } => self.talk_to_room(&room, &text),
-            Request::Room { room, after } => self.room(&room, after),
+            Request::Room {
+                room,
+                after,
+                before,
+                limit,
+            } => self.room(&room, after, before, limit),
             Request::Tell { task, text } => self.tell(&task, &text),
             Request::LeadActs { project, task, act } => self.lead_acts(&project, &task, act),
             Request::SetupProject {
