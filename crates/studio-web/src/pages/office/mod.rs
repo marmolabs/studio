@@ -18,7 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::Ticket;
-use studiod::api::{AskView, OfficeView, ProjectView, Request, SetupView, ShipCheck, Standup};
+use studiod::api::{
+    AskView, OfficeView, OperationsView, ProjectView, Request, RoomSummary, SetupView, ShipCheck,
+    Standup,
+};
 use topcoat::router::{error::redirect_permanent, response::Response, route};
 
 use crate::summary::Judge;
@@ -33,6 +36,8 @@ pub struct Office {
     /// Every ticket's `OFFICE_KINDS` events over the last 24 hours, oldest
     /// first.
     pub recent: Vec<client::Happened>,
+    /// Total spend of each ticket, including its live run.
+    pub spend: BTreeMap<String, f64>,
     /// Lines added and removed by each ready ticket, by id.
     pub sizes: HashMap<String, (u64, u64)>,
     /// Who is judging each ticket in review.
@@ -52,6 +57,10 @@ pub struct Office {
     pub ship_checks: BTreeMap<String, ShipCheck>,
     /// How each project's setup through its lead stands, by project.
     pub setups: BTreeMap<String, SetupView>,
+    /// Manager reviews, proposed actions and company autonomy controls.
+    pub operations: OperationsView,
+    /// Company and project room summaries.
+    pub rooms: Vec<RoomSummary>,
     pub now: u64,
 }
 
@@ -169,11 +178,28 @@ fn office_of(said: OfficeView, now: u64) -> topcoat::Result<Office> {
     let status = serde_json::from_value(said.status)
         .map_err(|e| client::error(format!("bad reply: {e}")))?;
     let recent: Vec<client::Happened> = said.events.into_iter().map(Into::into).collect();
+    let rooms = if said.rooms.is_empty() {
+        std::iter::once(RoomSummary {
+            id: "company".to_string(),
+            name: "Company room".to_string(),
+            ..RoomSummary::default()
+        })
+        .chain(said.projects.iter().map(|project| RoomSummary {
+            id: project.name.clone(),
+            name: format!("{} team", project.name),
+            project: Some(project.name.clone()),
+            ..RoomSummary::default()
+        }))
+        .collect()
+    } else {
+        said.rooms
+    };
     Ok(Office {
         status,
         tickets: said.tickets,
         asks: said.asks,
         recent,
+        spend: said.spend,
         sizes: said.sizes.into_iter().collect(),
         judges: said
             .judges
@@ -187,6 +213,8 @@ fn office_of(said: OfficeView, now: u64) -> topcoat::Result<Office> {
         standups: said.standups,
         ship_checks: said.ship_checks,
         setups: said.setups,
+        operations: said.operations,
+        rooms,
         now,
     })
 }

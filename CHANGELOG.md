@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Autonomous company operations
+
+- Project leads can run persistent, budget-capped manager reviews and propose
+  goals, tasks and task-management actions. HQ is the approval inbox for those
+  proposals, and every decision and outcome is kept in an audit log.
+- Automatic reviews are opt-in, with configurable cadence and supervised,
+  balanced and autonomous levels. Cancellation, shipping, publishing and budget
+  changes always require the owner.
+- Company and project rooms provide persistent announcements and cross-team
+  conversations. Mentioning a hire starts a read-only reply; plain announcements
+  cost nothing.
+- The company page adds a live goal/task work map, owner and blocker details,
+  ticket spend, a delivery and cost scorecard, employee workload, and the
+  manager decision log.
+- Look closer now includes each task's screenshots and clips beside its checks,
+  review, diffs, shipping and request-changes controls.
+- Studio settings bring office pause, desks, budgets, manager cadence and
+  autonomy together. Reviews and actions also appear in their project rooms.
+- A simulation/live switch lets new conversations and reviews use local scripted
+  responses with zero model cost, while preserving company history and leaving
+  already-running agents to finish.
+
 ## 0.1.0
 
 The first release. studio is very early: expect bugs, rough edges and breaking

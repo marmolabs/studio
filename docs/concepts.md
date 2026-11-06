@@ -161,6 +161,63 @@ each hire; a message sent meanwhile is answered by the next turn. A reply is
 capped at $0.25 and charged to `<project>/people/<hire>`, under the studio,
 project and hire budget limits.
 
+## Manager operations and approvals
+
+A project lead can review its project without waiting for a conversation. Choose
+**Run manager review** on HQ or the company page. The lead reads the project and
+its assignments, writes a short assessment and proposes explicit actions:
+starting a goal, delegating a task, requesting changes, pausing, resuming,
+cancelling, or messaging an employee. Reviews and every action's outcome are
+kept in `<data>/operations.json`; the company page shows the decision log, and
+the project's room carries its reviews and completed actions.
+
+A review runs with read-only tools, is capped at $0.75 and is charged to
+`<project>/operations`. It cannot ship, publish, change budgets or edit files.
+Pending actions appear on HQ with **Approve** and **Reject**. Approval executes
+through the same project-scoped task and lead-action paths as a conversation.
+
+**Studio → Manager autonomy** controls the review interval and what may execute
+without individual approval:
+
+- **Supervised** (the default): every action needs approval.
+- **Balanced**: feedback and employee messages may go ahead; everything else
+  waits.
+- **Autonomous**: ordinary task management may go ahead; cancellation still
+  waits.
+
+Automatic reviews are off by default, run only while the office is open, and use
+the configured interval (5 minutes to 24 hours). Shipping and publishing always
+need the owner at every level.
+
+## Simulation and live runtimes
+
+**Studio → Manager autonomy** also switches new runs between configured runtimes
+and local simulation. Configured runtimes are the hires' normal models.
+Simulation returns scripted responses without calling a model and records zero
+model cost. It supports conversations, room replies and manager reviews without
+changing tasks; the review proposes no actions. Existing work and history remain
+visible, and agents already running when the switch changes finish their current
+run. The choice is kept with the other operations settings in
+`<data>/operations.json`.
+
+## Company rooms, work map and scorecard
+
+`/rooms/company` is a persistent company-wide room; each project also has a
+room at `/rooms/<project>`. Owner messages and announcements are stored in
+`<data>/rooms/<room>.jsonl`. Mention a loaded hire by id, such as `@dev`, to ask
+for a reply. A mentioned hire gets the room history, its assignments and
+read-only access to the relevant project. It cannot act on tasks. Each reply is
+capped at $0.25 and charged to `<project>/rooms/<room>`. Messages without a
+valid mention start no model run and cost nothing.
+
+The company page (`/company`) shows each goal and the tasks under it, their
+owners, states, next actions and ticket spend. Its scorecard uses ticket events
+and the spend ledger for the last 24 hours: deliveries, median created-to-landed
+time, failed checks and reviews, and cost per delivery. Project spend is the
+recorded total for the displayed tickets. Blocked time is the accumulated age
+of work still blocked now, not a historical estimate. Employee workload shows
+active and queued assignments, deliveries and ticket spend.
+
 ## Messaging an agent
 
 You, or a lead for you, can tell a task's agent something while it works. A

@@ -69,6 +69,10 @@ pub struct Studio {
     talk_state: talk::State,
     /// What the direct conversations with every hire keep in memory.
     people_state: people::State,
+    /// What the manager reviews and their audit trail keep in memory.
+    operations_state: operations::State,
+    /// What company and project rooms keep in memory.
+    rooms_state: rooms::State,
     /// What the standups keep in memory.
     standup_state: standup::State,
     /// What the setups through a lead keep in memory.
@@ -84,8 +88,10 @@ mod briefing;
 mod files;
 mod history;
 mod merging;
+mod operations;
 mod people;
 mod releases;
+mod rooms;
 mod runs;
 mod settings;
 mod setup;
@@ -226,6 +232,8 @@ impl Studio {
             releasing: releases::Releasing::default(),
             talk_state: talk::State::default(),
             people_state: people::State::default(),
+            operations_state: operations::State::default(),
+            rooms_state: rooms::State::default(),
             standup_state: standup::State::default(),
             setup_state: setup::State::default(),
             shipcheck_state: shipcheck::State::default(),
@@ -394,6 +402,9 @@ impl Studio {
     }
 
     pub(crate) fn runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
+        if self.runtime_mode() == crate::api::RuntimeMode::Simulation {
+            return Ok(Arc::new(studio_runtime::SimulatedRuntime));
+        }
         self.runtimes
             .get(name)
             .cloned()
@@ -757,6 +768,20 @@ impl Studio {
             Request::Conversation { project, after } => self.conversation(&project, after),
             Request::TalkToHire { hire, text } => self.talk_to_hire(&hire, &text),
             Request::HireConversation { hire, after } => self.hire_conversation(&hire, after),
+            Request::ReviewOperations { project } => self.review_operations(&project),
+            Request::DecideOperation {
+                action,
+                approve,
+                note,
+            } => self.decide_operation(&action, approve, note),
+            Request::SetOperations {
+                autopilot,
+                review_minutes,
+                autonomy,
+                mode,
+            } => self.set_operations(autopilot, review_minutes, autonomy, mode),
+            Request::TalkToRoom { room, text } => self.talk_to_room(&room, &text),
+            Request::Room { room, after } => self.room(&room, after),
             Request::Tell { task, text } => self.tell(&task, &text),
             Request::LeadActs { project, task, act } => self.lead_acts(&project, &task, act),
             Request::SetupProject {

@@ -3,8 +3,8 @@
 //! modes, use the studio's tools. It has a cost cap and a time limit; what it
 //! costs is charged to a synthetic task, which has no ticket behind it.
 //!
-//! Lead talks, direct employee talks, setup runs and standups share this, so
-//! each of them only decides what to ask and what to do with the answer.
+//! Lead talks, employee talks, rooms, manager reviews, setup runs and standups
+//! share this, so each only decides what to ask and what to do with the answer.
 
 use crate::budget::Meter;
 use crate::studio::{Studio, file_stem};

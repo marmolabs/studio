@@ -33,11 +33,12 @@ The web UI is a team sidebar and a page for each thing you do.
 
 <p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and a note to Dev shows as a card. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
 
-- **HQ** is your morning round-up. Each lead has a line, its standup in a
-  sentence or two, and under it the cards that wait for you: a question, work
-  that is ready to ship, a release that wants your go-ahead. Leads with
-  something for you come first. Company activity shows the last 24 hours across
-  every project, with links to each person and task.
+- **HQ** is your morning round-up and approval inbox. Each lead has a line, its
+  standup in a sentence or two, and under it the cards that wait for you: a
+  question, a manager's proposed action, work that is ready to ship, or a
+  release that wants your go-ahead. Leads with something for you come first.
+  Company activity shows the last 24 hours across every project, with links to
+  each person and task.
 - **A lead's page** is a conversation. Ask "How's it going?", or say "Plan the
   checkout flow for 0.5" or "Tell Dev to close the drawer on outside clicks".
   The lead reads the project, answers in plain words, and can start a goal,
@@ -52,13 +53,22 @@ The web UI is a team sidebar and a page for each thing you do.
   Ask about their assignments and recent results, with their current and recent
   work beside the thread. An active task has a separate control to message its
   live run.
+- **Company and project rooms** are persistent group conversations for
+  announcements and cross-team requests. Mention a hire as `@dev` to get a
+  read-only reply; plain announcements start no model run.
+- **The company page** is a live map of goals, owned tasks, blockers, next steps
+  and spend, with a delivery scorecard, employee workload and the manager
+  decision log.
 - **Look closer** opens ready work over the conversation: a summary, the checks,
-  the review, whether protected paths were touched, the files with their
-  diffs and the branch to try. **Ship to main**, or **Send back with a note**.
-  A goal is checked as a whole before it ships.
+  the review, whether protected paths were touched, screenshots and clips, the
+  files with their diffs and the branch to try. **Ship to main**, or **Send back
+  with a note**. A goal is checked as a whole before it ships.
 - **The office** is the company floor. Pick a sign for its lead, or a person or
   their task for that employee's own card and conversation. **Studio** has the
-  money limits, the desks, the hires and the rules.
+  money limits, desks, hires, rules, office pause, manager autonomy controls,
+  and a simulation/live switch. Simulation gives new conversations and reviews
+  scripted replies with zero model cost. Automatic reviews are off by default;
+  cancellation, shipping and publishing always need you.
 
 Adding a project is a conversation too: **New project** takes a folder and
 hires a lead for it. The lead reads the repository and shows how the project
