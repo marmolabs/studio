@@ -186,7 +186,11 @@ without individual approval:
   waits.
 
 Automatic reviews are off by default, run only while the office is open, and use
-the configured interval (5 minutes to 24 hours). Shipping and publishing always
+the configured interval (5 minutes to 24 hours). A review is told which
+proposals of its project still wait for you and is asked not to repeat them; a
+proposal identical to one that waits is dropped; at most 20 may wait in a
+project, and beyond that new ones are not added. An automatic review is skipped
+for a project that still has proposals waiting. Shipping and publishing always
 need the owner at every level. Actions are claimed atomically so concurrent
 approvals cannot execute them twice. An interrupted claim becomes failed on
 restart. If `operations.json` is unreadable, it is preserved, the UI shows the
