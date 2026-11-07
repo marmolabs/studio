@@ -17,20 +17,21 @@ The studio works like a small company:
   merging a goal into your branch and every release. You talk to one lead for
   each project.
 - **A lead** runs a project, if you name one, and is who you talk to. It plans
-  the project's goals, assigns its tasks, checks what comes back and answers
-  its team's routine questions, and comes to you for what it can't decide. See
+  the project's goals, assigns its tasks, checks what comes back and
+  comes to you for what it can't decide. See
   [Project leads](#project-leads).
 - **The makers** are the hires that do the work: engineers, designers, writers
   and the like. Each takes one task at a time, in its own worktree.
 - **The review room and the QA lab are shared.** Reviewers and critics read the
   work of every project, and every project's checks run in the QA lab. A
   reviewer runs on a different model from the work's author.
-- **The front desk** is the approver and the router. A project with no lead
-  has them answer its routine questions and assign its tasks. There is
-  nobody to talk to there.
+- **The front desk** is the approver and the router. They serve every
+  project: the approver answers the routine tool questions and the router
+  hands out tasks nobody was named for.
 
 On the web UI's office view, each project has a team area with a sign, and the
-lounge holds the hires with nothing to do.
+lounge holds the hires with nothing to do. Picking a person or their task opens
+that hire's own card and direct conversation, including someone in the lounge.
 
 ## Projects
 
@@ -81,23 +82,12 @@ jobs in that project, and nothing else changes:
 - Planning: a goal given without a hire goes to the lead instead of the
   producer. Give the goal a version (`studio goal --milestone 0.4`) and it is
   a [milestone](#milestones).
-- Assigning: a task filed without a hire is assigned by the lead, who picks
-  from its team, instead of by the router. Its team is every hire that takes
-  tasks: not the approver, router, reviewers, leads or gate critics, and not
-  the lead itself.
-- Routine questions: a tool call no rule covers is decided by the lead instead
-  of the approver, under the same policy. The lead sends you exactly what the
-  approver would: what is dangerous, irreversible or reaches outside the
-  project. When it does, it also writes the question in a few plain words
-  ("Send the launch email?"), which is what HQ shows.
 - The standup: one or two sentences on the project's day, for HQ.
 
-A lead never answers for its own tasks; those go to the approver. Owner
-rules and questions from agents reach you as before. A project with no lead, or
-whose lead isn't a hire, keeps the producer, router and approver. Each call the
-lead makes to assign or to answer is capped at five cents and charged to the
-task, like theirs. HQ says how many routine questions your leads answered
-today.
+A project with no lead, or whose lead isn't a hire, keeps the producer for
+planning. Either way the approver and the router serve every project: a lead
+never decides tool calls or picks who takes a task. Each call the lead makes to
+plan or check is charged to the task, like theirs.
 
 ## Talking to a lead
 
@@ -146,6 +136,104 @@ writes the chosen checks, capture, release and protected paths to the
 project's `.studio.toml` (keeping what else is in it) and the daily budget to
 `studio.toml`. Nothing is written before that.
 
+## Talking directly to an employee
+
+Every hire has a persistent, read-only conversation at `/people/<hire>`, reached
+by picking the person or one of their tasks in the office. The hire gets its
+current and recent assignments, their briefs and results, the last 20 messages,
+and read access to the project of its current work. It cannot edit files, run
+commands, browse, or use the studio's action tools. To steer an active run, use
+the separate message control beside its task.
+
+Messages are kept in `<data>/people/<hire>.jsonl`. One reply runs at a time for
+each hire; a message sent meanwhile is answered by the next turn. A reply is
+capped at $0.25 and charged to `<project>/people/<hire>`, under the studio,
+project and hire budget limits.
+
+## Manager operations and approvals
+
+A project lead can review its project without waiting for a conversation. Choose
+**Run manager review** on HQ or the company page. The lead reads the project and
+its assignments, writes a short assessment and proposes explicit actions:
+starting a goal, delegating a task, requesting changes, pausing, resuming,
+cancelling, or messaging an employee. Reviews and every action's outcome are
+kept in `<data>/operations.json`; the company page shows the decision log, and
+the project's room carries its reviews and completed actions.
+
+A review runs with read-only tools, is capped at $0.75 and is charged to
+`<project>/operations`. It cannot ship, publish, change budgets or edit files.
+Pending actions appear on HQ with **Approve** and **Reject**. Approval executes
+through the same project-scoped task and lead-action paths as a conversation.
+
+**Studio → Manager autonomy** controls the review interval and what may execute
+without individual approval:
+
+- **Supervised** (the default): every action needs approval.
+- **Balanced**: feedback and employee messages may go ahead; everything else
+  waits.
+- **Autonomous**: ordinary task management may go ahead; cancellation still
+  waits. Starting a goal or making a task goes ahead on its own for at most 3
+  a day in each project (counted over the last 24 hours). Beyond that they wait
+  for your approval, with the reason "over today's limit for automatic new
+  work".
+
+Automatic reviews are off by default, run only while the office is open, and use
+the configured interval (5 minutes to 24 hours). A review is told which
+proposals of its project still wait for you and is asked not to repeat them; a
+proposal identical to one that waits is dropped; at most 20 may wait in a
+project, and beyond that new ones are not added. An automatic review is skipped
+for a project that still has proposals waiting. A review that fails is kept
+with what it cost, so the next automatic one waits its turn; the lead's
+conversation and the project room hear of it only the first time it fails in a
+row, and a review refused for budget is kept without a word.
+
+A review is also given the hires a task can be given (each one's id, name and
+role; never the leads or the front desk). A new task that names no hire, or a
+hire that does not exist or cannot take tasks, is kept and goes to the router
+when you approve it, as any new task with no hire does. Shipping and publishing always
+need the owner at every level. Actions are claimed atomically so concurrent
+approvals cannot execute them twice. An interrupted claim becomes failed on
+restart. If `operations.json` is unreadable, it is preserved, the UI shows the
+problem, and manager reviews and changes to these settings are blocked until it
+is repaired. Task runs, conversations and everything else carry on in live mode.
+
+## Simulation and live runtimes
+
+**Studio → Manager autonomy** also switches new runs between configured runtimes
+and local simulation. Configured runtimes are the hires' normal models.
+Simulation returns scripted responses without calling a model and records zero
+model cost. It applies only to the runs that talk to you: conversations with
+leads and hires, room replies, standups, setup runs and manager reviews (a
+review proposes no actions). Coding, checks, task reviews, critic gates, the
+permission approver and the router always use the hire's configured runtime, so
+a simulation can never allow a permission or pass work. Existing work and
+history remain visible, and agents already running when the switch changes
+finish their current run. The choice is kept with the other operations settings
+in `<data>/operations.json`.
+
+## Company rooms, work map and scorecard
+
+`/rooms/company` is a persistent company-wide room; each project also has a
+room at `/rooms/<project>`. "company" cannot be a project's name; a project
+that already has it keeps working, and its room is called `company-project`
+(use the id the rooms list gives). Owner messages and announcements are stored in
+`<data>/rooms/<room>.jsonl`. Mention a loaded hire by id, such as `@dev`, to ask
+for a reply. A mentioned hire gets the room history, its assignments and
+read-only access to the relevant project. It cannot act on tasks. Each reply is
+capped at $0.25 and charged to `<project>/rooms/<room>`. Messages without a
+valid mention start no model run and cost nothing. A mention that arrives during
+a reply gets the next turn. Project-room prompts include only that project's
+assignments; the company room can include cross-project assignments. Pages show
+at most 200 messages, with **Earlier messages** for older history.
+
+The company page (`/company`) shows each goal and the tasks under it, their
+owners, states, next actions and ticket spend. Its scorecard uses ticket events
+and the spend ledger for the last 24 hours: deliveries, median created-to-landed
+time, failed checks and reviews, and cost per delivery. Project spend is the
+recorded total for the displayed tickets. Blocked time is the accumulated age
+of work still blocked now, not a historical estimate. Employee workload shows
+active and queued assignments, deliveries and ticket spend.
+
 ## Messaging an agent
 
 You, or a lead for you, can tell a task's agent something while it works. A
@@ -186,6 +274,24 @@ tasks instead of changing code, so it skips checks and review.
 
 In a lead's conversation, a milestone's tasks show as ticks in the rail beside
 the thread, and a goal's plan as a card of its tasks.
+
+## Priorities and dependencies
+
+Every task has a priority (50 by default, up to 1000); larger values run first,
+with older tasks winning ties. Dependencies are other tickets in the same
+project that must land before a task starts. Missing, queued, active, failed or
+cancelled dependencies block it; only landed ones are satisfied. Self-links and
+cycles are rejected when links are written, and cyclic legacy data simply cannot
+be scheduled until corrected.
+
+The scheduler still runs only one task per goal at a time. Changing priority does
+not preempt active work. Dependencies can be changed while a task is queued or
+failed, not after it starts. Both changes are events in the task's history.
+
+Managers can propose **Change priority** and **Change dependencies** through the
+same approval and autonomy flow as other actions. The company page shows unmet
+blockers, priority badges, the dependency graph and the longest open critical
+path.
 
 ## Goals
 
@@ -282,8 +388,8 @@ question or gate always stops it.
 
 ## The approver and the router
 
-Two cheap hires work for the studio itself. In a project with a [lead](#project-leads),
-the lead does both jobs for that project.
+Two cheap hires work for the studio itself, for every project, whether or not
+it has a [lead](#project-leads).
 
 The approver decides tool calls that no rule covers, so only dangerous ones
 reach you. It allows what is a normal part of the task inside its worktree,
@@ -301,6 +407,10 @@ without a hire). Without a router, the first engineer takes it.
 Each call is capped at five cents and charged to the task. `studio init`
 writes both hires; deleting `hires/approver.md` or `hires/router.md` turns that
 one off.
+
+These calls start the model with no tools, a short prompt and none of your
+own settings, notes or commands, so each costs a fraction of a cent on a small
+model.
 
 ## Rules
 

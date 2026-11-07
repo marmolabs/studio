@@ -105,8 +105,8 @@ enum Command {
         detail_file: Option<PathBuf>,
     },
     /// Name the hire who leads a project, or with no hire, clear its lead. A
-    /// lead plans the project's goals, assigns its tickets and answers its
-    /// team's routine questions.
+    /// lead plans the project's goals, assigns its tickets and checks what
+    /// comes back.
     Lead {
         /// Project name from studio.toml.
         project: String,

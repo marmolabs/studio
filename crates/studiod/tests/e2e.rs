@@ -474,6 +474,8 @@ async fn ask_ids_continue_after_a_restart() {
                 detail: String::new(),
                 source: None,
                 version: None,
+                priority: studio_core::ticket::DEFAULT_PRIORITY,
+                depends_on: Vec::new(),
             },
             Event::Claimed,
             Event::RunStarted {
@@ -3933,11 +3935,11 @@ fn add_alpha_and_router(setup: &Setup) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_ticket_without_a_hire_is_assigned_by_the_lead_not_the_router() {
+async fn a_ticket_without_a_hire_goes_to_the_router_even_in_a_led_project() {
     let setup = led_setup("");
     add_alpha_and_router(&setup);
-    let lead = FakeRuntime::new(vec![reply("It is code work.\nHIRE: alpha")]);
-    let router = FakeRuntime::new(vec![reply("HIRE: dev")]);
+    let lead = FakeRuntime::new(vec![reply("HIRE: dev")]);
+    let router = FakeRuntime::new(vec![reply("It is code work.\nHIRE: alpha")]);
     let studio = with_lead(
         &setup,
         FakeRuntime::new(plan_script()),
@@ -3947,13 +3949,13 @@ async fn a_ticket_without_a_hire_is_assigned_by_the_lead_not_the_router() {
 
     let ticket = ok(&studio, unrouted("Add a level")).await;
     assert_eq!(ticket["hire"], "alpha");
-    assert!(router.specs().is_empty());
-    let spec = &lead.specs()[0];
-    assert!(spec.prompt.contains("You lead the project game."));
+    assert!(lead.specs().is_empty());
+    let spec = &router.specs()[0];
+    assert!(!spec.prompt.contains("You lead"));
     assert!(spec.prompt.contains("- alpha: Alpha") && spec.prompt.contains("- dev: Dev"));
-    // A lead assigns work to its team, not to itself or the studio's staff.
+    // The studio's staff and leads are never offered a ticket.
     assert!(!spec.prompt.contains("- boss:") && !spec.prompt.contains("- router:"));
-    assert_eq!(spec.append_system_prompt.as_deref(), Some("You lead."));
+    assert!(spec.lean);
     assert!(run_log(&setup).contains("routed to alpha: It is code work."));
     let spend = ok(
         &studio,
@@ -3966,23 +3968,28 @@ async fn a_ticket_without_a_hire_is_assigned_by_the_lead_not_the_router() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lead_with_no_usable_answer_leaves_the_ticket_to_the_first_engineer() {
+async fn a_router_with_no_usable_answer_leaves_the_ticket_to_the_first_engineer() {
     let setup = led_setup("");
     add_alpha_and_router(&setup);
-    let lead = FakeRuntime::new(vec![reply("HIRE: nobody")]);
-    let studio = with_lead(&setup, FakeRuntime::new(plan_script()), lead, Vec::new());
+    let router = FakeRuntime::new(vec![reply("HIRE: nobody")]);
+    let studio = with_lead(
+        &setup,
+        FakeRuntime::new(plan_script()),
+        FakeRuntime::new(plan_script()),
+        vec![("fake-router", router)],
+    );
     assert_eq!(ok(&studio, unrouted("Another")).await["hire"], "alpha");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lead_decides_its_teams_asks_instead_of_the_approver() {
+async fn the_approver_decides_asks_even_when_the_project_has_a_lead() {
     let setup = led_setup("");
     write_approver(&setup);
     let dev = bash_then_finish();
-    let lead = FakeRuntime::new(vec![reply(
+    let lead = FakeRuntime::new(vec![reply("DECISION: DENY: never asked")]);
+    let approver = FakeRuntime::new(vec![reply(
         "It runs the project's example.\nDECISION: ALLOW: fine",
     )]);
-    let approver = FakeRuntime::new(vec![reply("DECISION: DENY: never asked")]);
     let studio = with_lead(
         &setup,
         dev.clone(),
@@ -3994,7 +4001,7 @@ async fn a_lead_decides_its_teams_asks_instead_of_the_approver() {
         &dev.received()[0],
         studio_runtime::Control::Allow { .. }
     ));
-    assert!(approver.specs().is_empty());
+    assert!(lead.specs().is_empty());
     assert!(
         ok(&studio, Request::Asks)
             .await
@@ -4002,9 +4009,10 @@ async fn a_lead_decides_its_teams_asks_instead_of_the_approver() {
             .unwrap()
             .is_empty()
     );
-    let spec = &lead.specs()[0];
-    assert!(spec.prompt.starts_with("You lead the project game."));
+    let spec = &approver.specs()[0];
+    assert!(!spec.prompt.contains("You lead"));
     assert!(spec.prompt.contains("cargo run --example demo"));
+    assert!(spec.lean);
     assert_eq!(spec.max_turns, Some(1));
     assert!(spec.disallowed_tools.contains(&"Bash".to_string()));
     assert!(run_log(&setup).contains("approver allowed Bash: fine"));
@@ -4019,18 +4027,24 @@ async fn a_lead_decides_its_teams_asks_instead_of_the_approver() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lead_can_deny_a_call_and_the_run_carries_on() {
+async fn the_approver_can_deny_a_call_and_the_run_carries_on() {
     let setup = led_setup("");
+    write_approver(&setup);
     let dev = bash_then_finish();
-    let lead = FakeRuntime::new(vec![reply(
+    let approver = FakeRuntime::new(vec![reply(
         "Use the Edit tool.\nDECISION: DENY: write files with Edit",
     )]);
-    let studio = with_lead(&setup, dev.clone(), lead, Vec::new());
+    let studio = with_lead(
+        &setup,
+        dev.clone(),
+        FakeRuntime::new(plan_script()),
+        vec![("fake-approver", approver)],
+    );
     run_to_ready(&studio, "Demo").await;
     assert!(matches!(
         &dev.received()[0],
         studio_runtime::Control::Deny { message, .. }
-            if message.contains("lead declined this: write files with Edit")
+            if message.contains("approver declined this: write files with Edit")
     ));
     assert!(
         ok(&studio, Request::Asks)
@@ -4042,12 +4056,18 @@ async fn a_lead_can_deny_a_call_and_the_run_carries_on() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lead_sends_to_the_owner_what_it_cannot_decide() {
+async fn the_approver_sends_to_the_owner_what_it_cannot_decide() {
     let setup = led_setup("");
-    let lead = FakeRuntime::new(vec![reply(
+    write_approver(&setup);
+    let approver = FakeRuntime::new(vec![reply(
         "It publishes.\nDECISION: OWNER: it publishes the crate",
     )]);
-    let studio = with_lead(&setup, bash_then_finish(), lead, Vec::new());
+    let studio = with_lead(
+        &setup,
+        bash_then_finish(),
+        FakeRuntime::new(plan_script()),
+        vec![("fake-approver", approver)],
+    );
     ok(&studio, create("Demo")).await;
     studio.spawn_scheduler();
     asks_open(&studio, 1).await;
@@ -4057,15 +4077,21 @@ async fn a_lead_sends_to_the_owner_what_it_cannot_decide() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r == "Lead: it publishes the crate")
+            .any(|r| r == "Approver: it publishes the crate")
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_unclear_lead_falls_back_to_the_owner() {
+async fn in_a_led_project_an_unclear_approver_falls_back_to_the_owner() {
     let setup = led_setup("");
-    let lead = FakeRuntime::new(vec![reply("Sure.")]);
-    let studio = with_lead(&setup, bash_then_finish(), lead, Vec::new());
+    write_approver(&setup);
+    let approver = FakeRuntime::new(vec![reply("Sure.")]);
+    let studio = with_lead(
+        &setup,
+        bash_then_finish(),
+        FakeRuntime::new(plan_script()),
+        vec![("fake-approver", approver)],
+    );
     ok(&studio, create("Demo")).await;
     studio.spawn_scheduler();
     asks_open(&studio, 1).await;
@@ -4326,4 +4352,53 @@ async fn a_goal_the_lead_started_gets_its_plan_card_when_the_plan_lands() {
         .collect();
     assert_eq!(titles, ["Boss sprite", "Boss AI"]);
     assert!(messages.iter().any(|m| m["text"] == "I started the goal."));
+}
+
+async fn simulate(studio: &Arc<Studio>) {
+    ok(
+        studio,
+        Request::SetOperations {
+            autopilot: None,
+            review_minutes: None,
+            autonomy: None,
+            mode: Some(studiod::api::RuntimeMode::Simulation),
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_coding_task_in_simulation_mode_runs_on_the_configured_runtime() {
+    let setup = setup("");
+    let dev = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, dev.clone());
+    simulate(&studio).await;
+    run_to_ready(&studio, "Demo").await;
+    assert_eq!(dev.specs().len(), 1, "the hire's own runtime did the work");
+    assert!(dev.specs()[0].prompt.contains("Demo"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_escalated_ask_in_simulation_mode_goes_to_the_configured_approver() {
+    let setup = setup("");
+    let approver = FakeRuntime::new(vec![reply(
+        "It publishes.\nDECISION: OWNER: it publishes the crate",
+    )]);
+    let studio = with_approver(&setup, bash_then_finish(), approver.clone());
+    simulate(&studio).await;
+    ok(&studio, create("Demo")).await;
+    studio.spawn_scheduler();
+    asks_open(&studio, 1).await;
+    assert_eq!(approver.specs().len(), 1, "the real approver decided");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_operations_file_does_not_stop_task_runs() {
+    let setup = setup("");
+    fs::create_dir_all(&setup.paths.data_dir).unwrap();
+    fs::write(setup.paths.data_dir.join("operations.json"), "not json").unwrap();
+    let dev = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, dev.clone());
+    run_to_ready(&studio, "Demo").await;
+    assert_eq!(dev.specs().len(), 1);
 }

@@ -238,6 +238,7 @@ impl Studio {
             cwd: &entry.path,
             prompt: self.talk_prompt(project, &history, &new),
             tools: Tools::Talk,
+            charge_task: None,
             cap_usd: TALK_USD,
             max_turns: TALK_TURNS,
         };

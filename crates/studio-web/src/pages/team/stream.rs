@@ -34,7 +34,7 @@ use topcoat::{
 
 use super::office::{Picked, clean};
 use super::talk::thread::Sizes;
-use super::{Team, hq, new, office, settings, sheet, talk};
+use super::{Team, company, hq, new, office, person, rooms, settings, sheet, talk};
 use crate::pages::office::model::Turn;
 use crate::pages::office::{Office, SHARED_FOR, safe, shared};
 use crate::{AppConfig, live, ui};
@@ -52,11 +52,20 @@ pub enum Spot {
         project: String,
         look: Option<String>,
     },
+    /// A hire's direct conversation.
+    Person {
+        hire: String,
+    },
+    Room {
+        room: String,
+        before: Option<u64>,
+    },
     /// The company floor, seen from the corner `turn`, with `sel` picked.
     Office {
         sel: String,
         turn: Turn,
     },
+    Company,
     New,
     Studio,
 }
@@ -81,6 +90,7 @@ impl Spot {
                 sel: String::new(),
                 turn: Turn::new(asked("turn").and_then(|t| t.parse().ok()).unwrap_or(0)),
             }),
+            ["company"] => Some(Spot::Company),
             ["new"] => Some(Spot::New),
             ["studio"] => Some(Spot::Studio),
             ["leads", project] if !project.is_empty() => Some(Spot::Lead {
@@ -88,6 +98,13 @@ impl Spot {
                 look: asked("look")
                     .map(|look| safe(&look))
                     .filter(|look| !look.is_empty()),
+            }),
+            ["people", hire] if !hire.is_empty() => Some(Spot::Person {
+                hire: unescape(hire),
+            }),
+            ["rooms", room] if !room.is_empty() => Some(Spot::Room {
+                room: unescape(room),
+                before: asked("before").and_then(|before| before.parse().ok()),
             }),
             _ => None,
         }
@@ -109,6 +126,8 @@ enum Extra {
     Hq(Sizes),
     /// A conversation, with the sizes of what is ready to ship and the budget.
     Lead(Box<talk::Reads>),
+    Person(studiod::api::ConversationView),
+    Room(studiod::api::RoomView),
     /// What one task may cost, when a limit is set.
     Studio(Option<f64>),
 }
@@ -120,6 +139,8 @@ enum Extra {
 enum Seen {
     Nothing,
     Lead(talk::Said),
+    Person(talk::Said),
+    Room(talk::Said),
     Studio(Option<f64>),
 }
 
@@ -130,9 +151,11 @@ impl Extra {
             Spot::Lead { project, .. } => {
                 Extra::Lead(Box::new(talk::read(config, office, project, memo).await))
             }
+            Spot::Person { hire } => Extra::Person(person::read(config, hire).await),
+            Spot::Room { room, before } => Extra::Room(rooms::read(config, room, *before).await),
             Spot::Hq => Extra::Hq(talk::sizes_of_all(config, office, memo).await),
             Spot::Studio => Extra::Studio(settings::ticket_usd(config).await),
-            Spot::Office { .. } | Spot::New => Extra::Nothing,
+            Spot::Office { .. } | Spot::Company | Spot::New => Extra::Nothing,
         }
     }
 
@@ -142,6 +165,8 @@ impl Extra {
             // office shows, so HQ is as the office says.
             Extra::Nothing | Extra::Hq(_) => Seen::Nothing,
             Extra::Lead(reads) => Seen::Lead(reads.said()),
+            Extra::Person(conversation) => Seen::Person(talk::Said::of(conversation)),
+            Extra::Room(conversation) => Seen::Room(talk::Said::of_room(conversation)),
             Extra::Studio(usd) => Seen::Studio(*usd),
         }
     }
@@ -166,16 +191,30 @@ fn draw<'a>(
             let parts = talk::parts(&team, &office, &project, &reads)?;
             view! { cx => talk::talk(team: team, parts: parts, sheet: sheet) }.boxed()
         }
+        (Spot::Person { hire }, Extra::Person(conversation)) => {
+            let parts = person::parts(&office, &hire, conversation)?;
+            view! { cx => person::person_view(team: team, parts: parts) }.boxed()
+        }
+        (Spot::Room { room, before }, Extra::Room(conversation)) => {
+            if !office.rooms.iter().any(|summary| summary.id == room) {
+                return None;
+            }
+            view! { cx => rooms::room_view(team: team, office: office, room: room, conversation: conversation, before: before) }.boxed()
+        }
         (Spot::Office { sel, turn }, _) => {
             view! { cx => office::office_view(team: team, office: office, turn: turn, sel: sel) }
                 .boxed()
         }
+        (Spot::Company, _) => view! { cx => company::company(team: team, office: office) }.boxed(),
         (Spot::New, _) => view! { cx => new::new_project(team: team, office: office) }.boxed(),
         (Spot::Studio, Extra::Studio(ticket_usd)) => {
             view! { cx => settings::settings(team: team, office: office, ticket_usd: ticket_usd) }
                 .boxed()
         }
-        (Spot::Hq | Spot::Lead { .. } | Spot::Studio, _) => return None,
+        (
+            Spot::Hq | Spot::Lead { .. } | Spot::Person { .. } | Spot::Room { .. } | Spot::Studio,
+            _,
+        ) => return None,
     })
 }
 
@@ -303,6 +342,14 @@ mod tests {
             lead("shop", Some("abc"))
         );
         assert_eq!(Spot::of("/leads/shop?look="), lead("shop", None));
+        assert_eq!(
+            Spot::of("/people/dev"),
+            Some(Spot::Person { hire: "dev".into() })
+        );
+        assert_eq!(
+            Spot::of("/people/a%2Bb"),
+            Some(Spot::Person { hire: "a+b".into() })
+        );
     }
 
     #[test]

@@ -25,18 +25,20 @@ you to ship. Nothing is pushed, and agents never see your credentials.
 > on a repo you have backed up, keep its budget low, set a spending limit in
 > your Claude account too, and read what it ships before you do.
 
-<p align="center"><img src="docs/office.png" alt="HQ, the morning round-up: a sidebar with a lead for each project, and a standup from each lead with the questions to answer and the finished work to ship" width="900"></p>
+<p align="center"><img src="docs/office.png" alt="HQ, the morning round-up: a sidebar with a lead for each project and links to the company page and rooms, and a standup from each lead with a Run manager review button, the approvals to answer and the finished work to ship" width="900"></p>
 
 ## Talk to your leads
 
 The web UI is a team sidebar and a page for each thing you do.
 
-<p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and a note to Dev shows as a card. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
+<p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and an approval card asks whether Dev may change a protected file. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
 
-- **HQ** is your morning round-up. Each lead has a line, its standup in a
-  sentence or two, and under it the cards that wait for you: a question, work
-  that is ready to ship, a release that wants your go-ahead. Leads with
-  something for you come first.
+- **HQ** is your morning round-up and approval inbox. Each lead has a line, its
+  standup in a sentence or two, and under it the cards that wait for you: a
+  question, a manager's proposed action, work that is ready to ship, or a
+  release that wants your go-ahead. Leads with something for you come first.
+  Company activity shows the last 24 hours across every project, with links to
+  each person and task.
 - **A lead's page** is a conversation. Ask "How's it going?", or say "Plan the
   checkout flow for 0.5" or "Tell Dev to close the drawer on outside clicks".
   The lead reads the project, answers in plain words, and can start a goal,
@@ -47,13 +49,29 @@ The web UI is a team sidebar and a page for each thing you do.
   messages. A project that has no lead (HQ says so, with a link) has a card
   in place of the message box: hire a lead for it, or pick one you have. Change
   lead in the header picks another, hires a new one, or leaves it with none.
+- **An employee's page** is a persistent, read-only conversation with any hire.
+  Ask about their assignments and recent results, with their current and recent
+  work beside the thread. An active task has a separate control to message its
+  live run.
+- **Company and project rooms** are persistent group conversations for
+  announcements and cross-team requests. Mention a hire as `@dev` to get a
+  read-only reply; plain announcements start no model run.
+- **The company page** is a live map of goals, owned tasks, blockers, next steps
+  and spend, with a delivery scorecard, employee workload and the manager
+  decision log. Tasks have priorities and dependencies; the dependency graph
+  shows what must land first and the critical path through open work.
 - **Look closer** opens ready work over the conversation: a summary, the checks,
-  the review, whether protected paths were touched, the files with their
-  diffs and the branch to try. **Ship to main**, or **Send back with a note**.
-  A goal is checked as a whole before it ships.
-- **The office** is the company floor, with a card for each lead when you pick
-  a sign or a person. **Studio** has the money limits, the desks, the hires and
-  the rules.
+  the review, whether protected paths were touched, screenshots and clips, the
+  files with their diffs and the branch to try. **Ship to main**, or **Send back
+  with a note**. A goal is checked as a whole before it ships.
+- **The office** is the company floor. Pick a sign for its lead, or a person or
+  their task for that employee's own card and conversation. **Studio** has the
+  money limits, desks, hires, rules, office pause, manager autonomy controls,
+  and a simulation/live switch. Simulation gives conversations, rooms,
+  standups, setup and reviews scripted replies at no model cost, while coding
+  work and approvals always use real models. Automatic reviews are off by
+  default. In Autonomous mode a lead may start at most 3 goals or tasks a day
+  per project on its own. Cancelling, shipping and publishing always need you.
 
 Adding a project is a conversation too: **New project** takes a folder and
 hires a lead for it. The lead reads the repository and shows how the project
@@ -109,14 +127,14 @@ write a lead's hire file.
 ## How it works
 
 - **Leads** are hires you name for a project. A lead answers you, plans the
-  project's goals, assigns its tasks and decides the routine tool calls its
-  team asks about. Without one, a producer, a router and an approver do those
-  jobs, and there is nobody to talk to.
+  project's goals, assigns its tasks and checks what comes back. Without one,
+  a producer plans, and there is nobody to talk to. A cheap approver answers
+  every project's routine tool questions and a router hands out tasks.
 - **Goals** are planned into **tasks** that run one after another on one goal
   branch, each in its own worktree. **Hires** are agent roles written as
   Markdown files: a model, a prompt and optional limits.
 - **Rules** are Markdown files too: protect paths, gate commands, lint
-  changes, require checks or guide the agent. The lead (or the approver)
+  changes, require checks or guide the agent. The approver
   decides the tool calls no rule covers, so only dangerous ones reach you.
 - **Checks and review.** The project's checks run, critics judge screenshots
   and design where a gate asks, then a reviewer on a different model reads the

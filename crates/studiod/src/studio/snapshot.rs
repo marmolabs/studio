@@ -59,13 +59,14 @@ impl Studio {
     pub(super) fn office(self: &Arc<Self>) -> Result<Response, StudioError> {
         let now = now_ms();
         let since = now.saturating_sub(DAY_MS);
-        let (tickets, day, spent_24h, mut spend) = {
+        let (tickets, day, spent_24h, mut spend, state_since) = {
             let store = lock(&self.store);
             (
                 store.tickets()?,
                 store.events_from(since, usize::MAX, |_| true)?,
                 store.spent_since(since)?.total,
                 store.spent_by_ticket()?,
+                store.state_since()?,
             )
         };
         for (ticket, usd) in lock(&self.metered).iter() {
@@ -105,6 +106,7 @@ impl Studio {
             status: self.status(&tickets, spent_24h),
             asks,
             events,
+            state_since,
             spend,
             merged: self.merged_among(&tickets),
             sizes,
@@ -117,6 +119,8 @@ impl Studio {
             standups: self.standups(),
             ship_checks: self.ship_checks(),
             setups: self.setups(),
+            operations: self.operations(),
+            rooms: self.room_summaries(),
             now,
             tickets,
             projects: self.project_views(),

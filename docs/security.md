@@ -64,32 +64,21 @@ Two cheap hires work for the studio itself: the approver decides the tool calls
 no rule covers, so only dangerous ones reach you, and the router picks a hire
 for a task. Your own `protect` rules, ask-level gates and agents' questions
 always reach you, never the approver. When the approver errors, has no budget
-or gives no clear answer, the call goes to you. In a project with a lead, the
-lead does both jobs (see below). See
+or gives no clear answer, the call goes to you. See
 [concepts](concepts.md#the-approver-and-the-router).
 
 ## Project leads
 
-A project's lead (see [concepts](concepts.md#project-leads)) takes the
-approver's and the router's place in that project, so it can allow a tool call
-that no rule covers, deny it, or pass it up to you. It judges under the same
-policy as the approver and sends you what is dangerous, irreversible or reaches
-outside the project. What a lead may not decide stays with you:
+A project's lead (see [concepts](concepts.md#project-leads)) plans, hands out
+and checks work. It does not decide tool calls: the approver does, for every
+project, so a lead's strong model never answers routine questions. What a lead
+may not decide stays with you:
 
 - Your own `protect` rules and ask-level gates always come to you.
 - Questions an agent puts to you (`ask_owner`) always come to you.
-- A lead never answers for its own tasks; the approver does.
-- When the lead errors, has no budget or gives no clear answer, the call goes
-  to you.
 - Landing a task, merging a goal into your branch and giving a release its
   go-ahead are yours. A lead plans and assigns; it does not land, merge or
   release.
-
-A lead's calls to assign or answer are capped at five cents each and charged to
-the task. HQ counts what your leads answered today, so you can see how
-much they decide for you. A lead is a hire and an agent's prompt can
-steer it, so choose its model and prompt as you would for any hire that can
-approve tool calls.
 
 ## Talking to a lead
 

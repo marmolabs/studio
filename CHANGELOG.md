@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Autonomous company operations
+
+- Project leads can run persistent, budget-capped manager reviews and propose
+  goals, tasks and task-management actions. HQ is the approval inbox for those
+  proposals, and every decision and outcome is kept in an audit log.
+- Tasks have event-sourced priorities and same-project dependencies. The
+  scheduler runs only ready work, highest priority first; only landed
+  dependencies unblock it, and self-links or cycles are rejected. Managers can
+  propose scheduling changes, and the company page shows the dependency graph
+  and critical path.
+- Automatic reviews are opt-in, with configurable cadence and supervised,
+  balanced and autonomous levels. Cancellation, shipping, publishing and budget
+  changes always require the owner.
+- Company and project rooms provide persistent announcements and cross-team
+  conversations. Mentioning a hire starts a read-only reply; plain announcements
+  cost nothing.
+- The company page adds a live goal/task work map, owner and blocker details,
+  ticket spend, a delivery and cost scorecard, employee workload, and the
+  manager decision log.
+- Look closer now includes each task's screenshots and clips beside its checks,
+  review, diffs, shipping and request-changes controls.
+- Studio settings bring office pause, desks, budgets, manager cadence and
+  autonomy together. Reviews and actions also appear in their project rooms.
+- A simulation/live switch lets new conversations and reviews use local scripted
+  responses with zero model cost, while preserving company history and leaving
+  already-running agents to finish.
+- Manager actions are claimed atomically and interrupted executions are marked
+  failed on restart. Conversational and quick model runs reserve their budgets
+  before starting. Room replies queue follow-up mentions, project rooms only
+  include their own assignments, and room history has cursor pagination and
+  cached summaries. Malformed operations state is preserved and blocks manager
+  reviews and settings changes (task runs carry on) rather than being silently
+  overwritten.
+- Simulation covers only conversations, rooms, standups, setup and manager
+  reviews; coding, checks, reviews, the approver and the router always use the
+  hires' own runtimes. Reviews no longer repeat what waits for approval, are
+  told which hires can take a task, and autonomy starts at most 3 new goals or
+  tasks a day per project. "company" is reserved as a room name.
+
 ## 0.1.0
 
 The first release. studio is very early: expect bugs, rough edges and breaking
@@ -57,9 +98,8 @@ budget limits low.
 ### Leads, milestones and releases
 
 - The studio works like a company. You are the owner; a project can have a
-  lead: a hire you talk to, who plans its goals, assigns its tasks, answers its
-  team's routine questions in place of the producer, router and approver, and
-  sends you what it can't decide. Name one with `lead` in `studio.toml`, with
+  lead: a hire you talk to, who plans its goals, assigns its tasks, checks what
+  comes back in place of the producer, and sends you what it can't decide. Name one with `lead` in `studio.toml`, with
   `studio lead <project> [hire]`, by hiring one from New project in the web UI,
   or from the project's conversation (below). The lead needs
   `tools: [file_ticket]` to plan, and never answers for its own tasks.
@@ -111,6 +151,13 @@ budget limits low.
   review or ready goes back to its agent with the message as the note, a
   queued or held one keeps it for when it next starts, and a finished one
   can't be told. The task's run log notes it, "Message from the owner: ...".
+- Every hire also has a persistent, read-only conversation at `/people/<hire>`.
+  Pick a person or their task in the office to talk to that person, see their
+  current and recent work, and ask about their assignments and results. Direct
+  replies are capped at $0.25 and count against the relevant budgets. Steering
+  an active run remains a separate task-message action.
+- HQ's Company activity feed shows the last 24 hours across every project,
+  newest first, with links to the person and task behind each event.
 
 ### Looking closer and shipping
 

@@ -2,13 +2,14 @@
 //! protocol into [`RunEvent`]s and accepts [`Control`]s (approvals, answers,
 //! interrupts) back.
 //!
-//! Only Claude Code ships today. Another agent (an ACP client, say) is one
-//! more adapter implementing [`Runtime`], added to the list studiod's
-//! `runtimes::build` returns.
+//! Claude Code is the live adapter; a local simulation adapter supports
+//! zero-cost conversations and reviews. Another agent (an ACP client, say) is
+//! one more adapter implementing [`Runtime`], added to studiod's runtime list.
 
 mod claude;
 mod fake;
 mod run;
+mod simulation;
 
 pub use claude::ClaudeCode;
 pub use fake::FakeRuntime;
@@ -16,6 +17,7 @@ pub use run::{
     Capabilities, Control, Cost, EnvReport, FailureKind, Outcome, Question, Run, RunEvent, RunSpec,
     RuntimeError,
 };
+pub use simulation::SimulatedRuntime;
 
 pub trait Runtime: Send + Sync {
     fn id(&self) -> &str;

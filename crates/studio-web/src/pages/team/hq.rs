@@ -5,13 +5,17 @@
 
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{Ticket, TicketKind};
-use studiod::api::{AskView, CheckState, ReleaseState, ReleaseView, ShipCheck};
+use studiod::api::{
+    AskView, CheckState, ManagerAction, OperationState, ReleaseState, ReleaseView, ShipCheck,
+};
 use topcoat::view::{Child, View, component, view};
 
 use super::shell::{self, Here};
 use super::talk::asked;
-use super::talk::thread::Sizes;
-use super::{LeadEntry, Team, clock, faces, goal_result, lead_href, task_result, version};
+use super::talk::thread::{Person, Sizes};
+use super::{
+    LeadEntry, Team, clock, faces, goal_result, lead_href, person_href, task_result, version,
+};
 use crate::pages::ask_card::DECISION;
 use crate::pages::office::floor;
 use crate::pages::office::{Office, facts};
@@ -45,6 +49,9 @@ pub struct Waiting {
     /// Tasks held for the owner.
     pub held: Vec<Ticket>,
     pub ships: Vec<Ship>,
+    /// Actions proposed by the project's manager.
+    pub actions: Vec<ManagerAction>,
+    pub reviewing: bool,
     /// A release that waits for the go-ahead.
     pub release: Option<ReleaseView>,
 }
@@ -52,7 +59,11 @@ pub struct Waiting {
 impl Waiting {
     /// How many things wait.
     pub fn count(&self) -> usize {
-        self.asks.len() + self.held.len() + self.ships.len() + usize::from(self.release.is_some())
+        self.asks.len()
+            + self.held.len()
+            + self.ships.len()
+            + self.actions.len()
+            + usize::from(self.release.is_some())
     }
 }
 
@@ -75,6 +86,18 @@ pub fn waiting(office: &Office, project: &str, sizes: &Sizes) -> Waiting {
             .cloned()
             .collect(),
         ships: ships(office, project, sizes),
+        actions: office
+            .operations
+            .actions
+            .iter()
+            .filter(|action| action.project == project && action.state == OperationState::Pending)
+            .cloned()
+            .collect(),
+        reviewing: office
+            .operations
+            .reviewing
+            .iter()
+            .any(|reviewing| reviewing == project),
         release: office
             .project(project)
             .and_then(|view| view.release.clone())
@@ -233,6 +256,101 @@ fn totals(office: &Office) -> String {
     )
 }
 
+// ------------------------------------------------------ company activity
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Activity {
+    pub person: Person,
+    pub project: String,
+    pub tint: usize,
+    pub task: String,
+    pub title: String,
+    pub action: String,
+    pub at: u64,
+    pub tone: &'static str,
+}
+
+/// The company's latest events, newest first. These are the same stored ticket
+/// events that drive the rest of HQ, not a separate activity record.
+pub fn activity(office: &Office) -> Vec<Activity> {
+    let projects = office.project_names();
+    let mut events: Vec<_> = office.recent.iter().collect();
+    events.sort_by_key(|happened| happened.at_ms);
+    events
+        .into_iter()
+        .rev()
+        .filter_map(|happened| {
+            let ticket = office.ticket(&happened.ticket_id)?;
+            let (action, tone) = action(&happened.event, ticket);
+            let project = ticket.project.to_string();
+            Some(Activity {
+                person: Person::of(office, &ticket.hire.to_string()),
+                tint: projects
+                    .iter()
+                    .position(|name| name == &project)
+                    .unwrap_or(0),
+                task: ticket.id.to_string(),
+                title: ticket.title.clone(),
+                action: action.to_string(),
+                at: happened.at_ms,
+                tone,
+                project,
+            })
+        })
+        .take(20)
+        .collect()
+}
+
+fn action(event: &TicketEvent, ticket: &Ticket) -> (&'static str, &'static str) {
+    match event {
+        TicketEvent::Claimed => ("started working", "run"),
+        TicketEvent::AskOpened { .. } => ("needs an answer", "attn"),
+        TicketEvent::AskResolved { approved: true, .. } => ("was allowed to continue", "run"),
+        TicketEvent::AskResolved {
+            approved: false, ..
+        } => ("had a request declined", "attn"),
+        TicketEvent::ChecksStarted => ("started checks", "run"),
+        TicketEvent::ChecksFailed { .. } => ("was sent back after checks failed", "bad"),
+        TicketEvent::ReviewFailed { .. } => ("was sent back after review", "bad"),
+        TicketEvent::Held { .. } => ("is on hold", "attn"),
+        TicketEvent::Landed if ticket.kind == TicketKind::Plan => ("filed the plan", "ok"),
+        TicketEvent::Landed => ("landed the work", "ok"),
+        TicketEvent::Failed { .. } => ("failed", "bad"),
+        TicketEvent::Cancelled => ("was cancelled", "bad"),
+        _ => ("updated the task", "run"),
+    }
+}
+
+#[component]
+async fn company_activity(items: Vec<Activity>, now: u64) -> topcoat::Result<impl View> {
+    Ok(view! {
+        <section id="company-activity" class="flex flex-col gap-3 border-t border-line pt-5" aria-label="Company activity">
+            <div class="flex items-baseline justify-between gap-3">
+                <h2 class="text-[16px] font-semibold">"Company activity"</h2>
+                <span class="text-[12.5px] text-fg-3">"Last 24 hours"</span>
+            </div>
+            <ol class="flex flex-col">
+                for item in items {
+                    <li class="grid grid-cols-[30px_minmax(0,1fr)_auto] items-start gap-3 border-t border-line py-3 first:border-t-0">
+                        <a href=(person_href(&item.person.hire)) tabindex="-1" aria-hidden="true">
+                            faces::face(seed: item.person.hire.clone(), role: item.person.role, tint: item.tint, size: 30)
+                        </a>
+                        <div class="min-w-0 text-[13.5px] leading-5">
+                            <span>
+                                <a href=(person_href(&item.person.hire)) class="font-semibold hover:underline">(item.person.name)</a>
+                                " " (item.action) " on "
+                                <a href=(format!("/tickets/{}", item.task)) class="font-medium hover:underline">(item.title)</a>
+                            </span>
+                            <span class="block text-[12.5px] text-fg-3">(item.project)</span>
+                        </div>
+                        <span class=(format!("pt-0.5 text-[12px] text-fg-3 activity-{}", item.tone))>(clock::said(item.at, now))</span>
+                    </li>
+                }
+            </ol>
+        </section>
+    })
+}
+
 // ------------------------------------------------------------ the page
 
 /// The whole page: the frame around the round-up.
@@ -242,6 +360,7 @@ pub async fn hq(team: Team, office: Office, sizes: Sizes) -> topcoat::Result<imp
     let (date, greeting) = (local.date(), local.greeting());
     let needs = team.needs;
     let lines = lines(&team, &office, &sizes);
+    let activity = activity(&office);
     let footer = totals(&office);
     let empty = team.leads.is_empty();
     Ok(view! {
@@ -272,6 +391,9 @@ pub async fn hq(team: Team, office: Office, sizes: Sizes) -> topcoat::Result<imp
                 for line in lines {
                     lead_line(line: line)
                 }
+                if !activity.is_empty() {
+                    company_activity(items: activity, now: office.now)
+                }
                 if !empty {
                     <p class="border-t border-line pt-3.5 text-center text-[12.5px] tabular-nums text-fg-3">(footer)</p>
                 }
@@ -293,6 +415,8 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
         asks,
         held,
         ships,
+        actions,
+        reviewing,
         release,
     } = waiting;
     let href = lead_href(&entry.project);
@@ -304,8 +428,12 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
     let seed = entry.lead.clone().unwrap_or_else(|| entry.project.clone());
     // A project without a lead has a row of its own that says so, which is
     // something to do for the owner, though not something that waits.
-    let cards =
-        !asks.is_empty() || !held.is_empty() || !ships.is_empty() || release.is_some() || !led;
+    let cards = !asks.is_empty()
+        || !held.is_empty()
+        || !ships.is_empty()
+        || !actions.is_empty()
+        || release.is_some()
+        || !led;
     let project = entry.project.clone();
     Ok(view! {
         <section class="grid grid-cols-[40px_minmax(0,1fr)] gap-x-3" aria-label=(if led { format!("{} leads {}", entry.name, entry.project) } else { format!("{} has no lead", entry.project) }) data-lead=(entry.project.clone())>
@@ -317,6 +445,9 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
                     if led { <span class="text-[12.5px] text-fg-3">(from)</span> }
                 </a>
                 <p class="text-[15px] leading-[1.5] [overflow-wrap:anywhere]">ui::prose(text: text)</p>
+                if led {
+                    <div>super::operations::review_button(project: project.clone(), reviewing: reviewing)</div>
+                }
                 if !led {
                     no_lead_row(project: project.clone())
                 }
@@ -329,6 +460,9 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
                 for ship in ships {
                     ship_row(ship: ship, project: project.clone())
                 }
+                for action in actions {
+                    super::operations::action_row(action: action, by: entry.name.clone())
+                }
                 if let Some(release) = release {
                     release_row(release: release, project: project.clone())
                 }
@@ -340,7 +474,7 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
 /// A card that waits for the owner: a tile in the colour of what it is, the
 /// title, a line under it, and the buttons in `child`.
 #[component]
-async fn card(
+pub(super) async fn card(
     tone: &'static str,
     #[into] title: String,
     #[into] meta: Child<'_>,
@@ -382,7 +516,7 @@ async fn card(
 #[component]
 async fn no_lead_row(project: String) -> topcoat::Result<impl View> {
     Ok(view! {
-        card(tone: "lead", title: "No lead yet", meta: view! { "A lead plans the work and answers the team's questions." },
+        card(tone: "lead", title: "No lead yet", meta: view! { "A lead plans the work, hands it out and checks it." },
             <a href=(lead_href(&project)) class=(ui::BUTTON_SM)>"Give " (project.clone()) " a lead"</a>
         )
     })

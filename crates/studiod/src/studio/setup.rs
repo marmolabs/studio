@@ -371,6 +371,7 @@ impl Studio {
                 cwd: repo,
                 prompt: prompt(project),
                 tools: Tools::Setup,
+                charge_task: None,
                 cap_usd: SETUP_USD,
                 max_turns: SETUP_TURNS,
             },

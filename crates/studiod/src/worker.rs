@@ -592,28 +592,17 @@ impl AgentRun<'_> {
                         }
                         policy::Decision::Ask => {
                             let mut why = reasons(&verdict, "");
-                            // Owner rules always reach the owner; the rest go to the
-                            // project's lead, or else the studio's approver, when
-                            // there is one. A lead never answers for its own work.
+                            // Owner rules always reach the owner; the rest go to
+                            // the studio's approver, when there is one. A lead
+                            // never answers these.
                             let owner_rule = verdict
                                 .findings
                                 .iter()
                                 .any(|f| f.level == studio_core::rule::Level::Ask);
-                            let lead = self
-                                .studio
-                                .lead_of(&self.ticket.project.0)
-                                .filter(|lead| lead.id != self.hire.id);
-                            let led = lead.as_ref().map(|_| self.ticket.project.0.as_str());
-                            // The notes read the same whoever decided, so the log
-                            // shows them alike.
-                            let title = "approver";
                             // The call put to the owner in plain words, when
-                            // the decider left it to them and said so.
+                            // the approver left it to them and said so.
                             let mut question = String::new();
-                            let (label, decider) = match &lead {
-                                Some(lead) => ("Lead", Some(lead.clone())),
-                                None => ("Approver", self.studio.first_with_role("approver")),
-                            };
+                            let decider = self.studio.first_with_role("approver");
                             if let (false, Some(approver)) = (owner_rule, decider) {
                                 let key = format!("{tool}{input}");
                                 let call = match approved.get(&key) {
@@ -621,10 +610,7 @@ impl AgentRun<'_> {
                                     None => {
                                         approver::judge(
                                             self.studio,
-                                            &approver::Decider {
-                                                hire: &approver,
-                                                led,
-                                            },
+                                            &approver,
                                             self.ticket,
                                             &worktree.path,
                                             &tool,
@@ -637,7 +623,7 @@ impl AgentRun<'_> {
                                 match call {
                                     approver::Call::Allow(reason) => {
                                         self.log.note_by(
-                                            &format!("{title} allowed {tool}: {reason}"),
+                                            &format!("approver allowed {tool}: {reason}"),
                                             &approver.id.0,
                                         );
                                         approved.insert(key, reason);
@@ -646,16 +632,11 @@ impl AgentRun<'_> {
                                     }
                                     approver::Call::Deny(reason) => {
                                         self.log.note_by(
-                                            &format!("{title} denied {tool}: {reason}"),
+                                            &format!("approver denied {tool}: {reason}"),
                                             &approver.id.0,
                                         );
-                                        let by = if led.is_some() {
-                                            "The project's lead"
-                                        } else {
-                                            "The studio's approver"
-                                        };
                                         let message = format!(
-                                            "{by} declined this: {reason} \
+                                            "The studio's approver declined this: {reason} \
                                              Find another way, or explain in your summary \
                                              why it's needed."
                                         );
@@ -664,10 +645,10 @@ impl AgentRun<'_> {
                                     }
                                     approver::Call::Owner { reason, title: put } => {
                                         self.log.note_by(
-                                            &format!("{title} left {tool} to the owner: {reason}"),
+                                            &format!("approver left {tool} to the owner: {reason}"),
                                             &approver.id.0,
                                         );
-                                        why.push(format!("{label}: {reason}"));
+                                        why.push(format!("Approver: {reason}"));
                                         question = put;
                                     }
                                 }
@@ -1688,6 +1669,8 @@ mod tests {
             detail: String::new(),
             source: None,
             version: None,
+            priority: studio_core::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         }
     }
 

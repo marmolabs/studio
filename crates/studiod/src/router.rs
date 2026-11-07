@@ -1,5 +1,4 @@
-//! The router: a cheap hire that picks who works on a new ticket. In a project
-//! with a lead, the lead picks instead.
+//! The router: a cheap hire that picks who works on a new ticket.
 
 use crate::quick::{self, Reply};
 use crate::studio::{Studio, StudioError, other};
@@ -16,8 +15,8 @@ const NOT_CANDIDATES: [&str; 4] = ["approver", "router", "reviewer", "lead"];
 pub(crate) struct Routed {
     pub hire: String,
     pub reason: String,
-    /// The hire that picked: the project's lead or the studio's router. None
-    /// when there was no one to ask.
+    /// The hire that picked: the studio's router. None when there was none to
+    /// ask.
     pub by: Option<String>,
     pub reply: Option<Reply>,
 }
@@ -41,15 +40,8 @@ fn cut(text: &str, max: usize) -> String {
     format!("{head}…")
 }
 
-/// The ask. `led` is the project when its lead is the one picking.
-pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str, led: Option<&str>) -> String {
-    let who = match led {
-        Some(project) => format!(
-            "You lead the project {project}. A new ticket was filed in it: assign it to \
-             the member of your team best suited to it.\n\n"
-        ),
-        None => String::new(),
-    };
+/// The ask.
+pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str) -> String {
     let list: Vec<String> = candidates
         .iter()
         .map(|h| {
@@ -64,7 +56,7 @@ pub(crate) fn prompt(candidates: &[&Hire], title: &str, detail: &str, led: Optio
         })
         .collect();
     format!(
-        "{who}Pick the hire best suited to this ticket.\n\nHires:\n{}\n\n\
+        "Pick the hire best suited to this ticket.\n\nHires:\n{}\n\n\
          Ticket: {title}\n\n{}\n\n\
          Reply with one or two sentences, then end with exactly one line:\n\
          HIRE: <id>",
@@ -105,8 +97,8 @@ fn engineer(studio: &Studio) -> Result<String, StudioError> {
         .ok_or_else(|| other("no hire given and no router or engineer hire to pick one"))
 }
 
-/// Picks the hire for a new ticket in `project`: its lead when it has one,
-/// otherwise the studio's router.
+/// Picks the hire for a new ticket in `project`: the studio's router picks,
+/// whether or not the project has a lead.
 pub(crate) async fn pick(
     studio: &Arc<Studio>,
     project: &str,
@@ -114,8 +106,7 @@ pub(crate) async fn pick(
     title: &str,
     detail: &str,
 ) -> Result<Routed, StudioError> {
-    let lead = studio.lead_of(project);
-    let Some(router) = lead.clone().or_else(|| studio.first_with_role("router")) else {
+    let Some(router) = studio.first_with_role("router") else {
         return Ok(Routed {
             hire: engineer(studio)?,
             reason: "no router; the first engineer".to_string(),
@@ -129,17 +120,14 @@ pub(crate) async fn pick(
         .flatten()
         .map(|config| config.gates.into_iter().map(|g| g.hire).collect())
         .unwrap_or_default();
-    let mut found = candidates(&hires, &critics);
-    // A lead assigns work to its team, not to itself.
-    found.retain(|h| lead.as_ref().is_none_or(|lead| h.id != lead.id));
-    let led = lead.as_ref().map(|_| project);
+    let found = candidates(&hires, &critics);
     let asked = quick::ask(
         studio,
         None,
         project,
         &router,
         path,
-        &prompt(&found, title, detail, led),
+        &prompt(&found, title, detail),
     )
     .await;
     match asked {
@@ -218,13 +206,11 @@ mod tests {
     fn the_prompt_lists_hires_and_the_ticket() {
         let hires = vec![hire("dev", "engineer")];
         let found = candidates(&hires, &[]);
-        let text = prompt(&found, "Add a menu", "Escape opens it.", None);
+        let text = prompt(&found, "Add a menu", "Escape opens it.");
         assert!(text.contains("- dev: DEV, role engineer, model m. You write code."));
         assert!(text.contains("Add a menu"));
         assert!(text.contains("Escape opens it."));
         assert!(!text.contains("You lead"));
-        let led = prompt(&found, "Add a menu", "", Some("game"));
-        assert!(led.contains("You lead the project game."));
     }
 
     #[test]

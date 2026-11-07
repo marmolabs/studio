@@ -158,6 +158,67 @@ What happens depends on where the task is:
 
 The task's run log gets a note, "Message from the owner: ...".
 
+## Talk to any employee
+
+Pick a person or their task in **The office**, then **Talk to** them. This opens
+their own persistent conversation at `/people/<hire>`, with their current and
+recent assignments beside it. Ask what they are doing, what blocks them or what
+they finished; their replies can draw on those assignments, results and the
+current project's files.
+
+This conversation is read-only and cannot act on tasks. To change what a running
+agent is doing, use the message control beside its active task instead. Direct
+replies are capped at $0.25 and count against the relevant project and hire's
+budgets.
+
+HQ also has **Company activity**: the last 24 hours across every project, newest
+first, with links to the person and task behind each event.
+
+## Let the managers operate
+
+On HQ or **Company**, choose **Run manager review**. The lead reads its project,
+writes an assessment and proposes actions. Nothing proposed runs until you click
+**Approve** in HQ (unless your autonomy setting allows it); **Reject** changes
+nothing. Reviews, actions and outcomes also appear in the project's room and in
+**Company → Manager decision log**.
+
+In **Studio → Manager autonomy**, automatic reviews are initially off. Enable
+them and choose a cadence only when you want the leads to review on their own.
+The levels are:
+
+- **Supervised**: approve every action yourself.
+- **Balanced**: feedback and employee messages may run; the rest wait for you.
+- **Autonomous**: ordinary task management may run; cancellation still needs
+  you. New goals and tasks start on their own for at most 3 a day in each
+  project; more wait for you.
+
+Reviews stop while the office is closed. Each is capped at $0.75 and counts
+against the relevant budgets. Shipping, publishing and budget changes always
+remain yours.
+
+To try the company without model spend, choose **Switch to simulation** in the
+same settings section. New conversations, room replies, standups and manager
+reviews then use local scripted responses and record zero model cost; coding
+and its checks and reviews still use your hires' models. Existing projects and
+history stay visible; agents already running finish their current run. Choose
+**Use configured runtimes** to return to your hires' normal models.
+
+## Use the company rooms and map
+
+Open **Company rooms** for the company-wide room, or pick a project room inside
+it. Post an announcement to everyone without starting a model run. Mention a
+hire by id, for example `@dev Can you review the drawer?`, to get a read-only
+reply with their assignments and project context. Mention replies are capped at
+$0.25 each.
+
+**Company & decisions** opens the live map of goals and owned tasks, blockers,
+next steps and spend. Its scorecard shows delivery, cycle time, rework, cost per
+delivery, current blocked time and employee workload. Open a task for its result,
+visual proof, code diff and request-changes controls. Higher-priority tasks run
+first when their dependencies have landed. The graph names blockers and marks
+the critical path; managers can propose priority or dependency changes for your
+approval.
+
 ## Your first task
 
 From a terminal, or by asking the lead:
@@ -225,6 +286,7 @@ button on HQ and in the conversation. It slides a sheet over the conversation
   (agreed or not) and **protected paths** (whether any were touched, and that you
   allowed it);
 - the tasks, with the lines each added and removed;
+- the latest capture attempt's screenshots and clips for each task;
 - the files, the first one opened with its diff and the rest folded. For a goal
   they are what its branch adds to the branch it ships to, read from git, so
   they are still there when its tasks are done and their worktrees are gone.
@@ -247,9 +309,9 @@ first.
 
 A lead is a hire who runs a project for you: you talk to it, and it plans the
 project's goals, hands its tasks to the team, checks what comes back and
-answers the team's routine questions, and sends you what it can't decide. It is
-optional; without one, the producer, the router and the approver do those jobs
-for every project, and there is nobody to talk to. (A lead you hire from
+sends you what it can't decide. It is optional; without one, the producer does
+the planning for every project (the cheap router and approver serve every
+project either way), and there is nobody to talk to. (A lead you hire from
 **New project** is set up for you.)
 
 In the web UI, a project that has no lead says so on HQ, under its line, with a
@@ -281,8 +343,8 @@ model: opus
 tools: [file_ticket]
 ---
 You lead this project. Plan its goals into small tasks with acceptance
-criteria, give each to the teammate who suits it, and answer routine
-questions. Pass up to the owner anything dangerous or irreversible.
+criteria, give each to the teammate who suits it, and check what comes back.
+Pass up to the owner anything dangerous or irreversible.
 ```
 
 Then name it, in a terminal or in the project's conversation in the web UI (the
@@ -371,23 +433,33 @@ page and the rail is hidden.
   the call fails, a plain line such as "2 tasks done, 1 sent back. 1 waits for
   you."). Below a lead's line are the cards that wait for you in that project:
   questions, work ready to ship and a release that wants your go-ahead. Leads
-  with something for you come first. A last line gives the day's totals: tasks
-  done, sent back, spent.
+  with something for you come first. Company activity shows the last 24 hours
+  across every project, newest first, with person and task links. A last line
+  gives the day's totals: tasks done, sent back, spent.
 - **A conversation** (`/leads/<project>`) is the thread with one lead, newest
   at the bottom. See [Talk to a lead](#talk-to-a-lead).
+- **An employee's conversation** (`/people/<hire>`) is their own persistent,
+  read-only thread, with current and recent work beside it. See
+  [Talk to any employee](#talk-to-any-employee).
+- **Rooms** (`/rooms/company`, `/rooms/<project>`) hold persistent company and
+  project conversations. Announce freely, or mention `@dev` for a read-only
+  employee reply.
+- **Company** (`/company`) has the live goal/task map, project and employee
+  workload, delivery scorecard, and manager decision log.
 - **Look closer** (`?look=<id>` on a conversation) is the sheet over it. See
   [Look closer and ship](#look-closer-and-ship).
 - **The office** (`/office`) is the company floor: a team area for each
   project, around the owner's office, the lounge, and the review room and QA lab
-  every project shares. Click a sign or a person and a card for that project's
-  lead floats up, with **Talk to** the lead and **What's ready**. The arrows (or
-  Q and E) turn the floor.
+  every project shares. A sign opens its lead's card; a person or task opens
+  that employee's own card, with **Talk to** them. The arrows (or Q and E) turn
+  the floor.
 - **New project** (`/new`) hires a lead for a project. See
   [Add a project](#add-a-project).
 - **Studio** (`/studio`, the gear in the sidebar) holds the money limits (the
   daily limit and what one task may spend), the desks (how many agents work at
-  once), the hires with **Hire someone**, a link to the rules page, and open or
-  close the office. **Closing the office** stops anything new from starting
+  once), the hires with **Hire someone**, a link to the rules page, manager
+  review cadence and autonomy, and open or close the office. **Closing the
+  office** stops anything new from starting
   while work already running carries on; `studio close` and `studio open` do the
   same in a terminal.
 - **The hires and rules pages** (`/hires`, `/rules`) edit your hires and

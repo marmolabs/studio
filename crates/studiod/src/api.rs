@@ -79,8 +79,7 @@ pub enum Request {
     /// project's setup stands. One request instead of eight, for pages that
     /// stay open all day.
     Office,
-    /// When each running ticket's latest run began and each held ticket was
-    /// held, by ticket id.
+    /// When each ticket's current active, held, asking or failed state began.
     StateSince,
     Asks,
     Decide {
@@ -115,6 +114,16 @@ pub enum Request {
     },
     Resume {
         ticket: String,
+    },
+    /// Sets a task's scheduling priority; larger values run first.
+    SetPriority {
+        ticket: String,
+        priority: u32,
+    },
+    /// Replaces a queued or failed task's dependencies.
+    SetDependencies {
+        ticket: String,
+        depends_on: Vec<String>,
     },
     /// Stops a running ticket's agent and holds the ticket until `Resume`.
     Pause {
@@ -320,6 +329,58 @@ pub enum Request {
         #[serde(default)]
         after: Option<u64>,
     },
+    /// The owner's message to one hire, kept in that hire's persistent,
+    /// read-only conversation. Answers the stored `TalkMessage`.
+    TalkToHire {
+        hire: String,
+        text: String,
+    },
+    /// The messages of one hire's conversation, oldest first, and whether the
+    /// hire is working on a reply. Answers the `ConversationView`.
+    HireConversation {
+        hire: String,
+        #[serde(default)]
+        after: Option<u64>,
+    },
+    /// Asks a project's lead to review its work and propose what to do next.
+    ReviewOperations {
+        project: String,
+    },
+    /// Approves or rejects one proposed manager action.
+    DecideOperation {
+        action: String,
+        approve: bool,
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// Changes the manager review schedule and how much it may do itself.
+    SetOperations {
+        #[serde(default)]
+        autopilot: Option<bool>,
+        #[serde(default)]
+        review_minutes: Option<u64>,
+        #[serde(default)]
+        autonomy: Option<Autonomy>,
+        #[serde(default)]
+        mode: Option<RuntimeMode>,
+    },
+    /// Posts an owner message or announcement in the company or a project room.
+    TalkToRoom {
+        room: String,
+        text: String,
+    },
+    /// Reads a room's persistent messages and whether a mentioned hire is replying.
+    Room {
+        room: String,
+        #[serde(default)]
+        after: Option<u64>,
+        /// Read messages before this id for history pagination.
+        #[serde(default)]
+        before: Option<u64>,
+        /// Maximum messages in a page; the backend applies a bounded default.
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     /// Tells a task's agent something: a running task hears it in its live
     /// session, one that waits in checks, review or ready goes back with it as
     /// a note, a queued one keeps it for its next run, and a finished one is an
@@ -394,11 +455,11 @@ pub enum LeadAct {
     Tell { text: String },
 }
 
-/// One message of a project's conversation, kept as a line of
-/// `<data>/talk/<project>.jsonl`.
+/// One message of a lead or direct-hire conversation, kept as a line of its
+/// JSONL file under `<data>/talk/` or `<data>/people/`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TalkMessage {
-    /// Counts up from 1 in each project's conversation.
+    /// Counts up from 1 in each conversation.
     pub id: u64,
     /// When it was posted, in epoch milliseconds.
     pub at: u64,
@@ -460,14 +521,228 @@ pub struct PlanTask {
     pub hire: Option<String>,
 }
 
-/// The answer to `Request::Conversation`.
+/// The answer to `Request::Conversation` or `Request::HireConversation`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConversationView {
     /// Oldest first.
     #[serde(default)]
     pub messages: Vec<TalkMessage>,
-    /// The lead is working on a reply.
+    /// The lead or hire is working on a reply.
     pub thinking: bool,
+}
+
+/// How much a manager may do after one of its reviews.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Autonomy {
+    /// Every proposed action waits for the owner.
+    #[default]
+    Supervised,
+    /// Feedback and messages may go ahead; other actions wait.
+    Balanced,
+    /// Ordinary task management may go ahead; cancellation still waits.
+    Autonomous,
+}
+
+/// Whether new runs use configured models or local zero-cost simulation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    #[default]
+    Live,
+    Simulation,
+}
+
+/// Persistent controls for the company's manager loop.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OperationsSettings {
+    pub autopilot: bool,
+    pub review_minutes: u64,
+    pub autonomy: Autonomy,
+    pub mode: RuntimeMode,
+}
+
+impl Default for OperationsSettings {
+    fn default() -> Self {
+        Self {
+            autopilot: false,
+            review_minutes: 15,
+            autonomy: Autonomy::Supervised,
+            mode: RuntimeMode::Live,
+        }
+    }
+}
+
+/// One review a project lead made of its work.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ManagerReview {
+    pub id: String,
+    pub project: String,
+    pub lead: String,
+    pub at: u64,
+    pub summary: String,
+    pub usd: f64,
+    /// The review gave no answer: the summary says why.
+    #[serde(default)]
+    pub failed: bool,
+}
+
+/// What a manager proposes to do. The same command executes after approval.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum ManagerAct {
+    StartGoal {
+        goal: String,
+        detail: String,
+    },
+    CreateTask {
+        title: String,
+        detail: String,
+        #[serde(default)]
+        hire: Option<String>,
+    },
+    SendBack {
+        task: String,
+        note: String,
+    },
+    Pause {
+        task: String,
+    },
+    Resume {
+        task: String,
+    },
+    Tell {
+        task: String,
+        text: String,
+    },
+    SetPriority {
+        task: String,
+        priority: u32,
+    },
+    SetDependencies {
+        task: String,
+        depends_on: Vec<String>,
+    },
+    Cancel {
+        task: String,
+    },
+}
+
+impl ManagerAct {
+    pub fn task(&self) -> Option<&str> {
+        match self {
+            Self::StartGoal { .. } | Self::CreateTask { .. } => None,
+            Self::SendBack { task, .. }
+            | Self::Pause { task }
+            | Self::Resume { task }
+            | Self::Tell { task, .. }
+            | Self::SetPriority { task, .. }
+            | Self::SetDependencies { task, .. }
+            | Self::Cancel { task } => Some(task),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::StartGoal { .. } => "Start a goal",
+            Self::CreateTask { .. } => "Delegate a task",
+            Self::SendBack { .. } => "Request changes",
+            Self::Pause { .. } => "Pause work",
+            Self::Resume { .. } => "Resume work",
+            Self::Tell { .. } => "Message an employee",
+            Self::SetPriority { .. } => "Change priority",
+            Self::SetDependencies { .. } => "Change dependencies",
+            Self::Cancel { .. } => "Cancel work",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationState {
+    #[default]
+    Pending,
+    /// Claimed by one executor; not another approval's to run.
+    Executing,
+    Executed,
+    Rejected,
+    Failed,
+}
+
+/// One proposed action and its outcome, kept as an audit record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ManagerAction {
+    pub id: String,
+    pub review: String,
+    pub project: String,
+    pub lead: String,
+    pub title: String,
+    pub reason: String,
+    pub act: ManagerAct,
+    pub state: OperationState,
+    pub at: u64,
+    #[serde(default)]
+    pub resolved_at: Option<u64>,
+    /// What came of it; while the action is pending, why it waits when that
+    /// is not simply the autonomy level.
+    #[serde(default)]
+    pub result: String,
+    /// Whether the studio went ahead with it on its own, by the autonomy
+    /// level, rather than on the owner's approval.
+    #[serde(default)]
+    pub automatic: bool,
+}
+
+/// What every company page needs of the manager loop.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OperationsView {
+    pub settings: OperationsSettings,
+    /// Projects whose leads are reviewing now.
+    #[serde(default)]
+    pub reviewing: Vec<String>,
+    /// Newest first, capped in the backend.
+    #[serde(default)]
+    pub reviews: Vec<ManagerReview>,
+    /// Newest first, including their outcome.
+    #[serde(default)]
+    pub actions: Vec<ManagerAction>,
+    /// A storage problem that blocks changes and new model runs.
+    #[serde(default)]
+    pub problem: Option<String>,
+}
+
+impl OperationsView {
+    pub fn pending(&self) -> usize {
+        self.actions
+            .iter()
+            .filter(|action| action.state == OperationState::Pending)
+            .count()
+    }
+}
+
+/// A room in the company sidebar and its latest activity.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoomSummary {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub last: Option<TalkMessage>,
+    pub count: u64,
+    pub thinking: bool,
+}
+
+/// One bounded page of a room's persistent history.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RoomView {
+    #[serde(default)]
+    pub messages: Vec<TalkMessage>,
+    pub thinking: bool,
+    pub total: u64,
+    pub has_more: bool,
 }
 
 /// A hire to make for a project, as its lead.
@@ -954,6 +1229,9 @@ pub struct OfficeView {
     /// The `OFFICE_KINDS` events of the last 24 hours, oldest first: the
     /// newest `RECENT_EVENTS` of them.
     pub events: Vec<StoredEvent>,
+    /// When each ticket's current active, held, asking or failed state began.
+    #[serde(default)]
+    pub state_since: BTreeMap<String, u64>,
     /// What each ticket has cost, as `Request::TicketSpends` answers.
     pub spend: BTreeMap<String, f64>,
     /// Landed work tickets whose goal branch is merged.
@@ -999,6 +1277,12 @@ pub struct OfficeView {
     /// project that was never set up that way is left out.
     #[serde(default)]
     pub setups: BTreeMap<String, SetupView>,
+    /// The manager review loop and its audit trail.
+    #[serde(default)]
+    pub operations: OperationsView,
+    /// Company and project rooms, in display order.
+    #[serde(default)]
+    pub rooms: Vec<RoomSummary>,
     /// When this was read, in epoch milliseconds.
     pub now: u64,
 }

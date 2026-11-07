@@ -67,6 +67,12 @@ pub struct Studio {
     releasing: releases::Releasing,
     /// What the conversations with the leads keep in memory.
     talk_state: talk::State,
+    /// What the direct conversations with every hire keep in memory.
+    people_state: people::State,
+    /// What the manager reviews and their audit trail keep in memory.
+    operations_state: operations::State,
+    /// What company and project rooms keep in memory.
+    rooms_state: rooms::State,
     /// What the standups keep in memory.
     standup_state: standup::State,
     /// What the setups through a lead keep in memory.
@@ -82,7 +88,10 @@ mod briefing;
 mod files;
 mod history;
 mod merging;
+mod operations;
+mod people;
 mod releases;
+mod rooms;
 mod runs;
 mod settings;
 mod setup;
@@ -98,7 +107,7 @@ mod tickets;
 pub(crate) use asks::Decision;
 use asks::PendingAsk;
 pub(crate) use merging::{Landing, MERGE_SOURCE, goal_of};
-pub(crate) use runs::{Stop, StopReason, quota_retry_at};
+pub(crate) use runs::{ExtraRun, Stop, StopReason, quota_retry_at};
 use tickets::{NewTicket, shorten};
 
 /// `studio.toml` as last read, and when to look at the file again.
@@ -201,7 +210,7 @@ impl Studio {
         releases::recover(&paths.data_dir, &config.projects);
         let modified = config_modified(&paths);
         let last_ask = store.max_ask_number()?;
-        Ok(Arc::new(Studio {
+        let studio = Arc::new(Studio {
             paths,
             config: Mutex::new(LiveConfig {
                 config: Arc::new(config),
@@ -222,12 +231,17 @@ impl Studio {
             settings: Mutex::new(()),
             releasing: releases::Releasing::default(),
             talk_state: talk::State::default(),
+            people_state: people::State::default(),
+            operations_state: operations::State::default(),
+            rooms_state: rooms::State::default(),
             standup_state: standup::State::default(),
             setup_state: setup::State::default(),
             shipcheck_state: shipcheck::State::default(),
             wake: Notify::new(),
             notifier,
-        }))
+        });
+        studio.recover_operations()?;
+        Ok(studio)
     }
 
     /// `studio.toml` as it is now. An edit takes effect within a second; a
@@ -389,11 +403,24 @@ impl Studio {
         Ok(failures)
     }
 
+    /// The hire's configured runtime. Coding, checks, task reviews, critic
+    /// gates, the approver and the router always use this, whatever the mode:
+    /// the simulation must never decide a permission or pass work.
     pub(crate) fn runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
         self.runtimes
             .get(name)
             .cloned()
             .ok_or_else(|| other(format!("no runtime called {name}")))
+    }
+
+    /// The runtime for the owner-facing model runs: conversations, rooms,
+    /// standups, setup runs and manager reviews. In simulation mode it is the
+    /// zero-cost simulated one. An unreadable operations file counts as live.
+    pub(crate) fn conversation_runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
+        if self.runtime_mode() == crate::api::RuntimeMode::Simulation {
+            return Ok(Arc::new(studio_runtime::SimulatedRuntime));
+        }
+        self.runtime(name)
     }
 
     pub async fn handle(self: &Arc<Self>, request: Request) -> Response {
@@ -402,6 +429,13 @@ impl Studio {
             Err(err) => return Response::err(err),
         };
         let response = self.handle_routed(request).await;
+        self.note_routed(routed, &response);
+        response
+    }
+
+    /// Writes down who a routed ticket went to, and charges it the router's
+    /// spend.
+    pub(crate) fn note_routed(&self, routed: Option<Routed>, response: &Response) {
         if let (Some(routed), true) = (routed, response.ok)
             && let Some(id) = response.data["id"].as_str()
         {
@@ -417,12 +451,11 @@ impl Studio {
                 let _ = self.record_spend(&reply.charge(&id));
             }
         }
-        response
     }
 
     /// Fills in the hire of a ticket request that names none, by asking the
     /// router (or taking the first engineer).
-    async fn route(
+    pub(crate) async fn route(
         self: &Arc<Self>,
         request: Request,
     ) -> Result<(Request, Option<Routed>), StudioError> {
@@ -491,6 +524,17 @@ impl Studio {
         {
             return match self.ask_owner(&ticket, &question, options).await {
                 Ok(text) => Response::ok(text),
+                Err(err) => Response::err(err),
+            };
+        }
+        if let Request::DecideOperation {
+            action,
+            approve,
+            note,
+        } = request
+        {
+            return match self.decide_operation(&action, approve, note).await {
+                Ok(response) => response,
                 Err(err) => Response::err(err),
             };
         }
@@ -698,6 +742,10 @@ impl Studio {
                 self.simple(&ticket, Event::ChangesRequested { detail: feedback })
             }
             Request::Resume { ticket } => self.simple(&ticket, Event::Resumed),
+            Request::SetPriority { ticket, priority } => self.set_priority(&ticket, priority),
+            Request::SetDependencies { ticket, depends_on } => {
+                self.set_dependencies(&ticket, depends_on)
+            }
             Request::Pause { ticket } => self.pause(&ticket),
             Request::TicketSpend { ticket } => {
                 let spent = lock(&self.store).ticket_spent(&TicketId::new(&ticket))?;
@@ -751,6 +799,24 @@ impl Studio {
             Request::Releases { project } => self.list_releases(project.as_deref()),
             Request::Talk { project, text } => self.talk(&project, &text),
             Request::Conversation { project, after } => self.conversation(&project, after),
+            Request::TalkToHire { hire, text } => self.talk_to_hire(&hire, &text),
+            Request::HireConversation { hire, after } => self.hire_conversation(&hire, after),
+            Request::ReviewOperations { project } => self.review_operations(&project),
+            // Decided in `handle_routed`: a new task may need routing.
+            Request::DecideOperation { .. } => Err(other("manager actions are decided async")),
+            Request::SetOperations {
+                autopilot,
+                review_minutes,
+                autonomy,
+                mode,
+            } => self.set_operations(autopilot, review_minutes, autonomy, mode),
+            Request::TalkToRoom { room, text } => self.talk_to_room(&room, &text),
+            Request::Room {
+                room,
+                after,
+                before,
+                limit,
+            } => self.room(&room, after, before, limit),
             Request::Tell { task, text } => self.tell(&task, &text),
             Request::LeadActs { project, task, act } => self.lead_acts(&project, &task, act),
             Request::SetupProject {

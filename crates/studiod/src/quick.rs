@@ -2,7 +2,7 @@
 //! router): cheap, tool-less, capped, and charged to a ticket.
 
 use crate::budget::Meter;
-use crate::studio::Studio;
+use crate::studio::{ExtraRun, Studio};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +14,17 @@ use studio_store::Spend;
 /// The most one quick call may cost.
 pub(crate) const QUICK_USD: f64 = 0.05;
 
+/// What a quick call is told about itself, in place of the runtime's large
+/// default prompt, then the hire's own words.
+fn system_prompt(hire_prompt: &str) -> String {
+    let base = "You work for a studio and answer one question in one turn. You have no \
+                tools and need none: reply with text only, in the format asked.";
+    match hire_prompt.trim() {
+        "" => base.to_string(),
+        prompt => format!("{base}\n\n{prompt}"),
+    }
+}
+
 /// How long one quick call may take.
 const TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -22,6 +33,7 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 pub(crate) struct Reply {
     pub answer: Result<String, String>,
     spend: Spend,
+    _reservation: ExtraRun,
 }
 
 impl Reply {
@@ -48,7 +60,8 @@ pub(crate) async fn ask(
     ask_capped(studio, for_ticket, project, hire, cwd, prompt, QUICK_USD).await
 }
 
-/// `ask`, with the call allowed to cost at most `cap_usd`.
+/// `ask`, with the call allowed to cost at most `cap_usd`. It runs on the
+/// hire's configured runtime, in every mode.
 pub(crate) async fn ask_capped(
     studio: &Arc<Studio>,
     for_ticket: Option<&TicketId>,
@@ -58,18 +71,72 @@ pub(crate) async fn ask_capped(
     prompt: &str,
     cap_usd: f64,
 ) -> Result<Reply, String> {
+    ask_on(
+        studio, false, for_ticket, project, hire, cwd, prompt, cap_usd,
+    )
+    .await
+}
+
+/// A quick call for the owner (a standup): the simulated runtime answers it
+/// in simulation mode.
+pub(crate) async fn ask_conversation(
+    studio: &Arc<Studio>,
+    ticket: &TicketId,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<String, String> {
+    let reply = ask_on(
+        studio,
+        true,
+        Some(ticket),
+        project,
+        hire,
+        cwd,
+        prompt,
+        cap_usd,
+    )
+    .await?;
+    studio
+        .record_spend(&reply.charge(ticket))
+        .map_err(|e| e.to_string())?;
+    reply.answer
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ask_on(
+    studio: &Arc<Studio>,
+    conversation: bool,
+    for_ticket: Option<&TicketId>,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<Reply, String> {
     let role = &hire.role;
     let for_ticket = for_ticket.map(TicketId::to_string).unwrap_or_default();
-    if !studio.has_headroom(project, hire, cap_usd, &for_ticket) {
+    let Some(reservation) = studio
+        .reserve_extra(project, hire, cap_usd, &for_ticket, &for_ticket)
+        .map_err(|error| error.to_string())?
+    else {
         return Err(format!("no budget left for the {role}"));
+    };
+    let runtime = if conversation {
+        studio.conversation_runtime(&hire.runtime)
+    } else {
+        studio.runtime(&hire.runtime)
     }
-    let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())?;
     let spec = RunSpec {
         cwd: cwd.to_path_buf(),
         prompt: prompt.to_string(),
         model: Some(hire.model.clone()).filter(|m| !m.is_empty()),
         effort: hire.effort.clone(),
-        append_system_prompt: Some(hire.prompt.clone()).filter(|p| !p.trim().is_empty()),
+        system_prompt: Some(system_prompt(&hire.prompt)),
+        lean: true,
         max_turns: Some(1),
         max_budget_usd: Some(cap_usd),
         strict_mcp: true,
@@ -178,6 +245,7 @@ pub(crate) async fn ask_capped(
     Ok(Reply {
         answer: outcome.map(|()| text),
         spend,
+        _reservation: reservation,
     })
 }
 
@@ -208,4 +276,15 @@ pub(crate) async fn ask_model_capped(
         .record_spend(&reply.charge(ticket))
         .map_err(|e| e.to_string())?;
     reply.answer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::system_prompt;
+
+    #[test]
+    fn the_system_prompt_is_short_and_keeps_the_hires_words() {
+        assert!(system_prompt("  ").len() < 300);
+        assert!(system_prompt("Be strict.").ends_with("\n\nBe strict."));
+    }
 }

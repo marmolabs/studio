@@ -19,7 +19,11 @@ pub enum Here {
     Hq,
     /// A lead's conversation, by project.
     Lead(String),
+    /// A direct conversation, by hire.
+    Person(String),
     Office,
+    Company,
+    Rooms,
     New,
     Studio,
 }
@@ -101,9 +105,11 @@ async fn sidebar(team: Team, here: Here) -> topcoat::Result<impl View> {
         _ => None,
     };
     let at = |here_is: Here| (here == here_is).then_some("page");
-    let (hq, office, new, settings) = (
+    let (hq, office, company, rooms, new, settings) = (
         at(Here::Hq),
         at(Here::Office),
+        at(Here::Company),
+        at(Here::Rooms),
         at(Here::New),
         at(Here::Studio),
     );
@@ -142,6 +148,14 @@ async fn sidebar(team: Team, here: Here) -> topcoat::Result<impl View> {
                 </li>
             </ul>
             <div class="tm-dock mt-auto flex flex-col gap-3 border-t border-line px-4 py-3.5">
+                <a href="/company" class="flex items-center gap-2 rounded-lg px-2 py-2 text-[13px] font-medium text-fg-2 hover:bg-bg-3 aria-[current=page]:bg-bg-4 aria-[current=page]:text-fg" aria-current=(company)>
+                    ui::icon(name: "chart-column")
+                    <span class="tm-words">"Company & decisions"</span>
+                </a>
+                <a href="/rooms/company" class="flex items-center gap-2 rounded-lg px-2 py-2 text-[13px] font-medium text-fg-2 hover:bg-bg-3 aria-[current=page]:bg-bg-4 aria-[current=page]:text-fg" aria-current=(rooms)>
+                    ui::icon(name: "message-square-text")
+                    <span class="tm-words">"Company rooms"</span>
+                </a>
                 mini_floor(floor: floor, current: office)
                 <div class="tm-spend">spend(spent: spent_today, limit: daily_usd)</div>
             </div>

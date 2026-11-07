@@ -68,8 +68,7 @@ pub enum Role {
     Critic,
     Approver,
     Router,
-    /// Leads a project: plans its work, hands it out and answers routine
-    /// asks.
+    /// Leads a project: plans its work, hands it out and checks it.
     Lead,
     /// The owner, at the top of the company.
     Owner,

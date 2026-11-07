@@ -203,7 +203,7 @@ impl Studio {
         } else {
             self.paths.data_dir.clone()
         };
-        let said = quick::ask_model_capped(
+        let said = quick::ask_conversation(
             self,
             &talk_task(&entry.name),
             &entry.name,
@@ -422,9 +422,12 @@ mod tests {
         assert_eq!(specs[0].max_budget_usd, Some(STANDUP_USD));
         assert_eq!(specs[0].max_turns, Some(1));
         assert_eq!(specs[0].effort, None);
-        assert_eq!(
-            specs[0].append_system_prompt.as_deref(),
-            Some("You lead the shop.")
+        assert!(specs[0].lean);
+        assert!(
+            specs[0]
+                .system_prompt
+                .as_deref()
+                .is_some_and(|p| p.ends_with("You lead the shop."))
         );
         assert!(specs[0].prompt.contains("Add a cart drawer"));
         assert!(specs[0].prompt.contains("Fix the total"));

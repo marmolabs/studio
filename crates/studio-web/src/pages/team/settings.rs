@@ -6,7 +6,7 @@ use topcoat::view::{Child, View, component, view};
 use studiod::api::Request;
 
 use super::shell::{self, Here};
-use super::{Team, faces};
+use super::{Team, faces, operations};
 use crate::client::Member;
 use crate::pages::office::controls::{Budget, desks_view, hire_view, limits_form, open_view};
 use crate::pages::office::model::Role;
@@ -59,6 +59,12 @@ pub async fn settings(
         shell::page(team: team, here: Here::Studio,
             <div class="mx-auto flex w-full max-w-[640px] flex-col gap-5">
                 <h1 class=(ui::PAGE_TITLE)>"Studio settings"</h1>
+                part(title: "Manager autonomy", note: "How often leads review their projects, and what they may do without you.",
+                    if let Some(problem) = office.operations.problem.clone() {
+                        <p class="rounded-lg border border-bad-line bg-bad-bg px-3 py-2 text-[13px] text-bad-fg" role="alert">(problem) " New model runs and setting changes are blocked."</p>
+                    }
+                    operations::controls(settings: office.operations.settings.clone())
+                )
                 part(title: "Money", note: "What the studio may spend. Agents stop when a limit is reached.",
                     <div class="flex flex-col gap-1.5" title="Spend over the last 24 hours, against the daily limit">
                         <span class="flex items-baseline justify-between text-[13px]">

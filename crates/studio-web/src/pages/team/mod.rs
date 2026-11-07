@@ -5,18 +5,24 @@
 //! This file holds the routes and the model the sidebar is drawn from. Each
 //! page is a file of its own and draws itself whole, frame included: `hq` (the
 //! morning round-up), `talk` (a conversation, with the `sheet` that slides over
-//! it), `office` (the company floor), `new` (hiring a lead for a new project,
-//! and the card of how it runs) and `settings`. `faces` draws a person's
+//! it), `office` (the company floor), `company` (the work map and scorecard),
+//! `rooms` (company and project conversations), `operations` (manager reviews
+//! and controls), `new` (hiring a lead) and `settings`. `faces` draws a person's
 //! portrait, and `stream` keeps every page up to date.
 //!
-//! The pages live at `/` (HQ), `/leads/{project}`, `/office`, `/new` and
-//! `/studio`. The addresses the studio had before redirect to them.
+//! The pages live at `/`, `/leads/{project}`, `/people/{hire}`,
+//! `/rooms/{room}`, `/office`, `/company`, `/new` and `/studio`. The addresses
+//! the studio had before redirect to them.
 
 mod clock;
+mod company;
 mod faces;
 mod hq;
 mod new;
 mod office;
+mod operations;
+mod person;
+mod rooms;
 mod settings;
 mod sheet;
 mod shell;
@@ -107,7 +113,7 @@ impl Team {
                 .iter()
                 .map(|project| LeadEntry::of(office, &projects, project))
                 .collect(),
-            needs: facts::owner_needs(office) + ready,
+            needs: facts::owner_needs(office) + ready + office.operations.pending(),
             spent_today: office.status.spent_24h,
             daily_usd: office.status.daily_usd,
             floor: Floor::of(office),
@@ -153,7 +159,16 @@ impl LeadEntry {
             // What waits for the owner, and the work ready to ship, which the
             // office does not count.
             needs: facts::project_needs(office, project)
-                + hq::ships(office, project, &Sizes::new()).len(),
+                + hq::ships(office, project, &Sizes::new()).len()
+                + office
+                    .operations
+                    .actions
+                    .iter()
+                    .filter(|action| {
+                        action.project == project
+                            && action.state == studiod::api::OperationState::Pending
+                    })
+                    .count(),
         }
     }
 }
@@ -267,8 +282,22 @@ fn progress(office: &Office, project: &str, phase: Phase) -> f64 {
 /// anything a folder's name can, so each byte outside letters, digits and
 /// `-_.~` is escaped.
 pub(crate) fn lead_href(project: &str) -> String {
-    let mut href = String::from("/leads/");
-    for byte in project.bytes() {
+    escaped_path("/leads/", project)
+}
+
+/// The address of a hire's direct conversation.
+pub(crate) fn person_href(hire: &str) -> String {
+    escaped_path("/people/", hire)
+}
+
+/// The address of a company or project room.
+pub(crate) fn room_href(room: &str) -> String {
+    escaped_path("/rooms/", room)
+}
+
+fn escaped_path(prefix: &str, id: &str) -> String {
+    let mut href = String::from(prefix);
+    for byte in id.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 href.push(char::from(byte));
@@ -279,11 +308,13 @@ pub(crate) fn lead_href(project: &str) -> String {
     href
 }
 
-/// Whether `path` is a team page, which draws the team sidebar itself: HQ at
-/// the root and the pages under `/leads`, `/office`, `/new` and `/studio`.
+/// Whether `path` is a team page, which draws the team sidebar itself.
 pub fn owns(path: &str) -> bool {
     let first = path.trim_matches('/').split('/').next().unwrap_or_default();
-    matches!(first, "" | "leads" | "office" | "new" | "studio")
+    matches!(
+        first,
+        "" | "leads" | "people" | "rooms" | "office" | "company" | "new" | "studio"
+    )
 }
 
 /// Whether the layout opens the one stream of the team pages for the page at
@@ -418,6 +449,45 @@ async fn lead_page(cx: &Cx) -> topcoat::Result<impl View> {
     Ok(view! { talk::talk(team: team, parts: parts, sheet: sheet) })
 }
 
+/// A direct conversation with one hire.
+#[page("/people/{id}")]
+async fn person_page(cx: &Cx) -> topcoat::Result<impl View> {
+    let hire = path_param::<Id>(cx).to_owned();
+    let config = app_context::<AppConfig>(cx);
+    let (office, team) = read(cx).await?;
+    let conversation = person::read(config, &hire).await;
+    let Some(parts) = person::parts(&office, &hire, conversation) else {
+        return Err(not_found().into());
+    };
+    Ok(view! { person::person_view(team: team, parts: parts) })
+}
+
+#[route(GET "/rooms")]
+async fn rooms_home() -> topcoat::Result<Response> {
+    Err(redirect_permanent("/rooms/company").into())
+}
+
+#[query_params(error = bad_request)]
+struct RoomHistory {
+    before: Option<u64>,
+}
+
+/// A persistent company or project room.
+#[page("/rooms/{id}")]
+async fn room_page(cx: &Cx) -> topcoat::Result<impl View> {
+    let room = path_param::<Id>(cx).to_owned();
+    let before = query_params::<RoomHistory>(cx)?.before;
+    let config = app_context::<AppConfig>(cx);
+    let (office, team) = read(cx).await?;
+    if !office.rooms.iter().any(|summary| summary.id == room) {
+        return Err(not_found().into());
+    }
+    let conversation = rooms::read(config, &room, before).await;
+    Ok(
+        view! { rooms::room_view(team: team, office: office, room: room, conversation: conversation, before: before) },
+    )
+}
+
 #[query_params(error = bad_request)]
 struct Turned {
     /// The corner the floor is seen from, in quarter turns.
@@ -425,6 +495,13 @@ struct Turned {
     /// What is picked on the floor, as a click writes it, such as
     /// `projects/shop`.
     pick: Option<String>,
+}
+
+/// The company's live work map and manager decision log.
+#[page("/company")]
+async fn company_page(cx: &Cx) -> topcoat::Result<impl View> {
+    let (office, team) = read(cx).await?;
+    Ok(view! { company::company(team: team, office: office) })
 }
 
 /// The company floor, seen from the corner `?turn=` names, with what `?pick=`
@@ -493,6 +570,44 @@ async fn talk_to_lead(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchEl
     }
 }
 
+/// The owner's message to one hire's read-only conversation.
+#[route(POST "/people/{id}/talk")]
+async fn talk_to_person(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let hire = path_param::<Id>(cx).to_owned();
+    let text = form.text.trim();
+    if text.is_empty() {
+        return ui::notice(cx, "Write something to send.".into(), true).await;
+    }
+    let request = Request::TalkToHire {
+        hire,
+        text: text.to_string(),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => Ok(ui::clear_notice()),
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+/// The owner's message or announcement in a room.
+#[route(POST "/rooms/{id}/talk")]
+async fn talk_to_room(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let room = path_param::<Id>(cx).to_owned();
+    let text = form.text.trim();
+    if text.is_empty() {
+        return ui::notice(cx, "Write something to send.".into(), true).await;
+    }
+    let request = Request::TalkToRoom {
+        room,
+        text: text.to_string(),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => Ok(ui::clear_notice()),
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
 /// A message to the agent at work on a task.
 #[route(POST "/tasks/{id}/tell")]
 async fn tell_task(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchElements> {
@@ -508,6 +623,130 @@ async fn tell_task(cx: &Cx, Form(form): Form<Say>) -> topcoat::Result<PatchEleme
     };
     match client::call::<serde_json::Value>(&config.socket, request).await {
         Ok(_) => ui::notice(cx, format!("Told the agent on {task}."), false).await,
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct OperationDecision {
+    decision: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[route(POST "/operations/{id}/decision")]
+async fn decide_operation(
+    cx: &Cx,
+    Form(form): Form<OperationDecision>,
+) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let action = path_param::<Id>(cx).to_owned();
+    let approve = match form.decision.as_str() {
+        "approve" => true,
+        "reject" => false,
+        _ => return ui::notice(cx, "Choose approve or reject.".into(), true).await,
+    };
+    let request = Request::DecideOperation {
+        action,
+        approve,
+        note: form.note.filter(|note| !note.trim().is_empty()),
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => {
+            ui::notice(
+                cx,
+                if approve {
+                    "Approved. The manager's action is complete.".into()
+                } else {
+                    "Rejected. Nothing was changed.".into()
+                },
+                false,
+            )
+            .await
+        }
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct ReviewProject {
+    project: String,
+}
+
+#[route(POST "/operations/review")]
+async fn review_operations(
+    cx: &Cx,
+    Form(form): Form<ReviewProject>,
+) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let request = Request::ReviewOperations {
+        project: form.project,
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => ui::notice(cx, "The manager is reviewing the project.".into(), false).await,
+        Err(err) => ui::notice(cx, err.to_string(), true).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct OperationControls {
+    #[serde(default)]
+    autopilot: String,
+    #[serde(default)]
+    review_minutes: String,
+    #[serde(default)]
+    autonomy: String,
+    #[serde(default)]
+    mode: String,
+}
+
+#[route(POST "/operations/settings")]
+async fn operation_controls(
+    cx: &Cx,
+    Form(form): Form<OperationControls>,
+) -> topcoat::Result<PatchElements> {
+    let config = app_context::<AppConfig>(cx);
+    let autopilot = match form.autopilot.trim() {
+        "" => None,
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => return ui::notice(cx, "Choose whether automatic reviews run.".into(), true).await,
+    };
+    let review_minutes = match form.review_minutes.trim() {
+        "" => None,
+        minutes => match minutes.parse::<u64>() {
+            Ok(minutes @ 5..=1440) => Some(minutes),
+            _ => {
+                return ui::notice(
+                    cx,
+                    "Reviews must be between 5 minutes and 24 hours apart.".into(),
+                    true,
+                )
+                .await;
+            }
+        },
+    };
+    let autonomy = match form.autonomy.trim() {
+        "" => None,
+        "supervised" => Some(studiod::api::Autonomy::Supervised),
+        "balanced" => Some(studiod::api::Autonomy::Balanced),
+        "autonomous" => Some(studiod::api::Autonomy::Autonomous),
+        _ => return ui::notice(cx, "Choose an autonomy level.".into(), true).await,
+    };
+    let mode = match form.mode.trim() {
+        "" => None,
+        "live" => Some(studiod::api::RuntimeMode::Live),
+        "simulation" => Some(studiod::api::RuntimeMode::Simulation),
+        _ => return ui::notice(cx, "Choose live or simulation.".into(), true).await,
+    };
+    let request = Request::SetOperations {
+        autopilot,
+        review_minutes,
+        autonomy,
+        mode,
+    };
+    match client::call::<serde_json::Value>(&config.socket, request).await {
+        Ok(_) => ui::notice(cx, "Manager controls saved.".into(), false).await,
         Err(err) => ui::notice(cx, err.to_string(), true).await,
     }
 }
@@ -602,6 +841,43 @@ mod tests {
     use serde_json::{Value, json};
     use studio_core::ticket::Ticket;
     use studiod::api::ProjectView;
+
+    /// The picture names a page asks for in `icon(name: ...)`, with the file
+    /// each is in.
+    fn icons_asked_for(dir: &std::path::Path, found: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                icons_asked_for(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                // The page itself, not its tests.
+                let page = text.split("#[cfg(test)]").next().unwrap_or_default();
+                for call in page.split("icon(name:").skip(1) {
+                    let args = call.split(')').next().unwrap_or_default();
+                    for name in args.split('"').skip(1).step_by(2) {
+                        found.push((name.to_string(), path.display().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_picture_a_team_page_draws_is_in_the_icon_sheet() {
+        let mut asked = Vec::new();
+        icons_asked_for(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages/team"),
+            &mut asked,
+        );
+        assert!(asked.len() > 10, "{asked:?}");
+        for (name, file) in asked {
+            assert!(
+                crate::statics::ICONS.contains(&format!("id=\"i-{name}\"")),
+                "{file} draws {name}, which the icon sheet does not have"
+            );
+        }
+    }
 
     fn ticket(id: &str, project: &str, state: Value, extra: Value) -> Ticket {
         let mut fields = json!({
@@ -849,14 +1125,27 @@ mod tests {
 
     #[test]
     fn the_team_pages_are_told_from_the_rest() {
-        for path in ["/", "/leads/shop", "/office", "/new", "/studio"] {
+        for path in [
+            "/",
+            "/leads/shop",
+            "/people/dev",
+            "/office",
+            "/new",
+            "/studio",
+        ] {
             assert!(owns(path), "{path}");
         }
         for path in ["/hires", "/rules", "/tickets/GAME-1", "/newt", "/hq"] {
             assert!(!owns(path), "{path}");
         }
         // The layout opens the one stream for the pages it draws.
-        for path in ["/", "/leads/shop?look=SHOP-1", "/new", "/studio"] {
+        for path in [
+            "/",
+            "/leads/shop?look=SHOP-1",
+            "/people/dev",
+            "/new",
+            "/studio",
+        ] {
             assert!(live(path), "{path}");
         }
         // The office opens it itself, again whenever the pick or the corner
@@ -911,8 +1200,10 @@ mod tests {
     }
 
     #[test]
-    fn a_projects_name_is_escaped_in_the_address_of_its_conversation() {
+    fn conversation_addresses_escape_their_project_or_hire() {
         assert_eq!(lead_href("shop"), "/leads/shop");
+        assert_eq!(person_href("dev"), "/people/dev");
+        assert_eq!(person_href("a/b?c#d"), "/people/a%2Fb%3Fc%23d");
         assert_eq!(
             lead_href("pocket-garden_2.0~x"),
             "/leads/pocket-garden_2.0~x"
