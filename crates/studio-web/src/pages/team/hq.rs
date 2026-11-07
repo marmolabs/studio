@@ -516,7 +516,7 @@ pub(super) async fn card(
 #[component]
 async fn no_lead_row(project: String) -> topcoat::Result<impl View> {
     Ok(view! {
-        card(tone: "lead", title: "No lead yet", meta: view! { "A lead plans the work and answers the team's questions." },
+        card(tone: "lead", title: "No lead yet", meta: view! { "A lead plans the work, hands it out and checks it." },
             <a href=(lead_href(&project)) class=(ui::BUTTON_SM)>"Give " (project.clone()) " a lead"</a>
         )
     })

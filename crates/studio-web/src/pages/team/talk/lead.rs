@@ -75,7 +75,7 @@ pub async fn no_lead(project: String, hiring: Hiring) -> topcoat::Result<impl Vi
                     <span class="grid size-7 shrink-0 place-items-center rounded-lg bg-run-bg text-run-fg">ui::icon(name: "users")</span>
                     <span class="min-w-0 [overflow-wrap:anywhere]">
                         <b class="font-semibold">(project.clone()) " has no lead yet."</b>
-                        " A lead plans the work, hands it out and answers the team's routine questions."
+                        " A lead plans the work, hands it out and checks it."
                     </span>
                 </p>
                 <div class=(format!("grid gap-5 max-[760px]:gap-3 {columns}"))>
@@ -317,7 +317,7 @@ mod tests {
         let text = text_of(&html);
         assert!(
             text.contains(
-                "shop has no lead yet. A lead plans the work, hands it out and answers the team's routine questions."
+                "shop has no lead yet. A lead plans the work, hands it out and checks it."
             ),
             "{text}"
         );

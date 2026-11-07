@@ -98,9 +98,8 @@ budget limits low.
 ### Leads, milestones and releases
 
 - The studio works like a company. You are the owner; a project can have a
-  lead: a hire you talk to, who plans its goals, assigns its tasks, answers its
-  team's routine questions in place of the producer, router and approver, and
-  sends you what it can't decide. Name one with `lead` in `studio.toml`, with
+  lead: a hire you talk to, who plans its goals, assigns its tasks, checks what
+  comes back in place of the producer, and sends you what it can't decide. Name one with `lead` in `studio.toml`, with
   `studio lead <project> [hire]`, by hiring one from New project in the web UI,
   or from the project's conversation (below). The lead needs
   `tools: [file_ticket]` to plan, and never answers for its own tasks.

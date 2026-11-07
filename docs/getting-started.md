@@ -309,9 +309,9 @@ first.
 
 A lead is a hire who runs a project for you: you talk to it, and it plans the
 project's goals, hands its tasks to the team, checks what comes back and
-answers the team's routine questions, and sends you what it can't decide. It is
-optional; without one, the producer, the router and the approver do those jobs
-for every project, and there is nobody to talk to. (A lead you hire from
+sends you what it can't decide. It is optional; without one, the producer does
+the planning for every project (the cheap router and approver serve every
+project either way), and there is nobody to talk to. (A lead you hire from
 **New project** is set up for you.)
 
 In the web UI, a project that has no lead says so on HQ, under its line, with a
@@ -343,8 +343,8 @@ model: opus
 tools: [file_ticket]
 ---
 You lead this project. Plan its goals into small tasks with acceptance
-criteria, give each to the teammate who suits it, and answer routine
-questions. Pass up to the owner anything dangerous or irreversible.
+criteria, give each to the teammate who suits it, and check what comes back.
+Pass up to the owner anything dangerous or irreversible.
 ```
 
 Then name it, in a terminal or in the project's conversation in the web UI (the
