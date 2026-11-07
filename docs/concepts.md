@@ -183,7 +183,10 @@ without individual approval:
 - **Balanced**: feedback and employee messages may go ahead; everything else
   waits.
 - **Autonomous**: ordinary task management may go ahead; cancellation still
-  waits.
+  waits. Starting a goal or making a task goes ahead on its own for at most 3
+  a day in each project (counted over the last 24 hours). Beyond that they wait
+  for your approval, with the reason "over today's limit for automatic new
+  work".
 
 Automatic reviews are off by default, run only while the office is open, and use
 the configured interval (5 minutes to 24 hours). A review is told which

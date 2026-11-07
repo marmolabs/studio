@@ -189,7 +189,8 @@ The levels are:
 - **Supervised**: approve every action yourself.
 - **Balanced**: feedback and employee messages may run; the rest wait for you.
 - **Autonomous**: ordinary task management may run; cancellation still needs
-  you.
+  you. New goals and tasks start on their own for at most 3 a day in each
+  project; more wait for you.
 
 Reviews stop while the office is closed. Each is capped at $0.75 and counts
 against the relevant budgets. Shipping, publishing and budget changes always
