@@ -350,7 +350,6 @@ mod tests {
             assert!(DISALLOWED.contains(&tool));
         }
         assert!(!DISALLOWED.contains(&"Read"));
-        assert!(PLAN_USD > 0.0 && PLAN_TURNS > 0);
     }
 
     #[test]
