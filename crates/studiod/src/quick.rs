@@ -49,9 +49,55 @@ pub(crate) async fn ask(
     ask_capped(studio, for_ticket, project, hire, cwd, prompt, QUICK_USD).await
 }
 
-/// `ask`, with the call allowed to cost at most `cap_usd`.
+/// `ask`, with the call allowed to cost at most `cap_usd`. It runs on the
+/// hire's configured runtime, in every mode.
 pub(crate) async fn ask_capped(
     studio: &Arc<Studio>,
+    for_ticket: Option<&TicketId>,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<Reply, String> {
+    ask_on(
+        studio, false, for_ticket, project, hire, cwd, prompt, cap_usd,
+    )
+    .await
+}
+
+/// A quick call for the owner (a standup): the simulated runtime answers it
+/// in simulation mode.
+pub(crate) async fn ask_conversation(
+    studio: &Arc<Studio>,
+    ticket: &TicketId,
+    project: &str,
+    hire: &Hire,
+    cwd: &Path,
+    prompt: &str,
+    cap_usd: f64,
+) -> Result<String, String> {
+    let reply = ask_on(
+        studio,
+        true,
+        Some(ticket),
+        project,
+        hire,
+        cwd,
+        prompt,
+        cap_usd,
+    )
+    .await?;
+    studio
+        .record_spend(&reply.charge(ticket))
+        .map_err(|e| e.to_string())?;
+    reply.answer
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ask_on(
+    studio: &Arc<Studio>,
+    conversation: bool,
     for_ticket: Option<&TicketId>,
     project: &str,
     hire: &Hire,
@@ -67,7 +113,12 @@ pub(crate) async fn ask_capped(
     else {
         return Err(format!("no budget left for the {role}"));
     };
-    let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
+    let runtime = if conversation {
+        studio.conversation_runtime(&hire.runtime)
+    } else {
+        studio.runtime(&hire.runtime)
+    }
+    .map_err(|e| e.to_string())?;
     let spec = RunSpec {
         cwd: cwd.to_path_buf(),
         prompt: prompt.to_string(),

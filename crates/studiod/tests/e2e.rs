@@ -4329,3 +4329,52 @@ async fn a_goal_the_lead_started_gets_its_plan_card_when_the_plan_lands() {
     assert_eq!(titles, ["Boss sprite", "Boss AI"]);
     assert!(messages.iter().any(|m| m["text"] == "I started the goal."));
 }
+
+async fn simulate(studio: &Arc<Studio>) {
+    ok(
+        studio,
+        Request::SetOperations {
+            autopilot: None,
+            review_minutes: None,
+            autonomy: None,
+            mode: Some(studiod::api::RuntimeMode::Simulation),
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_coding_task_in_simulation_mode_runs_on_the_configured_runtime() {
+    let setup = setup("");
+    let dev = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, dev.clone());
+    simulate(&studio).await;
+    run_to_ready(&studio, "Demo").await;
+    assert_eq!(dev.specs().len(), 1, "the hire's own runtime did the work");
+    assert!(dev.specs()[0].prompt.contains("Demo"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_escalated_ask_in_simulation_mode_goes_to_the_configured_approver() {
+    let setup = setup("");
+    let approver = FakeRuntime::new(vec![reply(
+        "It publishes.\nDECISION: OWNER: it publishes the crate",
+    )]);
+    let studio = with_approver(&setup, bash_then_finish(), approver.clone());
+    simulate(&studio).await;
+    ok(&studio, create("Demo")).await;
+    studio.spawn_scheduler();
+    asks_open(&studio, 1).await;
+    assert_eq!(approver.specs().len(), 1, "the real approver decided");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_operations_file_does_not_stop_task_runs() {
+    let setup = setup("");
+    fs::create_dir_all(&setup.paths.data_dir).unwrap();
+    fs::write(setup.paths.data_dir.join("operations.json"), "not json").unwrap();
+    let dev = FakeRuntime::new(vec![finished(0.01, true, false)]);
+    let studio = studio(&setup, dev.clone());
+    run_to_ready(&studio, "Demo").await;
+    assert_eq!(dev.specs().len(), 1);
+}

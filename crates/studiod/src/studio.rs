@@ -403,14 +403,24 @@ impl Studio {
         Ok(failures)
     }
 
+    /// The hire's configured runtime. Coding, checks, task reviews, critic
+    /// gates, the approver and the router always use this, whatever the mode:
+    /// the simulation must never decide a permission or pass work.
     pub(crate) fn runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
-        if self.runtime_mode()? == crate::api::RuntimeMode::Simulation {
-            return Ok(Arc::new(studio_runtime::SimulatedRuntime));
-        }
         self.runtimes
             .get(name)
             .cloned()
             .ok_or_else(|| other(format!("no runtime called {name}")))
+    }
+
+    /// The runtime for the owner-facing model runs: conversations, rooms,
+    /// standups, setup runs and manager reviews. In simulation mode it is the
+    /// zero-cost simulated one. An unreadable operations file counts as live.
+    pub(crate) fn conversation_runtime(&self, name: &str) -> Result<Arc<dyn Runtime>, StudioError> {
+        if self.runtime_mode() == crate::api::RuntimeMode::Simulation {
+            return Ok(Arc::new(studio_runtime::SimulatedRuntime));
+        }
+        self.runtime(name)
     }
 
     pub async fn handle(self: &Arc<Self>, request: Request) -> Response {

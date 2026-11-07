@@ -203,7 +203,7 @@ impl Studio {
         } else {
             self.paths.data_dir.clone()
         };
-        let said = quick::ask_model_capped(
+        let said = quick::ask_conversation(
             self,
             &talk_task(&entry.name),
             &entry.name,
