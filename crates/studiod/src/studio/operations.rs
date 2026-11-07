@@ -927,7 +927,7 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(home.path().join("hires")).unwrap();
-        for (id, role) in [("nora", "lead"), ("dev", "engineer")] {
+        for (id, role) in [("nora", "lead"), ("dev", "engineer"), ("router", "router")] {
             std::fs::write(
                 home.path().join(format!("hires/{id}.md")),
                 format!("---\nname: {id}\nrole: {role}\nruntime: fake\nmodel: fake-1\n---\nYou work here.\n"),
