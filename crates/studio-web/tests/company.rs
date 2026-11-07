@@ -314,3 +314,32 @@ async fn an_earlier_page_of_a_room_has_a_way_back_to_the_latest() {
         "{earlier}"
     );
 }
+
+#[tokio::test]
+async fn a_person_page_has_their_work_on_a_phone_and_a_lead_has_a_way_to_their_project() {
+    let web = Web::start().await;
+    let html = web.page("/people/dev").await;
+    let text = text_of(&html);
+    assert!(
+        by_id(&html, "person-work")
+            .inner_html()
+            .contains("Cart drawer"),
+        "{html}"
+    );
+    assert!(text.contains("Current and recent work"), "{text}");
+    assert!(text.contains("shop · Queued"), "{text}");
+    assert!(!text.contains("read-only"), "{text}");
+    assert!(!text.contains("Open the shop conversation"), "{text}");
+    // The two lists have their own ids, so a patch finds the right one.
+    assert!(html.contains("id=\"person-rail\""), "{html}");
+    assert!(html.contains("id=\"person-rail-phone\""), "{html}");
+
+    let lead = web.page("/people/nora").await;
+    assert!(
+        named(&lead, "a")
+            .iter()
+            .any(|a| a.attr_is("href", "/leads/shop")
+                && a.text().contains("Open the shop conversation")),
+        "{lead}"
+    );
+}

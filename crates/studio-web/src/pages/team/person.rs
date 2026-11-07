@@ -7,7 +7,7 @@ use topcoat::view::{Child, View, component, view};
 use super::shell::{self, Here};
 use super::talk::fill;
 use super::talk::thread::Person;
-use super::{Team, clock, faces, person_href};
+use super::{Team, clock, faces, lead_href, person_href};
 use crate::pages::office::Office;
 use crate::{AppConfig, client, ui};
 
@@ -22,6 +22,9 @@ pub struct Parts {
     pub person: Person,
     pub role: String,
     pub model: String,
+    /// The project this person leads, when they lead one: it has its own
+    /// conversation with them.
+    pub leads: Option<String>,
     pub tint: usize,
     pub now: u64,
     pub conversation: ConversationView,
@@ -84,6 +87,11 @@ pub fn parts(office: &Office, hire: &str, conversation: ConversationView) -> Opt
         person,
         role: member.role.clone(),
         model: member.model.clone(),
+        leads: office
+            .projects
+            .iter()
+            .find(|project| project.lead.as_deref() == Some(hire))
+            .map(|project| project.name.clone()),
         tint,
         now: office.now,
         conversation,
@@ -103,6 +111,7 @@ pub async fn person_view(team: Team, parts: Parts) -> topcoat::Result<impl View>
         person: who,
         role,
         model,
+        leads,
         tint,
         now,
         conversation,
@@ -122,11 +131,13 @@ pub async fn person_view(team: Team, parts: Parts) -> topcoat::Result<impl View>
     } else {
         "Assigned"
     };
+    let (rail_current, rail_recent) = (current.clone(), recent.clone());
+    let phone_name = rail_name.clone();
     let send = composer_send(&hire);
     Ok(view! {
         shell::page(team: team, here: Here::Person(hire.clone()),
             rail: Child::new(view! {
-                work_rail(current: current, recent: recent, name: rail_name)
+                work_rail(current: rail_current, recent: rail_recent, name: rail_name, id: "person-rail", scope: "person")
             }),
             <div id="person-page" class="talk-page" data-signals="{_draft: '', _said: '', _bad: false}">
                 <header id="person-head" class="flex flex-wrap items-center gap-x-3.5 gap-y-2 border-b border-line px-7 py-3.5 max-[760px]:px-4">
@@ -135,13 +146,24 @@ pub async fn person_view(team: Team, parts: Parts) -> topcoat::Result<impl View>
                         <h1 class="text-[17px] font-semibold leading-6">"Talk to " (name.clone())</h1>
                         <span class="text-[13px] capitalize text-fg-3">(role) " · " (model)</span>
                     </div>
+                    if let Some(project) = leads {
+                        <a href=(lead_href(&project)) class=(format!("{} ml-auto", ui::BUTTON_SM))>"Open the " (project.clone()) " conversation"</a>
+                    }
                     ui::pill(tone: if status == "Working" { "run" } else { "neutral" }, label: status)
                 </header>
+                // The rail is not shown on a phone, so the same list opens here.
+                <details id="person-work" data-preserve-attr="open" class="group/work hidden border-b border-line max-[760px]:block">
+                    <summary class="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[13.5px] font-medium [&::-webkit-details-marker]:hidden">
+                        <span class="text-fg-3 transition-transform group-open/work:rotate-90">ui::icon(name: "chevron-right", small: true)</span>
+                        "Current and recent work"
+                    </summary>
+                    work_rail(current: current, recent: recent, name: phone_name, id: "person-rail-phone", scope: "person-phone")
+                </details>
                 <div id="talk-thread" class="talk-thread" aria-label=(format!("The conversation with {name}"))>
                     <div class="mx-auto flex w-full max-w-[780px] flex-col gap-5 px-7 py-6 max-[760px]:px-4">
                         if conversation.messages.is_empty() {
                             <div class="rounded-xl border border-line bg-bg-2 px-4 py-3 text-[14px] text-fg-2">
-                                "Ask " (name.clone()) " about their work. This conversation is read-only; use an active task's message control to steer its run."
+                                "Ask " (name.clone()) " about their work. They answer from their current and recent tasks, and nothing changes. To steer a task that is running, use the message button beside it in the list of work."
                             </div>
                         }
                         for message in conversation.messages {
@@ -213,16 +235,18 @@ async fn work_rail(
     current: Vec<Ticket>,
     recent: Vec<Ticket>,
     name: String,
+    id: &'static str,
+    scope: &'static str,
 ) -> topcoat::Result<impl View> {
     Ok(view! {
-        <div id="person-rail" class="flex flex-col gap-6 px-5 py-5" aria-label=(format!("{name}'s work"))>
+        <div id=(id) class="flex flex-col gap-6 px-5 py-5" aria-label=(format!("{name}'s work"))>
             <section class="flex flex-col gap-3">
                 <h2 class="text-[12px] font-medium uppercase text-fg-3">"Current work"</h2>
                 if current.is_empty() {
                     <p class="text-[13px] text-fg-3">"No open assignment right now."</p>
                 } else {
                     <ul class="flex flex-col gap-3">
-                        for task in current { <li>task_row(task: task, name: name.clone(), live: true)</li> }
+                        for task in current { <li>task_row(task: task, name: name.clone(), live: true, scope: scope)</li> }
                     </ul>
                 }
             </section>
@@ -230,7 +254,7 @@ async fn work_rail(
                 <section class="flex flex-col gap-3 border-t border-line pt-5">
                     <h2 class="text-[12px] font-medium uppercase text-fg-3">"Recent work"</h2>
                     <ul class="flex flex-col gap-3">
-                        for task in recent { <li>task_row(task: task, name: name.clone(), live: false)</li> }
+                        for task in recent { <li>task_row(task: task, name: name.clone(), live: false, scope: scope)</li> }
                     </ul>
                 </section>
             }
@@ -239,7 +263,12 @@ async fn work_rail(
 }
 
 #[component]
-async fn task_row(task: Ticket, name: String, live: bool) -> topcoat::Result<impl View> {
+async fn task_row(
+    task: Ticket,
+    name: String,
+    live: bool,
+    scope: &'static str,
+) -> topcoat::Result<impl View> {
     let id = task.id.to_string();
     let running = live && matches!(task.state.kind(), "claimed" | "working");
     let tell = format!("@post('/tasks/{id}/tell', {{contentType: 'form'}}); el.reset()");
@@ -247,15 +276,15 @@ async fn task_row(task: Ticket, name: String, live: bool) -> topcoat::Result<imp
     let line = Child::new(view! {
         <a href=(href) class="min-w-0 flex-1">
             <span class="block [overflow-wrap:anywhere]">(task.title)</span>
-            <span class="block text-[12.5px] text-fg-3">(task.project.to_string()) " · " (ui::shown(&task.state))</span>
+            <span class="block text-[12.5px] text-fg-3">(task.project.to_string()) " · " (ui::look(ui::shown(&task.state)).label)</span>
         </a>
     });
     Ok(view! {
         if running {
-            <details id=(format!("person-tell-{id}")) data-preserve-attr="open" class="group">
+            <details id=(format!("{scope}-tell-{id}")) data-preserve-attr="open" class="group">
                 <summary class="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden" title=(format!("Message the active run of {name}"))>
                     (line)
-                    <span class="mt-1 text-fg-3 group-hover:text-fg group-open:text-fg">ui::icon(name: "message-square-text", small: true)</span>
+                    <span class="-mt-0.5 grid size-7 shrink-0 place-items-center rounded-md text-fg-3 hover:bg-bg-3 hover:text-fg group-open:bg-bg-3 group-open:text-fg" title="Tell the active run">ui::icon(name: "message-square-text", small: true)</span>
                 </summary>
                 <form class="mt-2 flex items-center gap-2" data-on:submit=(tell)>
                     <input name="text" required="" autocomplete="off" aria-label=(format!("Tell the active run of {name}")) placeholder="Tell the active run" class=(format!("{} text-[13px]", ui::INPUT))>
