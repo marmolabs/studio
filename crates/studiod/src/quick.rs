@@ -14,6 +14,17 @@ use studio_store::Spend;
 /// The most one quick call may cost.
 pub(crate) const QUICK_USD: f64 = 0.05;
 
+/// What a quick call is told about itself, in place of the runtime's large
+/// default prompt, then the hire's own words.
+fn system_prompt(hire_prompt: &str) -> String {
+    let base = "You work for a studio and answer one question in one turn. You have no \
+                tools and need none: reply with text only, in the format asked.";
+    match hire_prompt.trim() {
+        "" => base.to_string(),
+        prompt => format!("{base}\n\n{prompt}"),
+    }
+}
+
 /// How long one quick call may take.
 const TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -124,7 +135,8 @@ async fn ask_on(
         prompt: prompt.to_string(),
         model: Some(hire.model.clone()).filter(|m| !m.is_empty()),
         effort: hire.effort.clone(),
-        append_system_prompt: Some(hire.prompt.clone()).filter(|p| !p.trim().is_empty()),
+        system_prompt: Some(system_prompt(&hire.prompt)),
+        lean: true,
         max_turns: Some(1),
         max_budget_usd: Some(cap_usd),
         strict_mcp: true,
@@ -264,4 +276,15 @@ pub(crate) async fn ask_model_capped(
         .record_spend(&reply.charge(ticket))
         .map_err(|e| e.to_string())?;
     reply.answer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::system_prompt;
+
+    #[test]
+    fn the_system_prompt_is_short_and_keeps_the_hires_words() {
+        assert!(system_prompt("  ").len() < 300);
+        assert!(system_prompt("Be strict.").ends_with("\n\nBe strict."));
+    }
 }
