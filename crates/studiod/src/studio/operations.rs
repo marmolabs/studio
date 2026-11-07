@@ -473,7 +473,7 @@ impl Studio {
                 None,
             )?;
             self.post_room(
-                &entry.name,
+                &self.project_room(&entry.name),
                 TalkFrom::Lead {
                     hire: lead.to_string(),
                 },
@@ -722,7 +722,7 @@ impl Studio {
             None,
         )?;
         self.post_room(
-            &action.project,
+            &self.project_room(&action.project),
             TalkFrom::Studio,
             &format!("Manager action: {}. {result}", action.title),
         )?;
