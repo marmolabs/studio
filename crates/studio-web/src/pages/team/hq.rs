@@ -461,7 +461,7 @@ async fn lead_line(line: Line) -> topcoat::Result<impl View> {
                     ship_row(ship: ship, project: project.clone())
                 }
                 for action in actions {
-                    super::operations::action_row(action: action)
+                    super::operations::action_row(action: action, by: entry.name.clone())
                 }
                 if let Some(release) = release {
                     release_row(release: release, project: project.clone())

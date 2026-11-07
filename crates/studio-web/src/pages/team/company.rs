@@ -315,6 +315,7 @@ fn projects(office: &Office, team: &Team) -> Vec<Project> {
                 .iter()
                 .any(|project| project == &entry.project);
             let graph = dependency_graph(office, &entry.project);
+
             Project {
                 entry,
                 goals,
@@ -406,8 +407,15 @@ fn dependency_graph(office: &Office, project: &str) -> Vec<GraphNode> {
             .max_by_key(|dependency| depths.get(*dependency).copied().unwrap_or(0))
             .cloned();
     }
+    // Only tasks that wait for another, or that another waits for, are in the
+    // graph; the rest are in the list above it.
+    let awaited: HashSet<&String> = edges.values().flatten().collect();
     tickets
         .into_iter()
+        .filter(|ticket| {
+            let id = ticket.id.to_string();
+            edges.get(&id).is_some_and(|waits| !waits.is_empty()) || awaited.contains(&id)
+        })
         .map(|ticket| {
             let id = ticket.id.to_string();
             GraphNode {
@@ -472,6 +480,15 @@ async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
         .cost_per_deliverable
         .map(ui::usd)
         .unwrap_or_else(|| "—".to_string());
+    // Someone with nothing to do and nothing done is a line, not a row.
+    let (workload, idle): (Vec<_>, Vec<_>) = scorecard.workload.into_iter().partition(|person| {
+        person.active + person.queued + person.delivered > 0 || person.spend > 0.0
+    });
+    let idle = idle
+        .into_iter()
+        .map(|person| person.person.name)
+        .collect::<Vec<_>>()
+        .join(", ");
     let blocked = format!(
         "{} · {}",
         scorecard.blocked,
@@ -481,16 +498,16 @@ async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
         <section id="scorecard" class="flex flex-col gap-4" aria-label="Company scorecard">
             <div>
                 <h2 class="text-[18px] font-semibold">"Last 24 hours"</h2>
-                <p class="m-0 text-[13px] text-fg-3">"Delivery and cost from actual ticket events and the spend ledger. Blocked time is the age of work still blocked now."</p>
+                <p class="m-0 text-[13px] text-fg-3">"What was delivered and what it cost. Blocked time is how long the work that is blocked now has been waiting."</p>
             </div>
             <div class="grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[520px]:grid-cols-1">
-                metric(label: "Delivered", value: scorecard.delivered.to_string(), note: "work tickets landed")
-                metric(label: "Median cycle time", value: cycle, note: "created to landed")
-                metric(label: "Sent back", value: format!("{} · {}%", scorecard.rework, scorecard.rework_percent), note: "failed checks or reviews")
-                metric(label: "Cost per delivery", value: cost, note: "all company spend ÷ deliveries")
+                metric(label: "Delivered", value: scorecard.delivered.to_string(), note: "tasks landed")
+                metric(label: "Typical time to deliver", value: cycle, note: "from asked for to landed")
+                metric(label: "Sent back", value: format!("{} · {}%", scorecard.rework, scorecard.rework_percent), note: "after failed checks or reviews")
+                metric(label: "Cost per delivery", value: cost, note: "all spend divided by deliveries")
             </div>
             <div class="grid grid-cols-2 gap-3 max-[520px]:grid-cols-1">
-                metric(label: "Blocked now", value: blocked, note: "tasks · accumulated age")
+                metric(label: "Blocked now", value: blocked, note: "tasks · time waiting")
                 metric(label: "Company spend", value: ui::usd(scorecard.spent), note: "against the daily budget")
             </div>
             if !scorecard.projects.is_empty() {
@@ -511,8 +528,9 @@ async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
             }
             <div class="flex flex-col gap-2">
                 <h3 class="text-[13px] font-semibold">"Employee workload"</h3>
+                if !workload.is_empty() {
                 <ul class="m-0 flex list-none flex-col rounded-xl border border-line bg-bg-2 p-0 px-4">
-                    for person in scorecard.workload {
+                    for person in workload {
                         <li class="flex flex-wrap items-center gap-3 border-t border-line py-2.5 first:border-t-0">
                             <a href=(person_href(&person.person.hire)) class="flex min-w-[150px] flex-1 items-center gap-2.5">
                                 faces::face(seed: person.person.hire.clone(), role: person.person.role, tint: 0, size: 28)
@@ -521,13 +539,19 @@ async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
                                     <span class="block truncate text-[11.5px] text-fg-3">(person.role)</span>
                                 </span>
                             </a>
-                            <span class="text-[12px] text-fg-2"><b class="tabular-nums">(person.active)</b> " active"</span>
-                            <span class="text-[12px] text-fg-3"><b class="tabular-nums">(person.queued)</b> " queued"</span>
-                            <span class="text-[12px] text-fg-3"><b class="tabular-nums">(person.delivered)</b> " delivered"</span>
-                            <span class="w-[70px] text-right text-[12px] tabular-nums text-fg-3">(ui::usd(person.spend))</span>
+                            <span class="flex flex-wrap items-center gap-x-3 gap-y-0.5 max-[520px]:basis-full max-[520px]:pl-[38px]">
+                                <span class="text-[12px] text-fg-2"><b class="tabular-nums">(person.active)</b> " active"</span>
+                                <span class="text-[12px] text-fg-3"><b class="tabular-nums">(person.queued)</b> " queued"</span>
+                                <span class="text-[12px] text-fg-3"><b class="tabular-nums">(person.delivered)</b> " delivered"</span>
+                                <span class="min-w-[56px] text-[12px] tabular-nums text-fg-3 sm:text-right">(ui::usd(person.spend))</span>
+                            </span>
                         </li>
                     }
                 </ul>
+                }
+                if !idle.is_empty() {
+                    <p class="m-0 text-[12.5px] text-fg-3">"Nothing assigned yet: " (idle)</p>
+                }
             </div>
         </section>
     })
@@ -633,7 +657,10 @@ async fn project_map(project: Project) -> topcoat::Result<impl View> {
 }
 
 #[component]
-async fn manager_log(actions: Vec<ManagerAction>, now: u64) -> topcoat::Result<impl View> {
+async fn manager_log(
+    actions: Vec<(ManagerAction, String)>,
+    now: u64,
+) -> topcoat::Result<impl View> {
     Ok(view! {
         <section id="manager-log" class="flex flex-col gap-3" aria-label="Manager decision log">
             <div>
@@ -644,7 +671,7 @@ async fn manager_log(actions: Vec<ManagerAction>, now: u64) -> topcoat::Result<i
                 <p class="rounded-xl border border-dashed border-line-2 px-4 py-5 text-[13px] text-fg-3">"Run a manager review to start the decision log."</p>
             } else {
                 <ol class="m-0 flex list-none flex-col rounded-xl border border-line bg-bg-2 p-0 px-4">
-                    for action in actions.into_iter().take(30) {
+                    for (action, lead) in actions.into_iter().take(30) {
                         <li class="border-t border-line py-3 first:border-t-0">
                             <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                                 <b class="text-[13.5px] font-semibold">(action.title)</b>
@@ -656,14 +683,17 @@ async fn manager_log(actions: Vec<ManagerAction>, now: u64) -> topcoat::Result<i
                                     OperationState::Failed => "text-bad-fg",
                                     OperationState::Rejected => "text-fg-3",
                                 }))>(match action.state {
-                                    OperationState::Pending => "Needs approval",
-                                    OperationState::Executing => "Executing",
-                                    OperationState::Executed => "Executed",
+                                    OperationState::Pending => "Waiting for you",
+                                    OperationState::Executing => "Running now",
+                                    OperationState::Executed => "Done",
                                     OperationState::Rejected => "Rejected",
                                     OperationState::Failed => "Failed",
                                 })</span>
                             </div>
-                            <p class="m-0 mt-1 text-[12.5px] text-fg-3">(action.act.label()) " · " (action.lead) if !action.result.is_empty() { " · " (action.result) }</p>
+                            <p class="m-0 mt-1 text-[12.5px] text-fg-3">(action.act.label()) " · " (lead) if !action.result.is_empty() { " · " (action.result) }</p>
+                            if let Some(detail) = operations::detail(&action.act) {
+                                <p class="m-0 mt-1 whitespace-pre-wrap text-[12.5px] text-fg-2 [overflow-wrap:anywhere]">(detail)</p>
+                            }
                         </li>
                     }
                 </ol>
@@ -683,7 +713,12 @@ pub async fn company(team: Team, office: Office) -> topcoat::Result<impl View> {
         .count();
     let working = office.status.at_work() as usize;
     let pending = office.operations.pending();
-    let actions = office.operations.actions.clone();
+    let actions = office
+        .operations
+        .actions
+        .iter()
+        .map(|action| (action.clone(), office.name_of(&action.lead)))
+        .collect::<Vec<_>>();
     let now = office.now;
     Ok(view! {
         shell::page(team: team, here: Here::Company,
@@ -699,9 +734,9 @@ pub async fn company(team: Team, office: Office) -> topcoat::Result<impl View> {
                     <p class="rounded-xl border border-bad-line bg-bad-bg px-4 py-3 text-[13px] text-bad-fg" role="alert">(problem) " New model runs and setting changes are blocked."</p>
                 }
                 <div class="grid grid-cols-3 gap-3 max-[600px]:grid-cols-1" aria-label="Company now">
-                    <div class=(ui::CARD)><b class="block text-[24px] font-semibold tabular-nums">(working)</b><span class="text-[12.5px] text-fg-3">"being worked on"</span></div>
-                    <div class=(ui::CARD)><b class="block text-[24px] font-semibold tabular-nums">(blocked)</b><span class="text-[12.5px] text-fg-3">"blocked or failed"</span></div>
-                    <div class=(ui::CARD)><b class="block text-[24px] font-semibold tabular-nums">(pending)</b><span class="text-[12.5px] text-fg-3">"manager decisions for you"</span></div>
+                    <div class=(format!("{} px-4 py-3", ui::CARD))><b class="block text-[24px] font-semibold tabular-nums">(working)</b><span class="text-[12.5px] text-fg-3">"being worked on"</span></div>
+                    <div class=(format!("{} px-4 py-3", ui::CARD))><b class="block text-[24px] font-semibold tabular-nums">(blocked)</b><span class="text-[12.5px] text-fg-3">"blocked or failed"</span></div>
+                    <div class=(format!("{} px-4 py-3", ui::CARD))><b class="block text-[24px] font-semibold tabular-nums">(pending)</b><span class="text-[12.5px] text-fg-3">"manager decisions for you"</span></div>
                 </div>
                 scorecard_view(scorecard: scorecard)
                 <section id="work-map" class="flex flex-col gap-4" aria-label="Live work map">
@@ -831,6 +866,41 @@ mod tests {
         );
         assert!(graph.iter().all(|node| node.critical));
         assert_eq!(graph[1].work.next, "Blocked by S-1");
+    }
+
+    #[test]
+    fn tasks_that_wait_for_nothing_are_not_a_graph() {
+        let ticket = |id: &str, depends_on: &[&str]| {
+            serde_json::from_value::<Ticket>(json!({
+                "id":id, "project":"shop", "title":id, "goal":"",
+                "hire":"dev", "state":"queued", "attempts":0,
+                "base_branch":"main", "created_at":1, "depends_on":depends_on,
+            }))
+            .unwrap()
+        };
+        // Four open tasks, two of which wait for one another; a dependency
+        // that has landed (or is not here) is not a line in the graph.
+        let office = Office {
+            tickets: vec![
+                ticket("S-1", &[]),
+                ticket("S-2", &["S-1"]),
+                ticket("S-3", &[]),
+                ticket("S-4", &["S-9"]),
+            ],
+            ..Office::default()
+        };
+        let ids = |graph: Vec<GraphNode>| {
+            graph
+                .into_iter()
+                .map(|node| node.work.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(dependency_graph(&office, "shop")), ["S-1", "S-2"]);
+        let alone = Office {
+            tickets: vec![ticket("S-1", &[]), ticket("S-3", &[])],
+            ..Office::default()
+        };
+        assert!(dependency_graph(&alone, "shop").is_empty());
     }
 
     #[test]
