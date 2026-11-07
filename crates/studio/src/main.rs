@@ -1331,14 +1331,20 @@ mod tests {
              "calls": 19, "usd": 1.61},
             {"kind": "coding", "project": "shop", "hire": "dev", "model": "sonnet",
              "calls": 1, "usd": 1.0},
+            {"kind": "earlier", "project": "shop", "hire": "dev", "model": "claude-opus-5-5",
+             "calls": 2, "usd": 0.5},
+            {"kind": "earlier", "project": "shop", "hire": "dev", "model": "opus",
+             "calls": 1, "usd": 0.25},
         ]);
         let lines = kind_lines(&by_kind);
         assert_eq!(lines[0], "Where the money went, last 24h");
         assert!(lines[1].contains("Approvals") && lines[1].contains("19 calls"));
-        assert!(lines[1].contains("$1.61") && lines[1].contains("opus"));
+        assert!(lines[1].contains("$1.61") && lines[1].contains("Opus"));
         assert!(lines[2].contains("1 call ") && lines[2].contains("Coding"));
+        // Raw ids are said as people say them, once each.
+        assert!(lines[3].contains("Earlier runs") && lines[3].trim_end().ends_with("Opus"));
         assert_eq!(
-            lines[3],
+            lines[4],
             "Approvals cost $1.61 in the last 24 hours, more than the coding, $1.00."
         );
         assert!(kind_lines(&json!([])).is_empty());
