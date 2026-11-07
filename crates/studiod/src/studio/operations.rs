@@ -23,6 +23,8 @@ const REVIEW_USD: f64 = 0.75;
 const REVIEW_TURNS: u32 = 12;
 const MAX_ACTIONS: usize = 12;
 const MAX_REVIEWS: usize = 50;
+/// The most proposals that may wait for the owner in one project.
+const MAX_PENDING: usize = 20;
 const MAX_AUDIT: usize = 100;
 const LOOK_EVERY: Duration = Duration::from_secs(30);
 
@@ -248,7 +250,13 @@ impl Studio {
                 .iter()
                 .find(|review| review.project == entry.name)
                 .is_some_and(|review| review.at > due);
+            // A project whose proposals still wait for the owner is not
+            // asked to propose more.
+            let waiting = latest.actions.iter().any(|action| {
+                action.project == entry.name && action.state == OperationState::Pending
+            });
             if !reviewed
+                && !waiting
                 && self.lead_of(&entry.name).is_some()
                 && let Err(error) = self.review_operations(&entry.name)
             {
@@ -316,7 +324,21 @@ impl Studio {
         self.update_operations(|saved| {
             saved.next_id = saved.next_id.saturating_add(1);
             review.id = format!("r{}", saved.next_id);
+            // What already waits for the owner is not proposed again, and
+            // only so much may wait at once.
+            let mut waiting = saved
+                .actions
+                .iter()
+                .filter(|action| {
+                    action.project == entry.name && action.state == OperationState::Pending
+                })
+                .map(|action| action.act.clone())
+                .collect::<Vec<_>>();
             for action in proposed {
+                if waiting.len() >= MAX_PENDING || waiting.contains(&action.act) {
+                    continue;
+                }
+                waiting.push(action.act.clone());
                 saved.next_id = saved.next_id.saturating_add(1);
                 let title = if action.title.trim().is_empty() {
                     action.act.label().to_string()
@@ -651,6 +673,7 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
         work.push("- No tasks yet.".to_string());
     }
     let budget = studio.config().budget.daily_usd;
+    let waiting = waiting_lines(studio, &entry.name);
     format!(
         "You are the manager of {project}. Review the project and decide what should happen next. \
          Read files when useful. Return only a JSON object with this shape: \
@@ -663,10 +686,32 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
          Propose no more than four useful actions; an empty actions array is correct when no action is needed. \
          Never invent task or hire ids. Do not propose shipping, releasing, changing files, or spending money. \
          Prefer unblocking existing work over creating more. Use plain text inside the JSON, not markdown.\n\n\
-         Project: {project}\nManager hire id: {lead}\nCompany daily budget: ${budget:.2}\n\n## Work\n{work}",
+         Project: {project}\nManager hire id: {lead}\nCompany daily budget: ${budget:.2}\n\n## Work\n{work}\n\n\
+         ## Already proposed, still waiting for the owner\n\
+         Do not propose these again, in any wording.\n{waiting}",
         project = entry.name,
-        work = work.join("\n")
+        work = work.join("\n"),
+        waiting = waiting.join("\n"),
     )
+}
+
+/// One line for each proposal of `project` that still waits for the owner.
+fn waiting_lines(studio: &Studio, project: &str) -> Vec<String> {
+    let mut lines = studio
+        .operations()
+        .actions
+        .iter()
+        .filter(|action| action.project == project && action.state == OperationState::Pending)
+        .take(MAX_PENDING)
+        .map(|action| {
+            let act = serde_json::to_string(&action.act).unwrap_or_default();
+            format!("- {}: {act}", action.title.replace('\n', " "))
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push("- Nothing is waiting.".to_string());
+    }
+    lines
 }
 
 fn parse_review(text: &str) -> Option<ModelReview> {
@@ -825,6 +870,111 @@ mod tests {
             budget.data["spent_24h"]["by_ticket"]["shop/operations"],
             0.04
         );
+    }
+
+    const DRAWER: &str = r#"{"summary":"Checkout needs work.","actions":[{"title":"Build the drawer","act":{"do":"create_task","title":"Cart drawer","detail":"Keyboard accessible.","hire":"dev"}}]}"#;
+
+    fn pending(company: &Company) -> Vec<ManagerAction> {
+        company
+            .studio
+            .operations()
+            .actions
+            .into_iter()
+            .filter(|action| action.state == OperationState::Pending)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_second_review_is_told_what_waits_and_never_duplicates_it() {
+        let company = company(DRAWER);
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        assert!(!company.runtime.specs()[0].prompt.contains("Cart drawer"),);
+        company.studio.run_review(&entry).await;
+        let prompt = &company.runtime.specs()[1].prompt;
+        assert!(prompt.contains("still waiting for the owner"), "{prompt}");
+        assert!(prompt.contains("Build the drawer"), "{prompt}");
+        assert!(prompt.contains("Do not propose these again"), "{prompt}");
+        // The model proposed the same act again; it was dropped.
+        assert_eq!(company.studio.operations().reviews.len(), 2);
+        assert_eq!(pending(&company).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_more_than_twenty_proposals_wait_in_a_project() {
+        let company = company(DRAWER);
+        company
+            .studio
+            .update_operations(|saved| {
+                for id in 0..MAX_PENDING {
+                    saved.actions.push(ManagerAction {
+                        id: format!("a{id}"),
+                        review: "r1".into(),
+                        project: "shop".into(),
+                        lead: "nora".into(),
+                        title: format!("Pause {id}"),
+                        reason: String::new(),
+                        act: ManagerAct::StartGoal {
+                            goal: format!("Goal {id}"),
+                            detail: String::new(),
+                        },
+                        state: OperationState::Pending,
+                        at: now_ms(),
+                        resolved_at: None,
+                        result: String::new(),
+                    });
+                }
+            })
+            .unwrap();
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        assert_eq!(pending(&company).len(), MAX_PENDING);
+        assert_eq!(company.studio.operations().reviews.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_automatic_review_skips_a_project_with_proposals_waiting() {
+        let company = company(DRAWER);
+        company
+            .studio
+            .set_operations(Some(true), Some(5), None, None)
+            .unwrap();
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let look = |studio: &Arc<Studio>| {
+            *lock(&studio.operations_state.looked) =
+                Instant::now().checked_sub(LOOK_EVERY + Duration::from_secs(1));
+            studio.spawn_operations();
+        };
+        let old = |studio: &Arc<Studio>| {
+            studio
+                .update_operations(|saved| saved.reviews[0].at = 0)
+                .unwrap();
+        };
+        old(&company.studio);
+        look(&company.studio);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(company.studio.operations().reviews.len(), 1);
+        assert_eq!(company.runtime.specs().len(), 1);
+
+        // Once the owner has decided, the project is reviewed again.
+        let action = pending(&company)[0].id.clone();
+        company
+            .studio
+            .handle(Request::DecideOperation {
+                action,
+                approve: false,
+                note: None,
+            })
+            .await;
+        look(&company.studio);
+        for _ in 0..200 {
+            if company.studio.operations().reviews.len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(company.studio.operations().reviews.len(), 2);
     }
 
     #[tokio::test]
