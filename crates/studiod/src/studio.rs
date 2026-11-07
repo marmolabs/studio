@@ -429,6 +429,13 @@ impl Studio {
             Err(err) => return Response::err(err),
         };
         let response = self.handle_routed(request).await;
+        self.note_routed(routed, &response);
+        response
+    }
+
+    /// Writes down who a routed ticket went to, and charges it the router's
+    /// spend.
+    pub(crate) fn note_routed(&self, routed: Option<Routed>, response: &Response) {
         if let (Some(routed), true) = (routed, response.ok)
             && let Some(id) = response.data["id"].as_str()
         {
@@ -444,12 +451,11 @@ impl Studio {
                 let _ = self.record_spend(&reply.charge(&id));
             }
         }
-        response
     }
 
     /// Fills in the hire of a ticket request that names none, by asking the
     /// router (or taking the first engineer).
-    async fn route(
+    pub(crate) async fn route(
         self: &Arc<Self>,
         request: Request,
     ) -> Result<(Request, Option<Routed>), StudioError> {
@@ -518,6 +524,17 @@ impl Studio {
         {
             return match self.ask_owner(&ticket, &question, options).await {
                 Ok(text) => Response::ok(text),
+                Err(err) => Response::err(err),
+            };
+        }
+        if let Request::DecideOperation {
+            action,
+            approve,
+            note,
+        } = request
+        {
+            return match self.decide_operation(&action, approve, note).await {
+                Ok(response) => response,
                 Err(err) => Response::err(err),
             };
         }
@@ -785,11 +802,8 @@ impl Studio {
             Request::TalkToHire { hire, text } => self.talk_to_hire(&hire, &text),
             Request::HireConversation { hire, after } => self.hire_conversation(&hire, after),
             Request::ReviewOperations { project } => self.review_operations(&project),
-            Request::DecideOperation {
-                action,
-                approve,
-                note,
-            } => self.decide_operation(&action, approve, note),
+            // Decided in `handle_routed`: a new task may need routing.
+            Request::DecideOperation { .. } => Err(other("manager actions are decided async")),
             Request::SetOperations {
                 autopilot,
                 review_minutes,

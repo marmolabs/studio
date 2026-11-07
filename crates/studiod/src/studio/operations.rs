@@ -283,12 +283,15 @@ impl Studio {
             },
             Err(error) => (format!("Review failed: {error}"), Vec::new(), 0.0),
         };
-        if let Err(error) = self.save_review(entry, &lead.id.0, at, summary, proposed, usd) {
+        if let Err(error) = self
+            .save_review(entry, &lead.id.0, at, summary, proposed, usd)
+            .await
+        {
             eprintln!("operations: {}: {error}", entry.name);
         }
     }
 
-    fn save_review(
+    async fn save_review(
         self: &Arc<Self>,
         entry: &ProjectEntry,
         lead: &str,
@@ -356,7 +359,7 @@ impl Studio {
         }
         for action in actions {
             if automatic(autonomy, &action.act)
-                && let Err(error) = self.execute_operation(&action.id, None)
+                && let Err(error) = self.execute_operation(&action.id, None).await
             {
                 eprintln!("operations: {}: {error}", action.id);
             }
@@ -395,14 +398,14 @@ impl Studio {
         }
     }
 
-    pub(super) fn decide_operation(
+    pub(super) async fn decide_operation(
         self: &Arc<Self>,
         action: &str,
         approve: bool,
         note: Option<String>,
     ) -> Result<Response, StudioError> {
         if approve {
-            self.execute_operation(action, note)
+            self.execute_operation(action, note).await
         } else {
             let action = self.change_operation(action, |action| {
                 action.state = OperationState::Rejected;
@@ -467,7 +470,19 @@ impl Studio {
         found.ok_or_else(|| other(format!("manager action {id} is not executing")))
     }
 
-    fn execute_operation(
+    /// Makes the ticket `request` asks for, asking the router first when it
+    /// names no hire.
+    async fn create_routed_task(
+        self: &Arc<Self>,
+        request: Request,
+    ) -> Result<Response, StudioError> {
+        let (request, routed) = self.route(request).await?;
+        let response = self.dispatch(request)?;
+        self.note_routed(routed, &response);
+        Ok(response)
+    }
+
+    async fn execute_operation(
         self: &Arc<Self>,
         id: &str,
         note: Option<String>,
@@ -486,14 +501,18 @@ impl Studio {
                 title,
                 detail,
                 hire,
-            } => self.dispatch(Request::CreateTicket {
-                project,
-                title: title.clone(),
-                goal: String::new(),
-                hire: hire.clone().unwrap_or_else(|| action.lead.clone()),
-                base: None,
-                detail: detail.clone(),
-            }),
+            } => {
+                // No hire means the router picks, as for any new ticket.
+                self.create_routed_task(Request::CreateTicket {
+                    project,
+                    title: title.clone(),
+                    goal: String::new(),
+                    hire: hire.clone().unwrap_or_default(),
+                    base: None,
+                    detail: detail.clone(),
+                })
+                .await
+            }
             ManagerAct::SendBack { task, note } => self.lead_acts(
                 &project,
                 task,
@@ -681,6 +700,11 @@ mod tests {
     }
 
     fn company(reply: &str) -> Company {
+        company_replying(&[reply])
+    }
+
+    /// A company whose lead says `replies` in turn, the last one repeating.
+    fn company_replying(replies: &[&str]) -> Company {
         let home = tempfile::tempdir().unwrap();
         let repo = home.path().join("shop");
         std::fs::create_dir_all(&repo).unwrap();
@@ -702,16 +726,23 @@ mod tests {
             )
             .unwrap();
         }
-        let runtime = FakeRuntime::new(vec![RunEvent::Finished {
-            outcome: Outcome::Success,
-            session: Some("s1".into()),
-            cost: Cost {
-                usd: 0.04,
-                reported: true,
-                ..Cost::default()
-            },
-            summary: Some(reply.into()),
-        }]);
+        let runtime = FakeRuntime::sequence(
+            replies
+                .iter()
+                .map(|reply| {
+                    vec![RunEvent::Finished {
+                        outcome: Outcome::Success,
+                        session: Some("s1".into()),
+                        cost: Cost {
+                            usd: 0.04,
+                            reported: true,
+                            ..Cost::default()
+                        },
+                        summary: Some((*reply).into()),
+                    }]
+                })
+                .collect(),
+        );
         let mut runtimes: HashMap<String, Arc<dyn Runtime>> = HashMap::new();
         runtimes.insert("fake".into(), Arc::new(runtime.clone()));
         let studio = Studio::open(
@@ -794,6 +825,33 @@ mod tests {
             budget.data["spent_24h"]["by_ticket"]["shop/operations"],
             0.04
         );
+    }
+
+    #[tokio::test]
+    async fn a_task_with_no_hire_goes_to_the_router_not_to_the_lead() {
+        let company = company_replying(&[
+            r#"{"summary":"Checkout needs work.","actions":[{"title":"Build the drawer","act":{"do":"create_task","title":"Cart drawer","detail":"Keyboard accessible."}}]}"#,
+            "Dev builds interfaces.\nHIRE: dev",
+        ]);
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let action = company.studio.operations().actions[0].id.clone();
+        let approved = company
+            .studio
+            .handle(Request::DecideOperation {
+                action,
+                approve: true,
+                note: None,
+            })
+            .await;
+        assert!(approved.ok, "{:?}", approved.error);
+        let tickets = lock(&company.studio.store).tickets().unwrap();
+        assert_eq!(tickets.len(), 1);
+        assert_eq!(tickets[0].hire.0, "dev");
+        // The review, then the router's question.
+        let specs = company.runtime.specs();
+        assert_eq!(specs.len(), 2);
+        assert!(specs[1].prompt.contains("Pick the hire best suited"));
     }
 
     #[tokio::test]
