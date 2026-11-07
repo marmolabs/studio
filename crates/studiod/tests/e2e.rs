@@ -1543,7 +1543,10 @@ fn plan_ending(outcome: Outcome) -> Vec<RunEvent> {
 
 /// A plan run on `script`, which files `filed` tasks before it ends; the
 /// plan's state at the end, and the specs its runtime saw.
-async fn plan_cut(script: Vec<RunEvent>, filed: usize) -> (String, Vec<studio_runtime::RunSpec>) {
+async fn plan_cut(
+    script: Vec<RunEvent>,
+    filed: usize,
+) -> (String, Vec<studio_runtime::RunSpec>, Value) {
     let setup = setup_with("", "daily_usd = 5.0", "[goals]\nmax_filed = 2");
     fs::write(
         setup.paths.config_dir.join("hires/producer.md"),
@@ -1578,12 +1581,24 @@ async fn plan_cut(script: Vec<RunEvent>, filed: usize) -> (String, Vec<studio_ru
     })
     .await;
     let state = state_of(&studio, &id).await.to_string();
-    (state, runtime.specs())
+    let budget = ok(&studio, Request::Budget).await;
+    (state, runtime.specs(), budget)
 }
 
 #[tokio::test]
 async fn a_plan_gets_a_brief_a_turn_limit_a_cost_cap_and_no_writing_tools() {
-    let (state, specs) = plan_cut(plan_script(), 1).await;
+    let mut script = plan_script();
+    if let Some(RunEvent::Finished { cost, .. }) = script.last_mut() {
+        *cost = Cost {
+            usd: 0.02,
+            reported: true,
+            ..Cost::default()
+        };
+    }
+    let (state, specs, budget) = plan_cut(script, 1).await;
+    // The plan run is recorded as planning, not coding.
+    let kinds = budget["by_kind"].as_array().unwrap();
+    assert!(kinds.iter().any(|line| line["kind"] == "plan"), "{budget}");
     assert!(state.contains("landed"), "{state}");
     let spec = &specs[0];
     assert_eq!(spec.max_turns, Some(25));
@@ -1597,7 +1612,7 @@ async fn a_plan_gets_a_brief_a_turn_limit_a_cost_cap_and_no_writing_tools() {
 #[tokio::test]
 async fn a_plan_cut_off_by_its_money_or_turns_keeps_the_tasks_it_filed() {
     for outcome in [Outcome::Budget, Outcome::MaxTurns] {
-        let (state, _) = plan_cut(plan_ending(outcome), 1).await;
+        let (state, _, _) = plan_cut(plan_ending(outcome), 1).await;
         assert!(state.contains("landed"), "{state}");
     }
 }
@@ -1605,7 +1620,7 @@ async fn a_plan_cut_off_by_its_money_or_turns_keeps_the_tasks_it_filed() {
 #[tokio::test]
 async fn a_plan_cut_off_before_it_filed_anything_fails_instead_of_running_again() {
     for outcome in [Outcome::Budget, Outcome::MaxTurns] {
-        let (state, _) = plan_cut(plan_ending(outcome), 0).await;
+        let (state, _, _) = plan_cut(plan_ending(outcome), 0).await;
         assert!(state.contains("failed"), "{state}");
     }
 }
