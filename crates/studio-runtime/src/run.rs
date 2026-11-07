@@ -17,6 +17,11 @@ pub struct RunSpec {
     /// Session id of an earlier run to continue.
     pub resume: Option<String>,
     pub append_system_prompt: Option<String>,
+    /// Replaces the runtime's own system prompt.
+    pub system_prompt: Option<String>,
+    /// A one-turn question: no tools, none of the owner's settings, notes or
+    /// commands, nothing saved. Only the owner's login is kept.
+    pub lean: bool,
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub mcp_config: Option<PathBuf>,

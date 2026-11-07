@@ -87,6 +87,9 @@ impl ClaudeCode {
         if let Some(prompt) = &spec.append_system_prompt {
             push("--append-system-prompt", prompt.clone());
         }
+        if let Some(prompt) = &spec.system_prompt {
+            push("--system-prompt", prompt.clone());
+        }
         if let Some(turns) = spec.max_turns {
             push("--max-turns", turns.to_string());
         }
@@ -104,6 +107,20 @@ impl ClaudeCode {
         }
         if spec.strict_mcp {
             args.push("--strict-mcp-config".to_string());
+        }
+        if spec.lean {
+            // `--tools ""` is no tools; `--setting-sources ""` is no user,
+            // project or local settings, notes or memory.
+            for arg in [
+                "--tools",
+                "",
+                "--setting-sources",
+                "",
+                "--disable-slash-commands",
+                "--no-session-persistence",
+            ] {
+                args.push(arg.to_string());
+            }
         }
         args
     }
@@ -669,6 +686,33 @@ mod tests {
         assert!(args.contains("--allowedTools Read,Bash(git diff *)"));
         assert!(!args.contains("--bare"));
         assert!(args.ends_with("--strict-mcp-config"));
+    }
+
+    #[test]
+    fn a_lean_run_starts_with_nothing_but_the_login() {
+        let spec = RunSpec {
+            lean: true,
+            system_prompt: Some("Be brief.".into()),
+            ..RunSpec::default()
+        };
+        let args = ClaudeCode::args(&spec);
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--tools") + 1], "");
+        assert_eq!(args[at("--setting-sources") + 1], "");
+        assert_eq!(args[at("--system-prompt") + 1], "Be brief.");
+        assert!(args.contains(&"--disable-slash-commands".to_string()));
+        assert!(args.contains(&"--no-session-persistence".to_string()));
+        assert!(!args.contains(&"--bare".to_string()));
+        let plain = ClaudeCode::args(&RunSpec::default());
+        for flag in [
+            "--tools",
+            "--setting-sources",
+            "--system-prompt",
+            "--disable-slash-commands",
+            "--no-session-persistence",
+        ] {
+            assert!(!plain.contains(&flag.to_string()), "{flag}");
+        }
     }
 
     #[test]
