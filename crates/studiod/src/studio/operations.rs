@@ -60,6 +60,48 @@ struct ModelReview {
     actions: Vec<ModelAction>,
 }
 
+/// Why a review has no answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Failure {
+    /// The studio had no money to spare for it.
+    NoBudget,
+    Other,
+}
+
+/// What a review came to, to be kept.
+struct Made {
+    summary: String,
+    proposed: Vec<ModelAction>,
+    /// What the ledger recorded for it.
+    usd: f64,
+    failure: Option<Failure>,
+}
+
+impl Made {
+    fn answered(summary: String, proposed: Vec<ModelAction>, usd: f64) -> Made {
+        Made {
+            summary,
+            proposed,
+            usd,
+            failure: None,
+        }
+    }
+
+    fn failed(error: &str, usd: f64) -> Made {
+        let failure = if error.starts_with(leadrun::NO_BUDGET) {
+            Failure::NoBudget
+        } else {
+            Failure::Other
+        };
+        Made {
+            summary: format!("Review failed: {error}"),
+            proposed: Vec::new(),
+            usd,
+            failure: Some(failure),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelAction {
     #[serde(default)]
@@ -291,18 +333,16 @@ impl Studio {
             max_turns: REVIEW_TURNS,
         };
         let at = now_ms();
-        let outcome = leadrun::run(self, run).await;
-        let (summary, proposed, usd) = match outcome {
+        let (outcome, spent) = leadrun::run_costed(self, run).await;
+        let made = match outcome {
             Ok(reply) => match parse_review(&reply.text) {
-                Some(model) => (model.summary, model.actions, reply.usd),
-                None => (reply.text, Vec::new(), reply.usd),
+                Some(model) => Made::answered(model.summary, model.actions, reply.usd),
+                None => Made::answered(reply.text, Vec::new(), reply.usd),
             },
-            Err(error) => (format!("Review failed: {error}"), Vec::new(), 0.0),
+            // A failed review is kept too, so the next one waits its turn.
+            Err(error) => Made::failed(&error, spent),
         };
-        if let Err(error) = self
-            .save_review(entry, &lead.id.0, at, summary, proposed, usd)
-            .await
-        {
+        if let Err(error) = self.save_review(entry, &lead.id.0, at, made).await {
             eprintln!("operations: {}: {error}", entry.name);
         }
     }
@@ -312,10 +352,14 @@ impl Studio {
         entry: &ProjectEntry,
         lead: &str,
         at: u64,
-        summary: String,
-        proposed: Vec<ModelAction>,
-        usd: f64,
+        made: Made,
     ) -> Result<(), StudioError> {
+        let Made {
+            summary,
+            proposed,
+            usd,
+            failure,
+        } = made;
         let summary = summary.trim().to_string();
         let mut proposed = proposed.into_iter().take(MAX_ACTIONS).collect::<Vec<_>>();
         // A hire the model made up, or one a task can't be given, is left
@@ -337,7 +381,10 @@ impl Studio {
             at,
             summary: summary.clone(),
             usd,
+            failed: failure.is_some(),
         };
+        // Whether the review before this one failed too.
+        let mut failed_before = false;
         let autonomy = self.read_operations().settings.autonomy;
         let mut actions = Vec::new();
         self.update_operations(|saved| {
@@ -401,10 +448,22 @@ impl Studio {
                     automatic: go_ahead,
                 });
             }
+            failed_before = saved
+                .reviews
+                .iter()
+                .find(|earlier| earlier.project == entry.name)
+                .is_some_and(|earlier| earlier.failed);
             saved.reviews.insert(0, review);
             saved.actions.extend(actions.clone());
         })?;
-        if !summary.is_empty() {
+        // A failure is said the first time in a row, and a refusal for want
+        // of budget not at all: the budget has its own place to say so.
+        let silent = match failure {
+            Some(Failure::NoBudget) => true,
+            Some(Failure::Other) => failed_before,
+            None => false,
+        };
+        if !summary.is_empty() && !silent {
             self.post(
                 &entry.name,
                 TalkFrom::Lead {
@@ -828,28 +887,7 @@ mod tests {
 
     /// A company whose lead says `replies` in turn, the last one repeating.
     fn company_replying(replies: &[&str]) -> Company {
-        let home = tempfile::tempdir().unwrap();
-        let repo = home.path().join("shop");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(
-            home.path().join("studio.toml"),
-            format!(
-                "[budget]\ndaily_usd = 10.0\n\n[concurrency]\nmax_runs = 2\n\n\
-                 [prices.fake-1]\ninput_per_mtok = 1.0\noutput_per_mtok = 5.0\n\n\
-                 [[projects]]\nname = \"shop\"\npath = \"{}\"\nlead = \"nora\"\n",
-                repo.display()
-            ),
-        )
-        .unwrap();
-        std::fs::create_dir_all(home.path().join("hires")).unwrap();
-        for (id, role) in [("nora", "lead"), ("dev", "engineer")] {
-            std::fs::write(
-                home.path().join(format!("hires/{id}.md")),
-                format!("---\nname: {id}\nrole: {role}\nruntime: fake\nmodel: fake-1\n---\nYou work here.\n"),
-            )
-            .unwrap();
-        }
-        let runtime = FakeRuntime::sequence(
+        company_running(
             replies
                 .iter()
                 .map(|reply| {
@@ -865,7 +903,38 @@ mod tests {
                     }]
                 })
                 .collect(),
-        );
+        )
+    }
+
+    /// A company whose lead's runs play `scripts` in turn, the last repeating.
+    fn company_running(scripts: Vec<Vec<RunEvent>>) -> Company {
+        company_with(scripts, 10.0)
+    }
+
+    /// The same, with the studio's daily limit at `daily_usd`.
+    fn company_with(scripts: Vec<Vec<RunEvent>>, daily_usd: f64) -> Company {
+        let home = tempfile::tempdir().unwrap();
+        let repo = home.path().join("shop");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            home.path().join("studio.toml"),
+            format!(
+                "[budget]\ndaily_usd = {daily_usd}\n\n[concurrency]\nmax_runs = 2\n\n\
+                 [prices.fake-1]\ninput_per_mtok = 1.0\noutput_per_mtok = 5.0\n\n\
+                 [[projects]]\nname = \"shop\"\npath = \"{}\"\nlead = \"nora\"\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.path().join("hires")).unwrap();
+        for (id, role) in [("nora", "lead"), ("dev", "engineer")] {
+            std::fs::write(
+                home.path().join(format!("hires/{id}.md")),
+                format!("---\nname: {id}\nrole: {role}\nruntime: fake\nmodel: fake-1\n---\nYou work here.\n"),
+            )
+            .unwrap();
+        }
+        let runtime = FakeRuntime::sequence(scripts);
         let mut runtimes: HashMap<String, Arc<dyn Runtime>> = HashMap::new();
         runtimes.insert("fake".into(), Arc::new(runtime.clone()));
         let studio = Studio::open(
@@ -1059,6 +1128,103 @@ mod tests {
             .await;
         assert!(approved.ok, "{:?}", approved.error);
         assert_eq!(lock(&company.studio.store).tickets().unwrap().len(), 4);
+    }
+
+    fn crashed(usd: f64) -> Vec<RunEvent> {
+        vec![RunEvent::Finished {
+            outcome: Outcome::Failed {
+                kind: studio_runtime::FailureKind::Crash,
+                message: "the model fell over".into(),
+            },
+            session: Some("s1".into()),
+            cost: Cost {
+                usd,
+                reported: true,
+                ..Cost::default()
+            },
+            summary: None,
+        }]
+    }
+
+    /// How many messages the lead's conversation and the project room hold.
+    async fn said(company: &Company) -> (usize, usize) {
+        let talk = company
+            .studio
+            .handle(Request::Conversation {
+                project: "shop".into(),
+                after: None,
+            })
+            .await;
+        let room = company
+            .studio
+            .handle(Request::Room {
+                room: "shop".into(),
+                after: None,
+                before: None,
+                limit: None,
+            })
+            .await;
+        (
+            talk.data["messages"].as_array().unwrap().len(),
+            room.data["messages"].as_array().unwrap().len(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_failed_review_is_kept_costed_and_said_only_the_first_time_in_a_row() {
+        let company = company_running(vec![crashed(0.03)]);
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let reviews = company.studio.operations().reviews;
+        assert_eq!(reviews.len(), 1);
+        assert!(reviews[0].failed);
+        assert!(reviews[0].summary.starts_with("Review failed"));
+        assert_eq!(reviews[0].usd, 0.03);
+        let after_first = said(&company).await;
+        assert_eq!(after_first, (1, 1));
+
+        company.studio.run_review(&entry).await;
+        assert_eq!(company.studio.operations().reviews.len(), 2);
+        assert_eq!(said(&company).await, after_first);
+    }
+
+    #[tokio::test]
+    async fn a_failed_automatic_review_is_not_retried_at_once() {
+        let company = company_running(vec![crashed(0.0)]);
+        company
+            .studio
+            .set_operations(Some(true), Some(5), None, None)
+            .unwrap();
+        *lock(&company.studio.operations_state.looked) =
+            Instant::now().checked_sub(LOOK_EVERY + Duration::from_secs(1));
+        company.studio.spawn_operations();
+        for _ in 0..200 {
+            if !company.studio.operations().reviews.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(company.studio.operations().reviews.len(), 1);
+        *lock(&company.studio.operations_state.looked) =
+            Instant::now().checked_sub(LOOK_EVERY + Duration::from_secs(1));
+        company.studio.spawn_operations();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(company.studio.operations().reviews.len(), 1);
+        assert_eq!(company.runtime.specs().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_review_refused_for_budget_is_kept_quietly() {
+        let company = company_with(vec![crashed(0.03)], 0.01);
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let reviews = company.studio.operations().reviews;
+        assert_eq!(reviews.len(), 1);
+        assert!(reviews[0].failed);
+        assert!(reviews[0].summary.contains("no budget left"));
+        assert_eq!(reviews[0].usd, 0.0);
+        assert!(company.runtime.specs().is_empty());
+        assert_eq!(said(&company).await, (0, 0));
     }
 
     #[tokio::test]
