@@ -7,6 +7,7 @@ use crate::api::{
     Autonomy, ManagerAct, ManagerAction, ManagerReview, OperationState, OperationsSettings,
     OperationsView, Request, Response, RuntimeMode, TalkFrom,
 };
+use crate::budget::DAY_MS;
 use crate::leadrun::{self, LeadRun, Tools};
 use crate::now_ms;
 use crate::router;
@@ -28,6 +29,10 @@ const MAX_ACTIONS: usize = 12;
 const MAX_REVIEWS: usize = 50;
 /// The most proposals that may wait for the owner in one project.
 const MAX_PENDING: usize = 20;
+/// The most goals and tasks autonomy may start by itself in a project a day.
+const MAX_AUTOMATIC_NEW_WORK: usize = 3;
+/// Why new work beyond that waits for the owner.
+const OVER_LIMIT: &str = "over today's limit for automatic new work";
 const MAX_AUDIT: usize = 100;
 const LOOK_EVERY: Duration = Duration::from_secs(30);
 
@@ -348,6 +353,18 @@ impl Studio {
                 })
                 .map(|action| action.act.clone())
                 .collect::<Vec<_>>();
+            // Autonomy starts only so much new work a day on its own.
+            let since = at.saturating_sub(DAY_MS);
+            let mut used_today = saved
+                .actions
+                .iter()
+                .filter(|action| {
+                    action.project == entry.name
+                        && action.automatic
+                        && is_new_work(&action.act)
+                        && action.at > since
+                })
+                .count();
             for action in proposed {
                 if waiting.len() >= MAX_PENDING || waiting.contains(&action.act) {
                     continue;
@@ -359,6 +376,16 @@ impl Studio {
                 } else {
                     action.title.trim().to_string()
                 };
+                let mut go_ahead = automatic(autonomy, &action.act);
+                let mut result = String::new();
+                if go_ahead && is_new_work(&action.act) {
+                    if used_today >= MAX_AUTOMATIC_NEW_WORK {
+                        go_ahead = false;
+                        result = OVER_LIMIT.to_string();
+                    } else {
+                        used_today += 1;
+                    }
+                }
                 actions.push(ManagerAction {
                     id: format!("a{}", saved.next_id),
                     review: review.id.clone(),
@@ -370,7 +397,8 @@ impl Studio {
                     state: OperationState::Pending,
                     at,
                     resolved_at: None,
-                    result: String::new(),
+                    result,
+                    automatic: go_ahead,
                 });
             }
             saved.reviews.insert(0, review);
@@ -394,7 +422,7 @@ impl Studio {
             )?;
         }
         for action in actions {
-            if automatic(autonomy, &action.act)
+            if action.automatic
                 && let Err(error) = self.execute_operation(&action.id, None).await
             {
                 eprintln!("operations: {}: {error}", action.id);
@@ -655,6 +683,14 @@ fn retain_actions(actions: &mut Vec<ManagerAction>) {
     resolved.drain(..excess);
     active.extend(resolved);
     *actions = active;
+}
+
+/// Starting a goal or making a task: work that did not exist before.
+fn is_new_work(act: &ManagerAct) -> bool {
+    matches!(
+        act,
+        ManagerAct::StartGoal { .. } | ManagerAct::CreateTask { .. }
+    )
 }
 
 fn automatic(autonomy: Autonomy, act: &ManagerAct) -> bool {
@@ -971,6 +1007,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn autonomy_starts_at_most_three_new_things_a_day_in_a_project() {
+        let tasks = (1..=4)
+            .map(|n| {
+                format!(
+                    r#"{{"title":"Task {n}","act":{{"do":"create_task","title":"Work {n}","detail":"","hire":"dev"}}}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let reply = format!(r#"{{"summary":"Lots to do.","actions":[{tasks}]}}"#);
+        let company = company(&reply);
+        company
+            .studio
+            .set_operations(None, None, Some(Autonomy::Autonomous), None)
+            .unwrap();
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        assert_eq!(lock(&company.studio.store).tickets().unwrap().len(), 3);
+        let waiting = pending(&company);
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].title, "Task 4");
+        assert_eq!(
+            waiting[0].result,
+            "over today's limit for automatic new work"
+        );
+
+        // A later review the same day starts nothing more on its own.
+        company
+            .studio
+            .update_operations(|saved| {
+                saved
+                    .actions
+                    .retain(|action| action.state != OperationState::Pending)
+            })
+            .unwrap();
+        company.studio.run_review(&entry).await;
+        assert_eq!(lock(&company.studio.store).tickets().unwrap().len(), 3);
+        assert!(pending(&company).iter().all(|a| a.result.contains("limit")));
+        assert_eq!(pending(&company).len(), 4);
+
+        // The owner can still approve what waits.
+        let id = pending(&company)[0].id.clone();
+        let approved = company
+            .studio
+            .handle(Request::DecideOperation {
+                action: id,
+                approve: true,
+                note: None,
+            })
+            .await;
+        assert!(approved.ok, "{:?}", approved.error);
+        assert_eq!(lock(&company.studio.store).tickets().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
     async fn no_more_than_twenty_proposals_wait_in_a_project() {
         let company = company(DRAWER);
         company
@@ -992,6 +1083,7 @@ mod tests {
                         at: now_ms(),
                         resolved_at: None,
                         result: String::new(),
+                        automatic: false,
                     });
                 }
             })
@@ -1097,6 +1189,7 @@ mod tests {
                     at: now_ms(),
                     resolved_at: None,
                     result: String::new(),
+                    automatic: false,
                 });
             })
             .unwrap();
@@ -1214,6 +1307,7 @@ mod tests {
                     at: now_ms(),
                     resolved_at: None,
                     result: String::new(),
+                    automatic: false,
                 });
             })
             .unwrap();
@@ -1301,6 +1395,7 @@ mod tests {
             at: id as u64,
             resolved_at: None,
             result: String::new(),
+            automatic: false,
         };
         let mut actions = (0..=MAX_AUDIT)
             .map(|id| action(id, OperationState::Executed))

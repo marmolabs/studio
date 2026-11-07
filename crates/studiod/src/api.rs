@@ -681,8 +681,14 @@ pub struct ManagerAction {
     pub at: u64,
     #[serde(default)]
     pub resolved_at: Option<u64>,
+    /// What came of it; while the action is pending, why it waits when that
+    /// is not simply the autonomy level.
     #[serde(default)]
     pub result: String,
+    /// Whether the studio went ahead with it on its own, by the autonomy
+    /// level, rather than on the owner's approval.
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 /// What every company page needs of the manager loop.
