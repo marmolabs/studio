@@ -195,11 +195,11 @@ fn draw<'a>(
             let parts = person::parts(&office, &hire, conversation)?;
             view! { cx => person::person_view(team: team, parts: parts) }.boxed()
         }
-        (Spot::Room { room, .. }, Extra::Room(conversation)) => {
+        (Spot::Room { room, before }, Extra::Room(conversation)) => {
             if !office.rooms.iter().any(|summary| summary.id == room) {
                 return None;
             }
-            view! { cx => rooms::room_view(team: team, office: office, room: room, conversation: conversation) }.boxed()
+            view! { cx => rooms::room_view(team: team, office: office, room: room, conversation: conversation, before: before) }.boxed()
         }
         (Spot::Office { sel, turn }, _) => {
             view! { cx => office::office_view(team: team, office: office, turn: turn, sel: sel) }

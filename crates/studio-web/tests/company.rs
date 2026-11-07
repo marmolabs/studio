@@ -279,3 +279,38 @@ async fn manager_reviews_approvals_and_controls_are_real_requests() {
         }]
     );
 }
+
+#[tokio::test]
+async fn a_phone_can_switch_rooms_and_the_owner_has_a_picture() {
+    let web = Web::start().await;
+    let html = web.page("/rooms/shop").await;
+    let navs = named(&html, "nav")
+        .into_iter()
+        .filter(|nav| nav.attr_is("aria-label", "Rooms"))
+        .collect::<Vec<_>>();
+    // One beside the room on a wide screen, one above it on a phone.
+    assert_eq!(navs.len(), 2, "{html}");
+    for nav in navs {
+        let inner = nav.inner_html();
+        assert!(inner.contains("/rooms/company"), "{inner}");
+        assert!(inner.contains("/rooms/shop"), "{inner}");
+    }
+    // Every picture the page draws is one the page has.
+    let owner = web.page("/rooms/company").await;
+    assert!(owner.contains("#i-user-round"), "{owner}");
+    assert!(!owner.contains("#i-user\""), "{owner}");
+}
+
+#[tokio::test]
+async fn an_earlier_page_of_a_room_has_a_way_back_to_the_latest() {
+    let web = Web::start().await;
+    let latest = web.page("/rooms/shop").await;
+    assert!(!text_of(&latest).contains("Back to the latest messages"));
+    let earlier = web.page("/rooms/shop?before=3").await;
+    assert!(
+        named(&earlier, "a")
+            .iter()
+            .any(|a| a.attr_is("href", "/rooms/shop") && a.text() == "Back to the latest messages"),
+        "{earlier}"
+    );
+}

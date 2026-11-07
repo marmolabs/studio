@@ -73,7 +73,7 @@ async fn room_message(
                 </a>
             } else {
                 <span class=(format!("grid size-8 shrink-0 place-items-center rounded-lg {}", if owner { "bg-primary text-on-primary" } else { "bg-bg-3 text-fg-3" }))>
-                    ui::icon(name: if owner { "user" } else { "building-2" }, small: true)
+                    ui::icon(name: if owner { "user-round" } else { "building-2" }, small: true)
                 </span>
             }
             <div class=(format!("max-w-[76%] {}", if owner { "text-right" } else { "" }))>
@@ -92,6 +92,7 @@ pub async fn room_view(
     office: Office,
     room: String,
     conversation: RoomView,
+    #[default] before: Option<u64>,
 ) -> topcoat::Result<impl View> {
     let Some(summary) = office
         .rooms
@@ -102,7 +103,19 @@ pub async fn room_view(
         return Err(client::error("no such room"));
     };
     let rooms = office.rooms.clone();
-    let members = office.status.team.clone();
+    // An example for the line under the box, from someone who can be asked.
+    let example = office
+        .status
+        .team
+        .iter()
+        .find(|member| {
+            !matches!(
+                member.role.as_str(),
+                "lead" | "approver" | "router" | "reviewer"
+            )
+        })
+        .or_else(|| office.status.team.first())
+        .map_or_else(|| "dev".to_string(), |member| member.id.clone());
     let now = office.now;
     let title = summary.name.clone();
     let project = summary.project.clone();
@@ -124,10 +137,18 @@ pub async fn room_view(
                 <nav class="w-[210px] shrink-0 overflow-y-auto border-r border-line bg-bg-2 p-2 max-[760px]:hidden" aria-label="Rooms">
                     <h2 class="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[.07em] text-fg-3">"Rooms"</h2>
                     <div class="flex flex-col gap-1">
-                        for room in rooms { room_link(room: room.clone(), current: room.id == summary.id, now: now) }
+                        for room in rooms.iter() { room_link(room: room.clone(), current: room.id == summary.id, now: now) }
                     </div>
                 </nav>
                 <section class="flex min-h-0 min-w-0 flex-1 flex-col" aria-label=(title.clone())>
+                    <nav class="hidden gap-2 overflow-x-auto [scrollbar-width:none] border-b border-line px-4 py-2.5 max-[760px]:flex" aria-label="Rooms">
+                        for other in rooms.iter() {
+                            <a href=(room_href(&other.id)) aria-current=((other.id == summary.id).then_some("page")) class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line-2 px-3 text-[13px] text-fg-2 aria-[current=page]:border-primary aria-[current=page]:bg-bg-4 aria-[current=page]:text-fg">
+                                ui::icon(name: if other.project.is_some() { "users" } else { "building-2" }, small: true)
+                                (other.name.clone())
+                            </a>
+                        }
+                    </nav>
                     <header class="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5">
                         <span class="grid size-9 place-items-center rounded-xl bg-bg-3 text-fg-2">ui::icon(name: if project.is_some() { "users" } else { "building-2" })</span>
                         <div class="min-w-0 flex-1">
@@ -146,10 +167,13 @@ pub async fn room_view(
                             if conversation.messages.is_empty() {
                                 <div class="py-12 text-center">
                                     <b class="block text-[15px] font-semibold">"Start the conversation"</b>
-                                    <p class="m-0 mt-1 text-[13px] text-fg-3">"Share an announcement, or mention an employee by id to ask them to respond."</p>
+                                    <p class="m-0 mt-1 text-[13px] text-fg-3">"Share an announcement, or write @ and someone's id to ask them to reply."</p>
                                 </div>
                             }
                             for item in conversation.messages { room_message(message: item, office: office.clone(), now: now) }
+                            if before.is_some() {
+                                <a href=(room_href(&room)) class=(ui::BUTTON_SM)>"Back to the latest messages"</a>
+                            }
                             if conversation.thinking {
                                 <div id="room-replying" class="flex items-center gap-2 text-[13px] text-fg-3" role="status">
                                     <i class="size-2 animate-pulse rounded-full bg-run"></i> "A mentioned employee is replying…"
@@ -161,11 +185,11 @@ pub async fn room_view(
                         <div class="mx-auto w-full max-w-[780px]">
                             <label class="flex items-center gap-2 rounded-xl border border-line-2 bg-bg-2 py-1.5 pl-3.5 pr-1.5 focus-within:border-ring">
                                 <span class="sr-only">"Message the room"</span>
-                                <input name="text" data-bind:_room_draft="" required="" autocomplete="off" placeholder="Write to the room; mention @dev to ask them" class="h-8 min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-fg-3">
+                                <input name="text" data-bind:_room_draft="" required="" autocomplete="off" placeholder="Write to the room" class="h-8 min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-fg-3">
                                 <button type="submit" class=(ui::PRIMARY) aria-label="Send">ui::icon(name: "send")</button>
                             </label>
-                            <p class="m-0 mt-1.5 truncate text-[11.5px] text-fg-3">
-                                "Mention " (members.iter().take(6).map(|member| format!("@{}", member.id)).collect::<Vec<_>>().join(" ")) ". Plain announcements start no runs."
+                            <p class="m-0 mt-1.5 text-[11.5px] text-fg-3">
+                                "To ask someone to reply, write @ and their id, like @" (example) ". An announcement alone starts no work."
                             </p>
                         </div>
                     </form>
