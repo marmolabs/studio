@@ -234,6 +234,15 @@ recorded total for the displayed tickets. Blocked time is the accumulated age
 of work still blocked now, not a historical estimate. Employee workload shows
 active and queued assignments, deliveries and ticket spend.
 
+Every run in the ledger has a kind: coding, review, gate check, plan, approval,
+routing, conversation, room reply, standup, setup or manager review. Runs from
+before kinds were kept show as "Earlier runs", except a project's talk, which
+is a conversation. **Where the money went** on the company page, and the
+`studio budget` command, add the last 24 hours up by kind and by project, with
+how many calls each took and which model ran them. A task's page and Look
+closer show the same split for that task and its goal. When approvals or
+routing cost more than the coding, a line above the split says so.
+
 ## Messaging an agent
 
 You, or a lead for you, can tell a task's agent something while it works. A

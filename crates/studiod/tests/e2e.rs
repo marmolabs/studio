@@ -1223,6 +1223,15 @@ async fn a_reviewer_on_another_model_passes_the_work() {
     ));
     let budget = ok(&studio, Request::Budget).await;
     assert!(budget["spent_24h"]["by_hire"]["critic"].as_f64().unwrap() > 0.0);
+    // The review is its own kind, apart from the coding, and the day's split says so.
+    let kinds = budget["by_kind"].as_array().unwrap();
+    let reviews: Vec<&Value> = kinds
+        .iter()
+        .filter(|line| line["kind"] == "review")
+        .collect();
+    assert_eq!(reviews.len(), 1, "{budget}");
+    assert_eq!(reviews[0]["hire"], "critic");
+    assert!(kinds.iter().any(|line| line["kind"] == "coding"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2373,6 +2382,25 @@ async fn the_approver_allows_a_call_without_bothering_the_owner() {
     )
     .await;
     assert!(spend.as_f64().unwrap() > 0.015, "{spend}");
+    // And booked as approvals, next to the coding it served.
+    let split = ok(
+        &studio,
+        Request::SpendBreakdown {
+            tickets: vec!["GAME-1".into()],
+            hours: None,
+        },
+    )
+    .await;
+    let kinds: Vec<&str> = split
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line["kind"].as_str().unwrap())
+        .collect();
+    assert!(
+        kinds.contains(&"approval") && kinds.contains(&"coding"),
+        "{split}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

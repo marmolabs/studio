@@ -13,6 +13,7 @@ use studio_config::COMPANY_ROOM;
 use studio_config::config::ProjectEntry;
 use studio_core::ids::HireId;
 use studio_core::rule::Hire;
+use studio_store::SpendKind;
 
 const ROOM_USD: f64 = 0.25;
 const ROOM_TURNS: u32 = 6;
@@ -386,6 +387,7 @@ impl Studio {
             charge_task: Some(&charge),
             cap_usd: ROOM_USD,
             max_turns: ROOM_TURNS,
+            kind: SpendKind::Room,
         };
         leadrun::run(self, run).await.map(|reply| reply.text)
     }
@@ -650,6 +652,7 @@ mod tests {
             budget.data["spent_24h"]["by_ticket"],
             json!({"shop/rooms/company": 0.03})
         );
+        assert_eq!(budget.data["by_kind"][0]["kind"], "room");
     }
 
     #[tokio::test]

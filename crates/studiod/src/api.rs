@@ -9,7 +9,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use studio_core::ticket::Ticket;
 
-pub use studio_store::StoredEvent;
+pub use studio_store::{KindTotal, SpendKind, SpendLine, StoredEvent, by_kind, dollars, warning};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -148,6 +148,16 @@ pub enum Request {
     },
     /// Total spend for every ticket, by ticket id, counted as `TicketSpend`.
     TicketSpends,
+    /// What runs cost, added up by kind, project, hire and model as
+    /// `SpendLine`s, the dearest first. With `tickets`, only what those
+    /// tickets cost, over all time; without, everything in the last
+    /// `hours` hours (24 when not said).
+    SpendBreakdown {
+        #[serde(default)]
+        tickets: Vec<String>,
+        #[serde(default)]
+        hours: Option<u64>,
+    },
     /// When each ticket last changed (its latest event), in epoch
     /// milliseconds, by ticket id.
     UpdatedAt,
@@ -1234,6 +1244,10 @@ pub struct OfficeView {
     pub state_since: BTreeMap<String, u64>,
     /// What each ticket has cost, as `Request::TicketSpends` answers.
     pub spend: BTreeMap<String, f64>,
+    /// What the last 24 hours cost, by kind of run, project, hire and model, as
+    /// `Request::SpendBreakdown` answers.
+    #[serde(default)]
+    pub kinds: Vec<SpendLine>,
     /// Landed work tickets whose goal branch is merged.
     pub merged: Vec<String>,
     /// Lines added and removed by each ready ticket, by ticket id; one

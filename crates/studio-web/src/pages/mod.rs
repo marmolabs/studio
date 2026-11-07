@@ -2,6 +2,7 @@ pub mod actions;
 pub mod activity;
 pub mod ask_card;
 pub mod changes;
+pub mod cost;
 pub mod evidence;
 pub mod files;
 pub mod hires;

@@ -7,6 +7,7 @@ use topcoat::view::{View, component, view};
 use super::shell::{self, Here};
 use super::talk::thread::Person;
 use super::{LeadEntry, Team, clock, faces, lead_href, operations, person_href};
+use crate::pages::cost::{self, CostRow};
 use crate::pages::office::{Office, floor};
 use crate::ui;
 
@@ -470,6 +471,51 @@ async fn metric(
     })
 }
 
+/// Where the last 24 hours of spend went: by kind of run, then by project.
+#[derive(Clone, Debug, PartialEq)]
+struct Spent {
+    by_kind: Vec<CostRow>,
+    by_project: Vec<CostRow>,
+    warning: Option<String>,
+}
+
+fn spent(office: &Office) -> Spent {
+    Spent {
+        by_kind: cost::by_kind_rows(&office.kinds, &|hire| office.name_of(hire)),
+        by_project: cost::by_project_rows(&office.kinds),
+        warning: studiod::api::warning(&office.kinds, "in the last 24 hours"),
+    }
+}
+
+#[component]
+async fn spent_view(spent: Spent) -> topcoat::Result<impl View> {
+    Ok(view! {
+        <section id="spend" class="flex flex-col gap-4" aria-label="Where the money went">
+            <div>
+                <h2 class="text-[18px] font-semibold">"Where the money went, last 24 hours"</h2>
+                <p class="m-0 text-[13px] text-fg-3">"Every call to a model, by what it was for, then by project."</p>
+            </div>
+            if let Some(words) = spent.warning {
+                cost::heads_up(words: words)
+            }
+            if spent.by_kind.is_empty() {
+                <p class="m-0 text-[13px] text-fg-3">"Nothing was spent in the last 24 hours."</p>
+            } else {
+                <div class="grid grid-cols-2 items-start gap-3 max-[900px]:grid-cols-1">
+                    <div class="flex min-w-0 flex-col gap-2">
+                        <h3 class="text-[13px] font-semibold">"By kind of work"</h3>
+                        cost::cost_list(rows: spent.by_kind, framed: true)
+                    </div>
+                    <div class="flex min-w-0 flex-col gap-2">
+                        <h3 class="text-[13px] font-semibold">"By project"</h3>
+                        cost::cost_list(rows: spent.by_project, framed: true)
+                    </div>
+                </div>
+            }
+        </section>
+    })
+}
+
 #[component]
 async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
     let cycle = scorecard
@@ -710,6 +756,7 @@ async fn manager_log(
 pub async fn company(team: Team, office: Office) -> topcoat::Result<impl View> {
     let projects = projects(&office, &team);
     let scorecard = scorecard(&office);
+    let spent = spent(&office);
     let blocked = office
         .tickets
         .iter()
@@ -743,6 +790,7 @@ pub async fn company(team: Team, office: Office) -> topcoat::Result<impl View> {
                     <div class=(format!("{} px-4 py-3", ui::CARD))><b class="block text-[24px] font-semibold tabular-nums">(pending)</b><span class="text-[12.5px] text-fg-3">"manager decisions for you"</span></div>
                 </div>
                 scorecard_view(scorecard: scorecard)
+                spent_view(spent: spent)
                 <section id="work-map" class="flex flex-col gap-4" aria-label="Live work map">
                     <div>
                         <h2 class="text-[18px] font-semibold">"Live work map"</h2>

@@ -57,8 +57,8 @@ The web UI is a team sidebar and a page for each thing you do.
   announcements and cross-team requests. Mention a hire as `@dev` to get a
   read-only reply; plain announcements start no model run.
 - **The company page** is a live map of goals, owned tasks, blockers, next steps
-  and spend, with a delivery scorecard, employee workload and the manager
-  decision log. Tasks have priorities and dependencies; the dependency graph
+  and spend, with a delivery scorecard, employee workload, where the money
+  went (by kind of run and by project) and the manager decision log. Tasks have priorities and dependencies; the dependency graph
   shows what must land first and the critical path through open work.
 - **Look closer** opens ready work over the conversation: a summary, the checks,
   the review, whether protected paths were touched, screenshots and clips, the

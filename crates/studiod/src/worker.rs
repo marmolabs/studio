@@ -25,7 +25,7 @@ use studio_core::rule::Hire;
 use studio_core::ticket::{FailureClass, HeldReason, Ticket, TicketKind, TicketState};
 use studio_git::{Repo, Worktree};
 use studio_runtime::{Control, Cost, FailureKind, Outcome, Run, RunEvent, RunSpec, Runtime};
-use studio_store::Spend;
+use studio_store::{Spend, SpendKind};
 
 /// How long a stopped run gets to report its final cost.
 const DRAIN: Duration = Duration::from_secs(15);
@@ -110,6 +110,11 @@ async fn work_on(
                     stop,
                     failed: ticket.attempts,
                     read_only: ticket.kind == TicketKind::Plan,
+                    kind: if ticket.kind == TicketKind::Plan {
+                        SpendKind::Plan
+                    } else {
+                        SpendKind::Coding
+                    },
                 };
                 // A merge left conflicts: the agent resolves them first.
                 let conflicted = worktree.conflicted_files()?;
@@ -226,6 +231,7 @@ async fn work_on(
                         stop,
                         failed: 0,
                         read_only: true,
+                        kind: SpendKind::Review,
                     };
                     let images = evidence_images(&worktree, ticket.attempts);
                     // Reviewers run read-only, so they hear what already passed.
@@ -365,6 +371,8 @@ struct AgentRun<'a> {
     /// Reviewers and producers read; every write or question they raise is
     /// refused. Producers may still use the studio's own tools.
     read_only: bool,
+    /// What the run is for, as the ledger books it.
+    kind: SpendKind,
 }
 
 /// What a run has done so far, for the ledger.
@@ -806,6 +814,7 @@ impl AgentRun<'_> {
             model: tally.model.clone(),
             session: tally.session.clone(),
             usd,
+            kind: self.kind,
             reported,
             input_tokens,
             output_tokens,
@@ -1478,6 +1487,7 @@ async fn run_gates(
             stop,
             failed: 0,
             read_only: true,
+            kind: SpendKind::Critic,
         };
         log.note(&format!(
             "gate {} by {} ({})",

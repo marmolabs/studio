@@ -27,8 +27,11 @@ pub enum StoreError {
     IdMismatch { expected: String, got: String },
 }
 
+mod costs;
 #[cfg(test)]
 mod tests;
+
+pub use costs::{KindTotal, SpendKind, SpendLine, by_kind, dollars, warning};
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
@@ -51,6 +54,8 @@ pub struct Spend {
     pub model: String,
     pub session: Option<String>,
     pub usd: f64,
+    /// What the run was for.
+    pub kind: SpendKind,
     /// True when the runtime reported the cost; false when the studio estimated it.
     pub reported: bool,
     pub input_tokens: u64,
@@ -300,8 +305,8 @@ impl Store {
     pub fn record_spend(&mut self, spend: &Spend) -> Result<()> {
         self.conn.execute(
             "INSERT INTO ledger (at_ms, ticket_id, project, hire, runtime, model, session, usd,
-                                 reported, input_tokens, output_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                 reported, input_tokens, output_tokens, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 spend.at_ms as i64,
                 spend.ticket_id.to_string(),
@@ -314,6 +319,7 @@ impl Store {
                 spend.reported,
                 spend.input_tokens as i64,
                 spend.output_tokens as i64,
+                spend.kind.as_str(),
             ],
         )?;
         Ok(())
@@ -346,6 +352,39 @@ impl Store {
             *totals.by_ticket.entry(ticket).or_default() += usd;
         }
         Ok(totals)
+    }
+
+    /// Runs at or after `since_ms` added up by kind, project, hire and model,
+    /// the dearest first. With `tickets`, only the runs of those tickets.
+    pub fn spend_lines(&self, since_ms: u64, tickets: Option<&[String]>) -> Result<Vec<SpendLine>> {
+        let mut sql = String::from(
+            "SELECT COALESCE(kind, 'earlier'), project, hire, model, COUNT(*), SUM(usd)
+             FROM ledger WHERE at_ms >= ?1",
+        );
+        let mut params: Vec<rusqlite::types::Value> = vec![(since_ms as i64).into()];
+        if let Some(tickets) = tickets {
+            if tickets.is_empty() {
+                return Ok(Vec::new());
+            }
+            let marks = vec!["?"; tickets.len()].join(",");
+            sql.push_str(&format!(" AND ticket_id IN ({marks})"));
+            params.extend(tickets.iter().map(|t| t.clone().into()));
+        }
+        sql.push_str(
+            " GROUP BY 1, project, hire, model ORDER BY SUM(usd) DESC, 1, project, hire, model",
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(SpendLine {
+                kind: SpendKind::from_name(&row.get::<_, String>(0)?),
+                project: row.get(1)?,
+                hire: row.get(2)?,
+                model: row.get(3)?,
+                calls: row.get::<_, i64>(4)?.max(0) as u64,
+                usd: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Everything a ticket has cost, across all its runs.
@@ -472,7 +511,7 @@ impl Store {
     pub fn ledger_since(&self, since_ms: u64) -> Result<Vec<Spend>> {
         let mut stmt = self.conn.prepare(
             "SELECT at_ms, ticket_id, project, hire, runtime, model, session, usd, reported,
-                    input_tokens, output_tokens
+                    input_tokens, output_tokens, COALESCE(kind, 'earlier')
              FROM ledger WHERE at_ms >= ?1 ORDER BY at_ms, id",
         )?;
         let rows = stmt.query_map([since_ms as i64], |row| {
@@ -488,6 +527,7 @@ impl Store {
                 reported: row.get(8)?,
                 input_tokens: row.get::<_, i64>(9)? as u64,
                 output_tokens: row.get::<_, i64>(10)? as u64,
+                kind: SpendKind::from_name(&row.get::<_, String>(11)?),
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -815,8 +855,17 @@ fn migrate(conn: &mut Connection) -> Result<()> {
             [],
         )?;
     }
+    if version < 5 {
+        // What each run was for. Rows from before have none; a talk's runs
+        // are conversations, and the rest are shown as earlier runs.
+        tx.execute("ALTER TABLE ledger ADD COLUMN kind TEXT", [])?;
+        tx.execute(
+            "UPDATE ledger SET kind = 'conversation' WHERE ticket_id LIKE '%/talk'",
+            [],
+        )?;
+    }
     tx.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')",
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5')",
         [],
     )?;
     tx.commit()?;
