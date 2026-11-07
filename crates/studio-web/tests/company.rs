@@ -22,6 +22,9 @@ fn office() -> Value {
                      {"id":"dev","name":"Dev","role":"engineer","model":"sonnet"}],
         },
         "tickets": [{
+            "id":"SHOP-0", "project":"shop", "title":"Foundations", "goal":"Checkout",
+            "hire":"dev", "state":"queued", "attempts":0, "base_branch":"main", "created_at":0,
+        }, {
             "id":"SHOP-1", "project":"shop", "title":"Cart drawer", "goal":"Checkout",
             "hire":"dev", "state":"queued", "attempts":1, "base_branch":"main", "created_at":0,
             "priority":900, "depends_on":["SHOP-0"],
@@ -36,7 +39,7 @@ fn office() -> Value {
             "actions": [{
                 "id":"a2", "review":"r1", "project":"shop", "lead":"nora",
                 "title":"Delegate checkout", "reason":"It unblocks the milestone.",
-                "act":{"do":"create_task","title":"Checkout total","detail":"","hire":"dev"},
+                "act":{"do":"create_task","title":"Checkout total","detail":"Add up the cart and the delivery.","hire":"dev"},
                 "state":"pending", "at":6,
             }],
         },
@@ -177,6 +180,7 @@ async fn the_company_page_has_the_map_scorecard_and_decision_log() {
         "Dependency graph",
         "Blocked by SHOP-0",
         "P900",
+        "Nothing assigned yet: Nora",
     ] {
         assert!(text.contains(expected), "{expected}: {text}");
     }
@@ -281,6 +285,33 @@ async fn manager_reviews_approvals_and_controls_are_real_requests() {
 }
 
 #[tokio::test]
+async fn the_approval_card_names_the_lead_and_says_what_approving_does() {
+    let web = Web::start().await;
+    let text = text_of(&web.page("/").await);
+    assert!(text.contains("proposed by Nora"), "{text}");
+    assert!(!text.contains("proposed by nora"), "{text}");
+    assert!(text.contains("Add up the cart and the delivery."), "{text}");
+    // The decision log says who proposed it, by name, and in plain words.
+    let company = text_of(&web.page("/company").await);
+    assert!(company.contains("Delegate a task · Nora"), "{company}");
+    assert!(company.contains("Waiting for you"), "{company}");
+}
+
+#[tokio::test]
+async fn the_settings_say_what_each_autonomy_level_does_and_what_simulation_touches() {
+    let web = Web::start().await;
+    let text = text_of(&web.page("/studio").await);
+    for words in [
+        "Supervised Every action waits for you.",
+        "Balanced Feedback and messages to employees go ahead; everything else waits.",
+        "Autonomous Task management goes ahead, and up to 3 new goals or tasks a day per project; cancelling still waits.",
+        "Simulation affects only conversations, rooms and reviews, never coding work or approvals.",
+    ] {
+        assert!(text.contains(words), "{words}: {text}");
+    }
+}
+
+#[tokio::test]
 async fn a_phone_can_switch_rooms_and_the_owner_has_a_picture() {
     let web = Web::start().await;
     let html = web.page("/rooms/shop").await;
@@ -299,20 +330,6 @@ async fn a_phone_can_switch_rooms_and_the_owner_has_a_picture() {
     let owner = web.page("/rooms/company").await;
     assert!(owner.contains("#i-user-round"), "{owner}");
     assert!(!owner.contains("#i-user\""), "{owner}");
-}
-
-#[tokio::test]
-async fn an_earlier_page_of_a_room_has_a_way_back_to_the_latest() {
-    let web = Web::start().await;
-    let latest = web.page("/rooms/shop").await;
-    assert!(!text_of(&latest).contains("Back to the latest messages"));
-    let earlier = web.page("/rooms/shop?before=3").await;
-    assert!(
-        named(&earlier, "a")
-            .iter()
-            .any(|a| a.attr_is("href", "/rooms/shop") && a.text() == "Back to the latest messages"),
-        "{earlier}"
-    );
 }
 
 #[tokio::test]
@@ -341,5 +358,19 @@ async fn a_person_page_has_their_work_on_a_phone_and_a_lead_has_a_way_to_their_p
             .any(|a| a.attr_is("href", "/leads/shop")
                 && a.text().contains("Open the shop conversation")),
         "{lead}"
+    );
+}
+
+#[tokio::test]
+async fn an_earlier_page_of_a_room_has_a_way_back_to_the_latest() {
+    let web = Web::start().await;
+    let latest = web.page("/rooms/shop").await;
+    assert!(!text_of(&latest).contains("Back to the latest messages"));
+    let earlier = web.page("/rooms/shop?before=3").await;
+    assert!(
+        named(&earlier, "a")
+            .iter()
+            .any(|a| a.attr_is("href", "/rooms/shop") && a.text() == "Back to the latest messages"),
+        "{earlier}"
     );
 }
