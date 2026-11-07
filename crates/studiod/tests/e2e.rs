@@ -1533,6 +1533,83 @@ async fn a_producer_files_tickets_on_its_goal_and_the_plan_lands() {
     .await;
 }
 
+fn plan_ending(outcome: Outcome) -> Vec<RunEvent> {
+    let mut script = plan_script();
+    if let Some(RunEvent::Finished { outcome: o, .. }) = script.last_mut() {
+        *o = outcome;
+    }
+    script
+}
+
+/// A plan run on `script`, which files `filed` tasks before it ends; the
+/// plan's state at the end, and the specs its runtime saw.
+async fn plan_cut(script: Vec<RunEvent>, filed: usize) -> (String, Vec<studio_runtime::RunSpec>) {
+    let setup = setup_with("", "daily_usd = 5.0", "[goals]\nmax_filed = 2");
+    fs::write(
+        setup.paths.config_dir.join("hires/producer.md"),
+        "---\nname: Producer\nrole: producer\nruntime: fake\nmodel: fake-1\ntools: [file_ticket]\n---\nYou plan.\n",
+    )
+    .unwrap();
+    let (runtime, finish) = FakeRuntime::new(script).with_mcp().held();
+    let studio = studio(&setup, runtime.clone());
+    studio.spawn_scheduler();
+    let plan = ok(
+        &studio,
+        Request::CreateGoal {
+            project: "game".into(),
+            text: "Add a boss fight".into(),
+            hire: None,
+            detail: String::new(),
+            version: None,
+        },
+    )
+    .await;
+    let id = plan["id"].as_str().unwrap().to_string();
+    until(async || state_of(&studio, &id).await == "working").await;
+    for n in 0..filed {
+        ok(&studio, file(&id, &format!("Task {n}"), "Acceptance: x")).await;
+    }
+    until(async || {
+        finish.notify_waiters();
+        {
+            let state = state_of(&studio, &id).await.to_string();
+            state.contains("landed") || state.contains("failed")
+        }
+    })
+    .await;
+    let state = state_of(&studio, &id).await.to_string();
+    (state, runtime.specs())
+}
+
+#[tokio::test]
+async fn a_plan_gets_a_brief_a_turn_limit_a_cost_cap_and_no_writing_tools() {
+    let (state, specs) = plan_cut(plan_script(), 1).await;
+    assert!(state.contains("landed"), "{state}");
+    let spec = &specs[0];
+    assert_eq!(spec.max_turns, Some(25));
+    assert_eq!(spec.max_budget_usd, Some(1.25));
+    assert!(spec.disallowed_tools.iter().any(|t| t == "Edit"));
+    assert!(spec.disallowed_tools.iter().any(|t| t == "Task"));
+    assert!(spec.prompt.contains("# The repository"), "{}", spec.prompt);
+    assert!(spec.prompt.contains("## Files ("), "{}", spec.prompt);
+}
+
+#[tokio::test]
+async fn a_plan_cut_off_by_its_money_or_turns_keeps_the_tasks_it_filed() {
+    for outcome in [Outcome::Budget, Outcome::MaxTurns] {
+        let (state, _) = plan_cut(plan_ending(outcome), 1).await;
+        assert!(state.contains("landed"), "{state}");
+    }
+}
+
+#[tokio::test]
+async fn a_plan_cut_off_before_it_filed_anything_fails_instead_of_running_again() {
+    for outcome in [Outcome::Budget, Outcome::MaxTurns] {
+        let (state, _) = plan_cut(plan_ending(outcome), 0).await;
+        assert!(state.contains("failed"), "{state}");
+    }
+}
+
 #[tokio::test]
 async fn a_goal_needs_a_producer() {
     let setup = setup("");

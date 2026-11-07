@@ -6,6 +6,7 @@ use crate::approver;
 use crate::budget::Meter;
 use crate::checks;
 use crate::evidence;
+use crate::planning;
 use crate::runlog::RunLog;
 use crate::studio::{
     Decision, Landing, MERGE_SOURCE, Stop, StopReason, Studio, StudioError, goal_of, other,
@@ -95,7 +96,11 @@ async fn work_on(
     let hire = studio.hire(&ticket.hire)?.clone();
     let runtime = studio.runtime(&hire.runtime)?;
     let mut session = log.last_session();
-    let mut prompt = first_prompt(&ticket);
+    let mut prompt = if ticket.kind == TicketKind::Plan {
+        plan_prompt(studio, &ticket, &worktree)
+    } else {
+        first_prompt(&ticket)
+    };
 
     loop {
         let ticket = studio.ticket(id)?;
@@ -465,6 +470,7 @@ impl AgentRun<'_> {
         .collect::<Vec<_>>()
         .join("\n\n");
         let mcp_config = self.mcp_config();
+        let planner = self.is_planner();
         let spec = RunSpec {
             cwd: worktree.path.clone(),
             prompt: prompt.to_string(),
@@ -473,6 +479,12 @@ impl AgentRun<'_> {
             resume: session.clone(),
             append_system_prompt: Some(system).filter(|p| !p.is_empty()),
             max_budget_usd: Some(allowance),
+            max_turns: planner.then_some(planning::PLAN_TURNS),
+            disallowed_tools: if planner {
+                planning::DISALLOWED.map(String::from).to_vec()
+            } else {
+                Vec::new()
+            },
             mcp_config,
             strict_mcp: !self.hire.user_mcp,
             env: project_env(self.studio, self.ticket),
@@ -716,6 +728,11 @@ impl AgentRun<'_> {
                         None if self.read_only && !said.is_empty() => Some(said),
                         summary => summary,
                     };
+                    if let Some(end) =
+                        self.cut_plan(&outcome, stopping, allowance, summary.as_deref())
+                    {
+                        return end;
+                    }
                     return match stopping {
                         Some(reason) => self.stopped(reason),
                         None => self.finished(outcome, summary),
@@ -869,6 +886,47 @@ impl AgentRun<'_> {
                 self.log.note("too late for the agent to hear a message");
             }
         }
+    }
+
+    /// Whether this run is the plan's own planner (not a reviewer).
+    fn is_planner(&self) -> bool {
+        self.ticket.kind == TicketKind::Plan && self.hire.id == self.ticket.hire
+    }
+
+    /// A plan cut off by its turns or its money keeps the tasks it filed: the
+    /// money is spent, and running the plan again would only file them twice.
+    /// With none filed, a plan that hit its own cap fails, since a retry would
+    /// hit it too; one stopped by a larger limit goes on as any run does.
+    fn cut_plan(
+        &self,
+        outcome: &Outcome,
+        stopping: Option<StopReason>,
+        allowance: f64,
+        summary: Option<&str>,
+    ) -> Option<Result<AgentEnd, StudioError>> {
+        if !self.is_planner() {
+            return None;
+        }
+        let why = match (outcome, stopping) {
+            (_, Some(StopReason::Budget)) | (Outcome::Budget, None) => "it reached its cost cap",
+            (Outcome::MaxTurns, None) => "it reached its turn limit",
+            _ => return None,
+        };
+        let filed = self.studio.tickets_of(self.id()).len();
+        if filed > 0 {
+            let note = crate::planning::cut_note(filed, why);
+            self.log.note(&note);
+            return Some(Ok(AgentEnd::Done(Some(
+                summary.map_or(note.clone(), |s| format!("{s}\n\n{note}")),
+            ))));
+        }
+        if allowance <= crate::planning::PLAN_USD {
+            return Some(self.fail(
+                FailureClass::Timeout,
+                &format!("the plan stopped ({why}) before it filed a task"),
+            ));
+        }
+        None
     }
 
     /// The run was stopped on purpose. A cancel, a send-back or a denial
@@ -1579,6 +1637,17 @@ async fn capture(
     Ok(())
 }
 
+/// What a plan is asked: the goal, its limits and a brief of the repository.
+fn plan_prompt(studio: &Studio, ticket: &Ticket, worktree: &Worktree) -> String {
+    let open = studio
+        .open_tasks(&ticket.project, &ticket.id)
+        .iter()
+        .map(|t| format!("{}: {} [{}]", t.id, t.title, t.state.kind()))
+        .collect();
+    let brief = planning::gather(&worktree.path, open);
+    planning::prompt(ticket, &planning::render(&brief))
+}
+
 fn first_prompt(ticket: &Ticket) -> String {
     let mut prompt = format!("Ticket {}: {}", ticket.id, ticket.title);
     if !ticket.goal.trim().is_empty() {
@@ -1589,28 +1658,6 @@ fn first_prompt(ticket: &Ticket) -> String {
     }
     if let Some(feedback) = &ticket.feedback {
         prompt.push_str(&format!("\n\nThe owner sent this back with: {feedback}"));
-    }
-    if ticket.kind == TicketKind::Plan {
-        let mut plan = format!(
-            "You are planning the goal \"{}\" for project {}. Read the code to see what \
-             it takes. File one ticket per independent, reviewable change with file_ticket, \
-             each small enough for one agent run, with acceptance criteria in its detail. \
-             Use ask_owner only if the goal is ambiguous. Don't change files. End with a \
-             short summary of the plan.",
-            ticket.goal, ticket.project
-        );
-        if let Some(version) = &ticket.version {
-            plan.push_str(&format!(
-                " The goal is a milestone towards version {version}."
-            ));
-        }
-        if !ticket.detail.trim().is_empty() {
-            plan.push_str(&format!(
-                "\n\nThe owner's brief:\n\n{}",
-                ticket.detail.trim()
-            ));
-        }
-        return plan;
     }
     prompt.push_str(
         "\n\nWork only in the current directory. Change files with the Edit and \

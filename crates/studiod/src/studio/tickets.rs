@@ -111,6 +111,20 @@ impl Studio {
         Ok(ticket)
     }
 
+    /// The project's tasks that are still open, except `except`, oldest first.
+    pub(crate) fn open_tasks(&self, project: &ProjectId, except: &TicketId) -> Vec<Ticket> {
+        lock(&self.store)
+            .tickets()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| {
+                &t.project == project
+                    && &t.id != except
+                    && !matches!(t.state, TicketState::Landed | TicketState::Cancelled)
+            })
+            .collect()
+    }
+
     /// A ticket filed by another ticket's agent. It lands on the parent's goal
     /// branch, and each parent may file only so many.
     pub(super) fn file_ticket(

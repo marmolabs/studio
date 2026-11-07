@@ -306,6 +306,14 @@ path.
 
 A goal is a line of text given to a planner: the project's lead, or else a
 producer. The planner reads the code and files tasks with `file_ticket`.
+
+A plan is cheap by design. The planner starts with a brief of the repository:
+the start of the README, every tracked file with its size (folded by folder in
+a large repository), the latest commits and the project's open tasks. It reads
+only what the plan needs, and can't change files, build or run tests. A plan
+run may take 25 turns and cost $1.25, counted in the project's day. If it is
+cut off by either after filing tasks, those tasks stand and the plan lands; if
+it filed none, the plan fails.
 Tasks with the same goal land on one branch, `studio/goal/<goal>`, so you
 review and merge a goal as a unit.
 

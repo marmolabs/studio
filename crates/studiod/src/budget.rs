@@ -48,6 +48,8 @@ pub(crate) struct Inputs<'a> {
     pub project_day: Option<f64>,
     pub ticket: &'a Ticket,
     pub hire: &'a Hire,
+    /// A cap on this one run that holds besides the studio's own `run_usd`.
+    pub run_cap: Option<f64>,
 }
 
 /// What this ticket may spend on its next run.
@@ -74,7 +76,10 @@ pub(crate) fn decide(
         hire_day: inputs.hire.daily_usd,
         ticket: Some(inputs.budget.ticket_usd),
         hire_ticket: inputs.hire.budget_per_ticket_usd,
-        run: inputs.budget.run_usd,
+        run: match (inputs.budget.run_usd, inputs.run_cap) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        },
         min_run: inputs.budget.min_run_usd,
     };
     let used = Used {

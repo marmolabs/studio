@@ -21,7 +21,7 @@ on the next run.
 | --- | --- | --- |
 | `daily_usd` | none, required | Studio-wide cap over any rolling 24 hours. |
 | `ticket_usd` | `2.0` | Cap for one task across all its runs. A hire's own cap can only lower it. |
-| `run_usd` | none | Optional cap for one run. |
+| `run_usd` | none | Optional cap for one run. A plan run is also capped at $1.25. |
 | `min_run_usd` | `0.05` | A run never starts with less allowance than this. |
 
 ### `[concurrency]` (required)
