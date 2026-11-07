@@ -225,7 +225,9 @@ in `<data>/operations.json`.
 ## Company rooms, work map and scorecard
 
 `/rooms/company` is a persistent company-wide room; each project also has a
-room at `/rooms/<project>`. Owner messages and announcements are stored in
+room at `/rooms/<project>`. "company" cannot be a project's name; a project
+that already has it keeps working, and its room is called `company-project`
+(use the id the rooms list gives). Owner messages and announcements are stored in
 `<data>/rooms/<room>.jsonl`. Mention a loaded hire by id, such as `@dev`, to ask
 for a reply. A mentioned hire gets the room history, its assignments and
 read-only access to the relevant project. It cannot act on tasks. Each reply is

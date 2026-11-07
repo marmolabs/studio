@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::io::{Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use studio_config::COMPANY_ROOM;
 use studio_config::config::ProjectEntry;
 use studio_core::ids::HireId;
 use studio_core::rule::Hire;
@@ -47,14 +48,33 @@ struct Stamp {
 }
 
 impl Studio {
+    /// The id of `project`'s room: its name, except for a project named like
+    /// the company room (one made before that name was refused), which gets a
+    /// name no project has.
+    pub(super) fn project_room(&self, project: &str) -> String {
+        if !project.eq_ignore_ascii_case(COMPANY_ROOM) {
+            return project.to_string();
+        }
+        let config = self.config();
+        let mut room = format!("{COMPANY_ROOM}-project");
+        while config
+            .projects
+            .iter()
+            .any(|other| other.name.eq_ignore_ascii_case(&room))
+        {
+            room.push_str("-project");
+        }
+        room
+    }
+
     fn room_project(&self, room: &str) -> Result<Option<ProjectEntry>, StudioError> {
-        if room == "company" {
+        if room == COMPANY_ROOM {
             return Ok(None);
         }
         self.config()
             .projects
             .iter()
-            .find(|project| project.name == room)
+            .find(|project| self.project_room(&project.name) == room)
             .cloned()
             .map(Some)
             .ok_or_else(|| other(format!("no room named {room}")))
@@ -202,7 +222,7 @@ impl Studio {
             ..RoomSummary::default()
         })
         .chain(config.projects.iter().map(|project| RoomSummary {
-            id: project.name.clone(),
+            id: self.project_room(&project.name),
             name: format!("{} team", project.name),
             project: Some(project.name.clone()),
             ..RoomSummary::default()
@@ -557,6 +577,43 @@ mod tests {
             .await;
         assert!(response.ok, "{:?}", response.error);
         serde_json::from_value(response.data).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_project_named_company_gets_a_room_of_its_own() {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = String::from("[budget]\ndaily_usd = 5.0\n\n[concurrency]\nmax_runs = 2\n");
+        for name in ["company", "company-project"] {
+            let dir = home.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            config.push_str(&format!(
+                "\n[[projects]]\nname = \"{name}\"\npath = \"{}\"\n",
+                dir.display()
+            ));
+        }
+        std::fs::write(home.path().join("studio.toml"), config).unwrap();
+        let studio = Studio::open(
+            StudioPaths::resolve(Some(home.path().to_path_buf())),
+            HashMap::new(),
+        )
+        .unwrap();
+        let ids: Vec<String> = studio.room_summaries().into_iter().map(|r| r.id).collect();
+        assert_eq!(
+            ids,
+            ["company", "company-project-project", "company-project"]
+        );
+        studio
+            .post_room(&studio.project_room("company"), TalkFrom::Owner, "Hello")
+            .unwrap();
+        assert_eq!(messages(&studio, "company-project-project").await.total, 1);
+        assert_eq!(messages(&studio, "company").await.total, 0);
+        let sent = studio
+            .handle(Request::TalkToRoom {
+                room: "company-project-project".into(),
+                text: "Hi".into(),
+            })
+            .await;
+        assert!(sent.ok, "{:?}", sent.error);
     }
 
     #[tokio::test]

@@ -129,6 +129,9 @@ Agents may read the source of Rust dependencies and the standard library
 without asking.
 ";
 
+/// The company-wide room's name, which no project may take.
+pub const COMPANY_ROOM: &str = "company";
+
 #[derive(Error, Debug)]
 pub enum StarterError {
     #[error("{0}")]
@@ -143,6 +146,8 @@ pub enum StarterError {
     DuplicatePath(PathBuf),
     #[error("project names use letters, digits, - and _ only: {0}")]
     BadName(String),
+    #[error("{0} is the name of the company room; give the project another name")]
+    ReservedName(String),
     #[error("{0}")]
     BadPack(String),
     #[error("a pack called {0} is already added")]
@@ -242,6 +247,9 @@ pub fn check_project(
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err(StarterError::BadName(name));
+    }
+    if name.eq_ignore_ascii_case(COMPANY_ROOM) {
+        return Err(StarterError::ReservedName(name));
     }
     let config = StudioConfig::load(paths)?;
     // Read the pack's template before touching studio.toml.
@@ -536,6 +544,12 @@ mod tests {
             again(Some("bad name")),
             Err(StarterError::BadName(_))
         ));
+        for name in ["company", "Company"] {
+            assert!(matches!(
+                again(Some(name)),
+                Err(StarterError::ReservedName(_))
+            ));
+        }
     }
 
     #[test]
