@@ -225,9 +225,9 @@ fn approver_note(note: &str) -> Option<(&'static str, &str, &str)> {
 }
 
 /// Counts reviews and critiques by the hire the notes name. The approver's
-/// and the router's notes say who decided (a project's lead decides for its
-/// project); an older note that doesn't counts for `approver` and `router`,
-/// the hires that do those jobs now.
+/// and the router's notes say who decided (older notes may name a
+/// lead, which once decided for its project); a note that doesn't counts for
+/// `approver` and `router`, the hires that do those jobs.
 pub(crate) fn from_notes(
     notes: &[Note],
     approver: Option<&str>,
