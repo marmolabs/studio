@@ -9,14 +9,17 @@ use crate::api::{
 };
 use crate::leadrun::{self, LeadRun, Tools};
 use crate::now_ms;
+use crate::router;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use studio_config::ProjectConfig;
 use studio_config::config::ProjectEntry;
-use studio_core::ids::{HireId, ProjectId};
+use studio_core::ids::ProjectId;
+use studio_core::rule::Hire;
 use studio_core::ticket::Ticket;
 
 const REVIEW_USD: f64 = 0.75;
@@ -310,6 +313,17 @@ impl Studio {
     ) -> Result<(), StudioError> {
         let summary = summary.trim().to_string();
         let mut proposed = proposed.into_iter().take(MAX_ACTIONS).collect::<Vec<_>>();
+        // A hire the model made up, or one a task can't be given, is left
+        // for the router to pick; the proposal is kept.
+        let team = self.assignable(entry);
+        for action in &mut proposed {
+            if let ManagerAct::CreateTask { hire, .. } = &mut action.act {
+                let named = hire.as_deref().map(str::trim).unwrap_or_default();
+                if !team.iter().any(|member| member.id.0 == named) {
+                    *hire = None;
+                }
+            }
+        }
         proposed.retain(|action| self.valid_action(entry, &action.act));
         let mut review = ManagerReview {
             id: String::new(),
@@ -389,6 +403,28 @@ impl Studio {
         Ok(())
     }
 
+    /// The hires a task in `entry`'s project can be given: not the leads, the
+    /// front desk (approver and router), reviewers, or a gate's critic.
+    fn assignable(&self, entry: &ProjectEntry) -> Vec<Hire> {
+        let critics: Vec<String> = ProjectConfig::load(&entry.path)
+            .ok()
+            .flatten()
+            .map(|config| config.gates.into_iter().map(|gate| gate.hire).collect())
+            .unwrap_or_default();
+        let leads: Vec<String> = self
+            .config()
+            .projects
+            .iter()
+            .filter_map(|project| project.lead.clone())
+            .collect();
+        let hires = self.all_hires();
+        router::candidates(&hires, &critics)
+            .into_iter()
+            .filter(|hire| !leads.contains(&hire.id.0))
+            .cloned()
+            .collect()
+    }
+
     fn valid_action(&self, entry: &ProjectEntry, act: &ManagerAct) -> bool {
         let task_ok = act.task().is_some_and(|task| {
             self.ticket(&studio_core::ids::TicketId::new(task))
@@ -396,12 +432,7 @@ impl Studio {
         });
         match act {
             ManagerAct::StartGoal { goal, .. } => !goal.trim().is_empty(),
-            ManagerAct::CreateTask { title, hire, .. } => {
-                !title.trim().is_empty()
-                    && hire.as_deref().is_none_or(|hire| {
-                        !hire.trim().is_empty() && self.hire(&HireId::new(hire)).is_ok()
-                    })
-            }
+            ManagerAct::CreateTask { title, .. } => !title.trim().is_empty(),
             ManagerAct::SendBack { note, .. } => task_ok && !note.trim().is_empty(),
             ManagerAct::Tell { text, .. } => task_ok && !text.trim().is_empty(),
             ManagerAct::SetPriority { priority, .. } => {
@@ -674,6 +705,14 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
     }
     let budget = studio.config().budget.daily_usd;
     let waiting = waiting_lines(studio, &entry.name);
+    let mut team = studio
+        .assignable(entry)
+        .iter()
+        .map(|hire| format!("- {}: {}, {}", hire.id, hire.name, hire.role))
+        .collect::<Vec<_>>();
+    if team.is_empty() {
+        team.push("- No one yet: leave hire empty.".to_string());
+    }
     format!(
         "You are the manager of {project}. Review the project and decide what should happen next. \
          Read files when useful. Return only a JSON object with this shape: \
@@ -684,13 +723,16 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
          set_priority {{task,priority}} (0-1000, larger runs first), \
          set_dependencies {{task,depends_on}} (all must land first), and cancel {{task}}. \
          Propose no more than four useful actions; an empty actions array is correct when no action is needed. \
+         For create_task, hire must be the id of one of the hires listed below, or empty to let the router pick. \
          Never invent task or hire ids. Do not propose shipping, releasing, changing files, or spending money. \
          Prefer unblocking existing work over creating more. Use plain text inside the JSON, not markdown.\n\n\
          Project: {project}\nManager hire id: {lead}\nCompany daily budget: ${budget:.2}\n\n## Work\n{work}\n\n\
+         ## Hires a task can be given\n{team}\n\n\
          ## Already proposed, still waiting for the owner\n\
          Do not propose these again, in any wording.\n{waiting}",
         project = entry.name,
         work = work.join("\n"),
+        team = team.join("\n"),
         waiting = waiting.join("\n"),
     )
 }
@@ -898,6 +940,34 @@ mod tests {
         // The model proposed the same act again; it was dropped.
         assert_eq!(company.studio.operations().reviews.len(), 2);
         assert_eq!(pending(&company).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_review_lists_who_can_take_a_task_and_keeps_a_task_for_an_unknown_hire() {
+        let company = company(
+            r#"{"summary":"Two tasks.","actions":[
+                {"title":"Ghost task","act":{"do":"create_task","title":"One","detail":"","hire":"ghost"}},
+                {"title":"Lead task","act":{"do":"create_task","title":"Two","detail":"","hire":"nora"}},
+                {"title":"Real task","act":{"do":"create_task","title":"Three","detail":"","hire":"dev"}}]}"#,
+        );
+        let entry = company.studio.project(&ProjectId::new("shop")).unwrap();
+        company.studio.run_review(&entry).await;
+        let prompt = &company.runtime.specs()[0].prompt;
+        let hires = prompt.split("## Hires a task can be given").nth(1).unwrap();
+        let hires = hires.split("## Already proposed").next().unwrap();
+        assert!(hires.contains("- dev: dev, engineer"), "{hires}");
+        assert!(!hires.contains("nora"), "{hires}");
+        let hire = |title: &str| {
+            let actions = company.studio.operations().actions;
+            let action = actions.iter().find(|a| a.title == title).unwrap();
+            let ManagerAct::CreateTask { hire, .. } = &action.act else {
+                panic!("not a task");
+            };
+            hire.clone()
+        };
+        assert_eq!(hire("Ghost task"), None);
+        assert_eq!(hire("Lead task"), None);
+        assert_eq!(hire("Real task"), Some("dev".to_string()));
     }
 
     #[tokio::test]
