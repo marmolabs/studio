@@ -79,21 +79,22 @@ async fn facts(config: &AppConfig, id: &str) -> topcoat::Result<Facts> {
         .await
         .unwrap_or_default();
     let goal_ids = cost::goal_ids(&tickets, &ticket);
-    let (own, whole) = tokio::join!(
+    let (own, whole, status) = tokio::join!(
         cost::read(&config.socket, vec![id.to_string()]),
         cost::read(&config.socket, goal_ids),
+        client::call::<client::Status>(&config.socket, Request::Status),
     );
+    let team = status.map(|s| s.team).unwrap_or_default();
+    let name_of = |hire: &str| cost::name_in(&team, hire);
     let costs = if ticket.kind == TicketKind::Plan {
-        cost::costs(vec![("This goal", "on this goal", whole)], &|h| {
-            h.to_string()
-        })
+        cost::costs(vec![("This goal", "on this goal", whole)], &name_of)
     } else {
         cost::costs(
             vec![
                 ("This task", "on this task", own),
                 ("Its goal", "on its goal", whole),
             ],
-            &|h| h.to_string(),
+            &name_of,
         )
     };
     Ok(Facts {

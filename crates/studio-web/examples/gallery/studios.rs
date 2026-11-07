@@ -403,7 +403,7 @@ fn seed_costs(paths: &StudioPaths, ids: &Ids) -> Result<()> {
         Approval, Coding, Conversation, ManagerReview, Plan, Review, Routing, Standup,
     };
     let mut past = Past::open(paths, 6)?;
-    let (nora, dev, haiku) = (("nora", "opus"), ("dev", "sonnet"), "haiku");
+    let (nora, dev, haiku) = (("shop-lead", "opus"), ("dev", "sonnet"), "haiku");
     // The checkout goal: a plan, a little coding, and nineteen approvals by
     // the lead on the dearest model.
     let goal = &ids.checkout_goal;
@@ -443,17 +443,24 @@ fn seed_costs(paths: &StudioPaths, ids: &Ids) -> Result<()> {
     )?;
     // The projects' talk, standups and manager reviews.
     past.book("shop/talk", "shop", nora, Conversation, 6, 0.84)?;
-    past.book("shop/talk", "shop", ("nora", haiku), Standup, 4, 0.03)?;
+    past.book("shop/talk", "shop", ("shop-lead", haiku), Standup, 4, 0.03)?;
     past.book("shop/operations", "shop", nora, ManagerReview, 1, 0.31)?;
     past.book(
         "editor/talk",
         "editor",
-        ("sam", "opus"),
+        ("editor-lead", "opus"),
         Conversation,
         3,
         0.22,
     )?;
-    past.book("editor/talk", "editor", ("sam", haiku), Standup, 4, 0.02)?;
+    past.book(
+        "editor/talk",
+        "editor",
+        ("editor-lead", haiku),
+        Standup,
+        4,
+        0.02,
+    )?;
     Ok(())
 }
 
@@ -463,7 +470,7 @@ fn seed_costs(paths: &StudioPaths, ids: &Ids) -> Result<()> {
 fn seed_approval_day(paths: &StudioPaths) -> Result<()> {
     use studio_store::SpendKind::{Approval, Coding, Plan, Review};
     let mut past = Past::open(paths, 8)?;
-    let (nora, dev) = (("nora", "opus"), ("dev", "sonnet"));
+    let (nora, dev) = (("shop-lead", "opus"), ("dev", "sonnet"));
     past.book("SHOP-1", "shop", ("producer", "sonnet"), Plan, 2, 2.08)?;
     past.book("SHOP-2", "shop", dev, Coding, 3, 1.52)?;
     past.book("SHOP-2", "shop", ("reviewer", "opus"), Review, 2, 0.46)?;
