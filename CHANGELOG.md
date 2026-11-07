@@ -32,8 +32,14 @@
   failed on restart. Conversational and quick model runs reserve their budgets
   before starting. Room replies queue follow-up mentions, project rooms only
   include their own assignments, and room history has cursor pagination and
-  cached summaries. Malformed operations state is preserved and blocks new runs
-  rather than being silently overwritten.
+  cached summaries. Malformed operations state is preserved and blocks manager
+  reviews and settings changes (task runs carry on) rather than being silently
+  overwritten.
+- Simulation covers only conversations, rooms, standups, setup and manager
+  reviews; coding, checks, reviews, the approver and the router always use the
+  hires' own runtimes. Reviews no longer repeat what waits for approval, are
+  told which hires can take a task, and autonomy starts at most 3 new goals or
+  tasks a day per project. "company" is reserved as a room name.
 
 ## 0.1.0
 
