@@ -190,18 +190,22 @@ the configured interval (5 minutes to 24 hours). Shipping and publishing always
 need the owner at every level. Actions are claimed atomically so concurrent
 approvals cannot execute them twice. An interrupted claim becomes failed on
 restart. If `operations.json` is unreadable, it is preserved, the UI shows the
-problem, and changes and new model runs are blocked until it is repaired.
+problem, and manager reviews and changes to these settings are blocked until it
+is repaired. Task runs, conversations and everything else carry on in live mode.
 
 ## Simulation and live runtimes
 
 **Studio → Manager autonomy** also switches new runs between configured runtimes
 and local simulation. Configured runtimes are the hires' normal models.
 Simulation returns scripted responses without calling a model and records zero
-model cost. It supports conversations, room replies and manager reviews without
-changing tasks; the review proposes no actions. Existing work and history remain
-visible, and agents already running when the switch changes finish their current
-run. The choice is kept with the other operations settings in
-`<data>/operations.json`.
+model cost. It applies only to the runs that talk to you: conversations with
+leads and hires, room replies, standups, setup runs and manager reviews (a
+review proposes no actions). Coding, checks, task reviews, critic gates, the
+permission approver and the router always use the hire's configured runtime, so
+a simulation can never allow a permission or pass work. Existing work and
+history remain visible, and agents already running when the switch changes
+finish their current run. The choice is kept with the other operations settings
+in `<data>/operations.json`.
 
 ## Company rooms, work map and scorecard
 

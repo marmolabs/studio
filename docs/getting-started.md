@@ -196,8 +196,9 @@ against the relevant budgets. Shipping, publishing and budget changes always
 remain yours.
 
 To try the company without model spend, choose **Switch to simulation** in the
-same settings section. New conversations, room replies and manager reviews then
-use local scripted responses and record zero model cost. Existing projects and
+same settings section. New conversations, room replies, standups and manager
+reviews then use local scripted responses and record zero model cost; coding
+and its checks and reviews still use your hires' models. Existing projects and
 history stay visible; agents already running finish their current run. Choose
 **Use configured runtimes** to return to your hires' normal models.
 
