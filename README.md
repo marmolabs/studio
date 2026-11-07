@@ -127,14 +127,14 @@ write a lead's hire file.
 ## How it works
 
 - **Leads** are hires you name for a project. A lead answers you, plans the
-  project's goals, assigns its tasks and decides the routine tool calls its
-  team asks about. Without one, a producer, a router and an approver do those
-  jobs, and there is nobody to talk to.
+  project's goals, assigns its tasks and checks what comes back. Without one,
+  a producer plans, and there is nobody to talk to. A cheap approver answers
+  every project's routine tool questions and a router hands out tasks.
 - **Goals** are planned into **tasks** that run one after another on one goal
   branch, each in its own worktree. **Hires** are agent roles written as
   Markdown files: a model, a prompt and optional limits.
 - **Rules** are Markdown files too: protect paths, gate commands, lint
-  changes, require checks or guide the agent. The lead (or the approver)
+  changes, require checks or guide the agent. The approver
   decides the tool calls no rule covers, so only dangerous ones reach you.
 - **Checks and review.** The project's checks run, critics judge screenshots
   and design where a gate asks, then a reviewer on a different model reads the

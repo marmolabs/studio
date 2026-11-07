@@ -17,17 +17,17 @@ The studio works like a small company:
   merging a goal into your branch and every release. You talk to one lead for
   each project.
 - **A lead** runs a project, if you name one, and is who you talk to. It plans
-  the project's goals, assigns its tasks, checks what comes back and answers
-  its team's routine questions, and comes to you for what it can't decide. See
+  the project's goals, assigns its tasks, checks what comes back and
+  comes to you for what it can't decide. See
   [Project leads](#project-leads).
 - **The makers** are the hires that do the work: engineers, designers, writers
   and the like. Each takes one task at a time, in its own worktree.
 - **The review room and the QA lab are shared.** Reviewers and critics read the
   work of every project, and every project's checks run in the QA lab. A
   reviewer runs on a different model from the work's author.
-- **The front desk** is the approver and the router. A project with no lead
-  has them answer its routine questions and assign its tasks. There is
-  nobody to talk to there.
+- **The front desk** is the approver and the router. They serve every
+  project: the approver answers the routine tool questions and the router
+  hands out tasks nobody was named for.
 
 On the web UI's office view, each project has a team area with a sign, and the
 lounge holds the hires with nothing to do. Picking a person or their task opens
@@ -82,23 +82,12 @@ jobs in that project, and nothing else changes:
 - Planning: a goal given without a hire goes to the lead instead of the
   producer. Give the goal a version (`studio goal --milestone 0.4`) and it is
   a [milestone](#milestones).
-- Assigning: a task filed without a hire is assigned by the lead, who picks
-  from its team, instead of by the router. Its team is every hire that takes
-  tasks: not the approver, router, reviewers, leads or gate critics, and not
-  the lead itself.
-- Routine questions: a tool call no rule covers is decided by the lead instead
-  of the approver, under the same policy. The lead sends you exactly what the
-  approver would: what is dangerous, irreversible or reaches outside the
-  project. When it does, it also writes the question in a few plain words
-  ("Send the launch email?"), which is what HQ shows.
 - The standup: one or two sentences on the project's day, for HQ.
 
-A lead never answers for its own tasks; those go to the approver. Owner
-rules and questions from agents reach you as before. A project with no lead, or
-whose lead isn't a hire, keeps the producer, router and approver. Each call the
-lead makes to assign or to answer is capped at five cents and charged to the
-task, like theirs. HQ says how many routine questions your leads answered
-today.
+A project with no lead, or whose lead isn't a hire, keeps the producer for
+planning. Either way the approver and the router serve every project: a lead
+never decides tool calls or picks who takes a task. Each call the lead makes to
+plan or check is charged to the task, like theirs.
 
 ## Talking to a lead
 
@@ -399,8 +388,8 @@ question or gate always stops it.
 
 ## The approver and the router
 
-Two cheap hires work for the studio itself. In a project with a [lead](#project-leads),
-the lead does both jobs for that project.
+Two cheap hires work for the studio itself, for every project, whether or not
+it has a [lead](#project-leads).
 
 The approver decides tool calls that no rule covers, so only dangerous ones
 reach you. It allows what is a normal part of the task inside its worktree,
@@ -418,6 +407,10 @@ without a hire). Without a router, the first engineer takes it.
 Each call is capped at five cents and charged to the task. `studio init`
 writes both hires; deleting `hires/approver.md` or `hires/router.md` turns that
 one off.
+
+These calls start the model with no tools, a short prompt and none of your
+own settings, notes or commands, so each costs a fraction of a cent on a small
+model.
 
 ## Rules
 

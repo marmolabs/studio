@@ -97,7 +97,7 @@ page's own main area.
   a reply, the thread says "Nora is replying...". The header has a small
   **Change lead** menu: another lead, a new hire or no lead. A project without
   a lead has a card in place of the composer: "{project} has no lead yet. A
-  lead plans the work, hands it out and answers the team's routine questions."
+  lead plans the work, hands it out and checks it."
   with two ways to give it one, **Hire a lead** (a name, suggested, on a strong
   model) and **Pick one you have** (left out when no hire has the role lead);
   the page turns into the conversation with the new lead as it is named. A rail

@@ -278,7 +278,7 @@ async fn a_project_without_a_lead_has_a_card_where_the_message_box_would_be() {
     let card = by_id(&html, "lead-card");
     assert!(
         card.text().starts_with(
-            "docs has no lead yet. A lead plans the work, hands it out and answers the team's routine questions."
+            "docs has no lead yet. A lead plans the work, hands it out and checks it."
         ),
         "{}",
         card.text()
