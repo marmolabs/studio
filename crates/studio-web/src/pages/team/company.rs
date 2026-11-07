@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::{Ticket, TicketKind};
 use studiod::api::{ManagerAction, OperationState};
@@ -17,6 +17,8 @@ struct Work {
     state: String,
     icon: &'static str,
     next: String,
+    priority: u32,
+    dependencies: Vec<String>,
     person: Person,
     cost: f64,
     href: String,
@@ -33,7 +35,15 @@ struct Project {
     entry: LeadEntry,
     goals: Vec<Goal>,
     loose: Vec<Work>,
+    graph: Vec<GraphNode>,
     reviewing: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct GraphNode {
+    work: Work,
+    depth: usize,
+    critical: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -235,7 +245,18 @@ fn work(office: &Office, ticket: &Ticket) -> Work {
     let id = ticket.id.to_string();
     let project = ticket.project.to_string();
     let state = ticket.state.kind().to_string();
+    let blocked_by = ticket
+        .depends_on
+        .iter()
+        .filter(|dependency| {
+            office
+                .ticket(&dependency.to_string())
+                .is_none_or(|ticket| ticket.state.kind() != "landed")
+        })
+        .map(|dependency| dependency.to_string())
+        .collect::<Vec<_>>();
     let next = match ticket.state.kind() {
+        "queued" if !blocked_by.is_empty() => format!("Blocked by {}", blocked_by.join(", ")),
         "queued" => "Waiting for a desk".to_string(),
         "claimed" | "working" => "Being built now".to_string(),
         "checking" => "Checks are running".to_string(),
@@ -257,6 +278,8 @@ fn work(office: &Office, ticket: &Ticket) -> Work {
         state,
         icon: ui::shown(&ticket.state),
         next,
+        priority: ticket.priority,
+        dependencies: ticket.depends_on.iter().map(|id| id.to_string()).collect(),
         person: Person::of(office, &ticket.hire.to_string()),
         cost: office.spend.get(&id).copied().unwrap_or(0.0),
     }
@@ -291,11 +314,106 @@ fn projects(office: &Office, team: &Team) -> Vec<Project> {
                 .reviewing
                 .iter()
                 .any(|project| project == &entry.project);
+            let graph = dependency_graph(office, &entry.project);
             Project {
                 entry,
                 goals,
                 loose,
+                graph,
                 reviewing,
+            }
+        })
+        .collect()
+}
+
+fn graph_depth(
+    id: &str,
+    edges: &HashMap<String, Vec<String>>,
+    cache: &mut HashMap<String, usize>,
+    visiting: &mut HashSet<String>,
+) -> usize {
+    if let Some(depth) = cache.get(id) {
+        return *depth;
+    }
+    if !visiting.insert(id.to_string()) {
+        return 0;
+    }
+    let depth = edges
+        .get(id)
+        .and_then(|dependencies| {
+            dependencies
+                .iter()
+                .map(|dependency| graph_depth(dependency, edges, cache, visiting))
+                .max()
+        })
+        .map_or(0, |depth| depth + 1);
+    visiting.remove(id);
+    cache.insert(id.to_string(), depth);
+    depth
+}
+
+fn dependency_graph(office: &Office, project: &str) -> Vec<GraphNode> {
+    let tickets = office
+        .tickets
+        .iter()
+        .filter(|ticket| {
+            ticket.project.to_string() == project
+                && ticket.kind == TicketKind::Work
+                && !matches!(ticket.state.kind(), "landed" | "cancelled")
+        })
+        .collect::<Vec<_>>();
+    let open: HashSet<String> = tickets.iter().map(|ticket| ticket.id.to_string()).collect();
+    let edges: HashMap<String, Vec<String>> = tickets
+        .iter()
+        .map(|ticket| {
+            let dependencies = ticket
+                .depends_on
+                .iter()
+                .map(|id| id.to_string())
+                .filter(|id| open.contains(id))
+                .collect();
+            (ticket.id.to_string(), dependencies)
+        })
+        .collect();
+    let mut depths = HashMap::new();
+    for ticket in &tickets {
+        graph_depth(
+            &ticket.id.to_string(),
+            &edges,
+            &mut depths,
+            &mut HashSet::new(),
+        );
+    }
+    let mut end = None;
+    let mut deepest = 0;
+    for ticket in &tickets {
+        let depth = depths.get(&ticket.id.to_string()).copied().unwrap_or(0);
+        if depth > deepest {
+            deepest = depth;
+            end = Some(ticket.id.to_string());
+        }
+    }
+    let mut critical = BTreeSet::new();
+    let mut current = end;
+    while let Some(id) = current {
+        if !critical.insert(id.clone()) {
+            break;
+        }
+        current = edges
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .max_by_key(|dependency| depths.get(*dependency).copied().unwrap_or(0))
+            .cloned();
+    }
+    tickets
+        .into_iter()
+        .map(|ticket| {
+            let id = ticket.id.to_string();
+            GraphNode {
+                work: work(office, ticket),
+                depth: depths.get(&id).copied().unwrap_or(0),
+                critical: critical.contains(&id),
             }
         })
         .collect()
@@ -319,6 +437,9 @@ async fn work_row(work: Work, nested: bool) -> topcoat::Result<impl View> {
                     faces::face(seed: work.person.hire.clone(), role: work.person.role, tint: 0, size: 24)
                     <span class="max-w-[120px] truncate">(work.person.name)</span>
                 </a>
+                if work.priority != studio_core::ticket::DEFAULT_PRIORITY {
+                    <span class="rounded-full border border-line-2 px-2 py-0.5 text-[11px] tabular-nums text-fg-2">"P" (work.priority)</span>
+                }
                 <span class="w-[70px] text-right text-[12px] tabular-nums text-fg-3">(ui::usd(work.cost))</span>
                 <a href=(work.href) class=(ui::BUTTON_SM)>"Open"</a>
             </div>
@@ -413,10 +534,55 @@ async fn scorecard_view(scorecard: Scorecard) -> topcoat::Result<impl View> {
 }
 
 #[component]
+async fn graph_view(nodes: Vec<GraphNode>) -> topcoat::Result<impl View> {
+    let deepest = nodes.iter().map(|node| node.depth).max().unwrap_or(0);
+    let critical = nodes
+        .iter()
+        .filter(|node| node.critical)
+        .map(|node| node.work.title.clone())
+        .collect::<Vec<_>>()
+        .join(" → ");
+    Ok(view! {
+        <section class="border-t border-line px-4 py-4" aria-label="Dependency graph">
+            <div class="mb-3">
+                <h3 class="text-[12px] font-medium uppercase text-fg-3">"Dependency graph"</h3>
+                if !critical.is_empty() {
+                    <p class="m-0 mt-1 text-[12px] text-attn-fg">"Critical path: " (critical)</p>
+                }
+            </div>
+            <div class="flex items-stretch gap-3 overflow-x-auto pb-2">
+                for depth in 0..=deepest {
+                    <div class="flex min-w-[210px] flex-1 flex-col gap-2" data-depth=(depth)>
+                        for node in nodes.iter().filter(|node| node.depth == depth) {
+                            <div class=(format!("rounded-xl border px-3 py-2.5 {}", if node.critical { "border-attn-line bg-attn-bg" } else { "border-line bg-bg" })) data-critical=(node.critical) data-task=(node.work.id.clone())>
+                                <a href=(node.work.href.clone()) class="block text-[13px] font-medium hover:underline">(node.work.title.clone())</a>
+                                <span class="mt-1 block text-[11.5px] text-fg-3">"P" (node.work.priority) " · " (node.work.next.clone())</span>
+                                if !node.work.dependencies.is_empty() {
+                                    <span class="mt-1 block text-[11.5px] text-fg-3">"after "
+                                        for (index, dependency) in node.work.dependencies.iter().enumerate() {
+                                            if index > 0 { ", " }
+                                            <a href=(format!("/tickets/{dependency}")) class="font-mono hover:underline">(dependency)</a>
+                                        }
+                                    </span>
+                                }
+                            </div>
+                        }
+                    </div>
+                    if depth < deepest {
+                        <span class="self-center text-fg-3" aria-hidden="true">"→"</span>
+                    }
+                }
+            </div>
+        </section>
+    })
+}
+
+#[component]
 async fn project_map(project: Project) -> topcoat::Result<impl View> {
     let entry = project.entry;
     let goals = project.goals;
     let loose = project.loose;
+    let graph = project.graph;
     let tint = entry.tint;
     let lead = entry.lead.clone();
     let open = goals
@@ -459,6 +625,9 @@ async fn project_map(project: Project) -> topcoat::Result<impl View> {
                     </ul>
                 }
             </div>
+            if !graph.is_empty() {
+                graph_view(nodes: graph)
+            }
         </section>
     })
 }
@@ -635,6 +804,33 @@ mod tests {
         assert_eq!(score.projects[0].spend, 2.0);
         assert_eq!(score.workload[0].delivered, 1);
         assert_eq!(score.workload[0].role, "engineer");
+    }
+
+    #[test]
+    fn the_dependency_graph_has_depth_and_a_critical_path() {
+        let ticket = |id: &str, depends_on: &[&str]| {
+            serde_json::from_value::<Ticket>(json!({
+                "id":id, "project":"shop", "title":id, "goal":"",
+                "hire":"dev", "state":"queued", "attempts":0,
+                "base_branch":"main", "created_at":1, "depends_on":depends_on,
+            }))
+            .unwrap()
+        };
+        let office = Office {
+            tickets: vec![
+                ticket("S-1", &[]),
+                ticket("S-2", &["S-1"]),
+                ticket("S-3", &["S-2"]),
+            ],
+            ..Office::default()
+        };
+        let graph = dependency_graph(&office, "shop");
+        assert_eq!(
+            graph.iter().map(|node| node.depth).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert!(graph.iter().all(|node| node.critical));
+        assert_eq!(graph[1].work.next, "Blocked by S-1");
     }
 
     #[test]

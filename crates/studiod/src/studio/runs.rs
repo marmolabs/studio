@@ -211,14 +211,7 @@ impl Studio {
             })
             .map(|t| (t.project.clone(), goal_of(t)))
             .collect();
-        Ok(tickets
-            .into_iter()
-            .find(|t| {
-                t.state == TicketState::Queued
-                    && !busy.contains(&(t.project.clone(), goal_of(t)))
-                    && !working.contains(&t.id.to_string())
-            })
-            .map(|t| t.id))
+        Ok(next_queued_from(&tickets, &working, &busy))
     }
 
     /// Resumes each ticket held for budget that a run would now be funded for.
@@ -450,9 +443,105 @@ impl Studio {
     }
 }
 
+fn next_queued_from(
+    tickets: &[Ticket],
+    working: &std::collections::HashSet<String>,
+    busy: &std::collections::HashSet<(ProjectId, String)>,
+) -> Option<TicketId> {
+    let known: HashMap<String, &Ticket> = tickets
+        .iter()
+        .map(|ticket| (ticket.id.to_string(), ticket))
+        .collect();
+    let mut candidates = tickets
+        .iter()
+        .filter(|ticket| {
+            ticket.state == TicketState::Queued
+                && !busy.contains(&(ticket.project.clone(), goal_of(ticket)))
+                && !working.contains(&ticket.id.to_string())
+                && ticket.depends_on.iter().all(|dependency| {
+                    known
+                        .get(&dependency.to_string())
+                        .is_some_and(|ticket| ticket.state == TicketState::Landed)
+                })
+        })
+        .collect::<Vec<_>>();
+    // Stable: tasks with the same priority keep their creation order.
+    candidates.sort_by_key(|ticket| std::cmp::Reverse(ticket.priority));
+    candidates.first().map(|ticket| ticket.id.clone())
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+    use serde_json::{Value, json};
+
+    fn ticket(
+        id: &str,
+        created_at: u64,
+        state: Value,
+        priority: u32,
+        depends_on: &[&str],
+        goal: &str,
+    ) -> Ticket {
+        serde_json::from_value(json!({
+            "id":id, "project":"shop", "title":id, "goal":goal, "hire":"dev",
+            "state":state, "attempts":0, "base_branch":"main", "created_at":created_at,
+            "priority":priority, "depends_on":depends_on,
+        }))
+        .unwrap()
+    }
+
+    fn choose(tickets: &[Ticket]) -> Option<TicketId> {
+        next_queued_from(tickets, &Default::default(), &Default::default())
+    }
+
+    #[test]
+    fn the_highest_priority_ready_task_wins_and_ties_stay_oldest_first() {
+        let tickets = vec![
+            ticket("S-1", 1, json!("queued"), 10, &[], ""),
+            ticket("S-2", 2, json!("queued"), 100, &[], ""),
+            ticket("S-3", 3, json!("queued"), 100, &[], ""),
+        ];
+        assert_eq!(choose(&tickets).unwrap().0, "S-2");
+        let tied = vec![
+            ticket("S-1", 1, json!("queued"), 50, &[], ""),
+            ticket("S-2", 2, json!("queued"), 50, &[], ""),
+        ];
+        assert_eq!(choose(&tied).unwrap().0, "S-1");
+    }
+
+    #[test]
+    fn only_landed_dependencies_unlock_work() {
+        let landed = ticket("S-1", 1, json!("landed"), 50, &[], "");
+        let dependent = ticket("S-2", 2, json!("queued"), 50, &["S-1"], "");
+        assert_eq!(choose(&[landed, dependent]).unwrap().0, "S-2");
+        for state in [
+            json!("queued"),
+            json!("cancelled"),
+            json!({"failed":{"class":"checks","detail":"no"}}),
+        ] {
+            let blocked = ticket("S-1", 1, state, 50, &[], "");
+            let dependent = ticket("S-2", 2, json!("queued"), 100, &["S-1"], "");
+            assert!(choose(&[blocked, dependent]).is_none_or(|id| id.0 == "S-1"));
+        }
+        let dependent = ticket("S-2", 2, json!("queued"), 100, &["MISSING"], "");
+        assert!(choose(&[dependent]).is_none());
+    }
+
+    #[test]
+    fn self_dependencies_cycles_and_busy_goals_do_not_start() {
+        let own = ticket("S-1", 1, json!("queued"), 100, &["S-1"], "");
+        assert!(choose(&[own]).is_none());
+        let a = ticket("S-1", 1, json!("queued"), 100, &["S-2"], "");
+        let b = ticket("S-2", 2, json!("queued"), 100, &["S-1"], "");
+        assert!(choose(&[a, b]).is_none());
+
+        let active = ticket("S-1", 1, json!("working"), 50, &[], "checkout");
+        let queued = ticket("S-2", 2, json!("queued"), 100, &[], "checkout");
+        let busy = [(ProjectId::new("shop"), "checkout".to_string())].into();
+        assert!(next_queued_from(&[active, queued], &Default::default(), &busy).is_none());
+    }
 
     #[test]
     fn quota_waits_for_the_reset_or_a_while() {

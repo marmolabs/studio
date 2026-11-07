@@ -115,6 +115,16 @@ pub enum Request {
     Resume {
         ticket: String,
     },
+    /// Sets a task's scheduling priority; larger values run first.
+    SetPriority {
+        ticket: String,
+        priority: u32,
+    },
+    /// Replaces a queued or failed task's dependencies.
+    SetDependencies {
+        ticket: String,
+        depends_on: Vec<String>,
+    },
     /// Stops a running ticket's agent and holds the ticket until `Resume`.
     Pause {
         ticket: String,
@@ -603,6 +613,14 @@ pub enum ManagerAct {
         task: String,
         text: String,
     },
+    SetPriority {
+        task: String,
+        priority: u32,
+    },
+    SetDependencies {
+        task: String,
+        depends_on: Vec<String>,
+    },
     Cancel {
         task: String,
     },
@@ -616,6 +634,8 @@ impl ManagerAct {
             | Self::Pause { task }
             | Self::Resume { task }
             | Self::Tell { task, .. }
+            | Self::SetPriority { task, .. }
+            | Self::SetDependencies { task, .. }
             | Self::Cancel { task } => Some(task),
         }
     }
@@ -628,6 +648,8 @@ impl ManagerAct {
             Self::Pause { .. } => "Pause work",
             Self::Resume { .. } => "Resume work",
             Self::Tell { .. } => "Message an employee",
+            Self::SetPriority { .. } => "Change priority",
+            Self::SetDependencies { .. } => "Change dependencies",
             Self::Cancel { .. } => "Cancel work",
         }
     }

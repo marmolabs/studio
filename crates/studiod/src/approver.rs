@@ -335,6 +335,8 @@ mod tests {
             detail: "Escape opens it.".into(),
             source: None,
             version: None,
+            priority: studio_core::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         };
         let text = prompt(
             &ticket,

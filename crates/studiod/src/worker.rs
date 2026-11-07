@@ -1688,6 +1688,8 @@ mod tests {
             detail: String::new(),
             source: None,
             version: None,
+            priority: studio_core::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         }
     }
 

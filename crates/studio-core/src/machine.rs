@@ -5,6 +5,29 @@ use crate::ticket::{FailureClass, HeldReason, Ticket, TicketKind, TicketState};
 pub const MAX_ATTEMPTS: u32 = 3;
 
 pub fn apply(ticket: &Ticket, event: &Event) -> Result<Ticket, TransitionError> {
+    match event {
+        Event::PriorityChanged { priority }
+            if !matches!(ticket.state, TicketState::Landed | TicketState::Cancelled) =>
+        {
+            let mut next = ticket.clone();
+            next.priority = *priority;
+            return Ok(next);
+        }
+        Event::DependenciesChanged { depends_on }
+            if matches!(
+                ticket.state,
+                TicketState::Queued | TicketState::Failed { .. }
+            ) =>
+        {
+            let mut next = ticket.clone();
+            next.depends_on = depends_on.clone();
+            return Ok(next);
+        }
+        Event::PriorityChanged { .. } | Event::DependenciesChanged { .. } => {
+            return Err(err(ticket, event));
+        }
+        _ => {}
+    }
     let next = match (&ticket.state, event) {
         (TicketState::Queued, Event::Claimed) => TicketState::Claimed,
 
@@ -151,6 +174,8 @@ pub fn replay(events: &[Event]) -> Result<Ticket, ReplayError> {
         detail,
         source,
         version,
+        priority,
+        depends_on,
     } = first
     else {
         return Err(ReplayError::MissingCreated);
@@ -173,6 +198,8 @@ pub fn replay(events: &[Event]) -> Result<Ticket, ReplayError> {
         detail: detail.clone(),
         source: source.clone(),
         version: version.clone(),
+        priority: *priority,
+        depends_on: depends_on.clone(),
     };
 
     for event in &events[1..] {
@@ -265,6 +292,8 @@ mod tests {
             detail: String::new(),
             source: None,
             version: None,
+            priority: crate::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         }
     }
 
@@ -281,6 +310,35 @@ mod tests {
         let ticket = replay(&[event, Event::Claimed]).unwrap();
         assert_eq!(ticket.version.as_deref(), Some("0.4"));
         assert_eq!(new_ticket().version, None);
+    }
+
+    #[test]
+    fn priority_and_dependencies_survive_replay_without_changing_work_state() {
+        let mut wire = serde_json::to_value(created_event()).unwrap();
+        let fields = wire.as_object_mut().unwrap();
+        fields.remove("priority");
+        fields.remove("depends_on");
+        let old: Event = serde_json::from_value(wire).unwrap();
+        let old = replay(&[old]).unwrap();
+        assert_eq!(old.priority, crate::ticket::DEFAULT_PRIORITY);
+        assert!(old.depends_on.is_empty());
+
+        let ticket = replay(&[
+            created_event(),
+            Event::PriorityChanged { priority: 900 },
+            Event::DependenciesChanged {
+                depends_on: vec![TicketId::new("T-0")],
+            },
+            Event::Claimed,
+            Event::PriorityChanged { priority: 100 },
+        ])
+        .unwrap();
+        assert_eq!(ticket.state, TicketState::Claimed);
+        assert_eq!(ticket.priority, 100);
+        assert_eq!(ticket.depends_on, [TicketId::new("T-0")]);
+        assert!(apply(&ticket, &Event::DependenciesChanged { depends_on: vec![] }).is_err());
+        let cancelled = apply(&old, &Event::Cancelled).unwrap();
+        assert!(apply(&cancelled, &Event::PriorityChanged { priority: 10 }).is_err());
     }
 
     fn ticket(state: TicketState, attempts: u32, held_from: Option<TicketState>) -> Ticket {
@@ -301,6 +359,8 @@ mod tests {
             detail: String::new(),
             source: None,
             version: None,
+            priority: crate::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         }
     }
 

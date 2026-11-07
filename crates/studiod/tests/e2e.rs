@@ -474,6 +474,8 @@ async fn ask_ids_continue_after_a_restart() {
                 detail: String::new(),
                 source: None,
                 version: None,
+                priority: studio_core::ticket::DEFAULT_PRIORITY,
+                depends_on: Vec::new(),
             },
             Event::Claimed,
             Event::RunStarted {

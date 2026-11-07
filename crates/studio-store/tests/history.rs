@@ -20,6 +20,8 @@ fn land(store: &mut Store, id: &str, hire: &str, claimed: u64, landed: u64, usd:
         detail: String::new(),
         source: None,
         version: None,
+        priority: studio_core::ticket::DEFAULT_PRIORITY,
+        depends_on: Vec::new(),
     };
     store.append(&id, claimed - 10, &created).unwrap();
     store.append(&id, claimed, &Event::Claimed).unwrap();
@@ -76,6 +78,8 @@ fn landed_samples_are_per_hire_newest_first_and_limited() {
         detail: String::new(),
         source: None,
         version: None,
+        priority: studio_core::ticket::DEFAULT_PRIORITY,
+        depends_on: Vec::new(),
     };
     store.append(&open, 1, &created).unwrap();
 
@@ -146,6 +150,8 @@ fn created(store: &mut Store, id: &str, project: &str, kind: TicketKind) {
         detail: String::new(),
         source: None,
         version: None,
+        priority: studio_core::ticket::DEFAULT_PRIORITY,
+        depends_on: Vec::new(),
     };
     store.append(&id, 1, &event).unwrap();
 }

@@ -1,6 +1,15 @@
 use crate::ids::{AskId, HireId, ProjectId, TicketId};
 use serde::{Deserialize, Serialize};
 
+/// Ordinary work has this priority; larger values run first.
+pub const DEFAULT_PRIORITY: u32 = 50;
+/// The highest priority accepted from the UI or a manager.
+pub const MAX_PRIORITY: u32 = 1000;
+
+fn default_priority() -> u32 {
+    DEFAULT_PRIORITY
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ticket {
     pub id: TicketId,
@@ -31,6 +40,12 @@ pub struct Ticket {
     /// such as `0.4`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub version: Option<String>,
+    /// Scheduling priority. Larger values run before lower ones.
+    #[serde(default = "default_priority")]
+    pub priority: u32,
+    /// Tickets that must land before this one can start.
+    #[serde(default)]
+    pub depends_on: Vec<TicketId>,
 }
 
 /// A plan ticket's run files tickets instead of changing code, so it skips

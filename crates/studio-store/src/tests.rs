@@ -35,6 +35,8 @@ fn created_event(id: &str, project: &str, created_at: u64) -> Event {
         detail: String::new(),
         source: None,
         version: None,
+        priority: studio_core::ticket::DEFAULT_PRIORITY,
+        depends_on: Vec::new(),
     }
 }
 
@@ -543,6 +545,8 @@ fn migrates_from_schema_version_1() {
             detail: String::new(),
             source: None,
             version: None,
+            priority: studio_core::ticket::DEFAULT_PRIORITY,
+            depends_on: Vec::new(),
         };
         let json = serde_json::to_string(&ticket).unwrap();
         conn.execute(

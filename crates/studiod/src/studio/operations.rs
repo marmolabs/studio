@@ -377,6 +377,16 @@ impl Studio {
             }
             ManagerAct::SendBack { note, .. } => task_ok && !note.trim().is_empty(),
             ManagerAct::Tell { text, .. } => task_ok && !text.trim().is_empty(),
+            ManagerAct::SetPriority { priority, .. } => {
+                task_ok && *priority <= studio_core::ticket::MAX_PRIORITY
+            }
+            ManagerAct::SetDependencies { depends_on, .. } => {
+                task_ok
+                    && depends_on.iter().all(|id| {
+                        self.ticket(&studio_core::ids::TicketId::new(id))
+                            .is_ok_and(|ticket| ticket.project.0 == entry.name)
+                    })
+            }
             ManagerAct::Pause { .. } | ManagerAct::Resume { .. } | ManagerAct::Cancel { .. } => {
                 task_ok
             }
@@ -498,6 +508,16 @@ impl Studio {
                 task,
                 crate::api::LeadAct::Tell { text: text.clone() },
             ),
+            ManagerAct::SetPriority { task, priority } => self.dispatch(Request::SetPriority {
+                ticket: task.clone(),
+                priority: *priority,
+            }),
+            ManagerAct::SetDependencies { task, depends_on } => {
+                self.dispatch(Request::SetDependencies {
+                    ticket: task.clone(),
+                    depends_on: depends_on.clone(),
+                })
+            }
             ManagerAct::Cancel { task } => {
                 self.lead_acts(&project, task, crate::api::LeadAct::Cancel)
             }
@@ -587,6 +607,16 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
                 ticket.hire,
                 ticket.goal.replace('\n', " ")
             );
+            line.push_str(&format!(
+                " Priority: {}. Depends on: {}.",
+                ticket.priority,
+                ticket
+                    .depends_on
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
             if let Some(result) = results.get(&ticket.id.to_string()) {
                 line.push_str(&format!(" Result: {result}"));
             }
@@ -606,7 +636,9 @@ fn review_prompt(studio: &Studio, entry: &ProjectEntry, lead: &str, tickets: &[T
          {{\"summary\":\"two short sentences for the owner\",\"actions\":[{{\"title\":\"short action\",\
          \"reason\":\"why it matters\",\"act\":{{\"do\":\"tell\",\"task\":\"TASK-ID\",\"text\":\"message\"}}}}]}}. \
          Allowed act forms are start_goal {{goal,detail}}, create_task {{title,detail,hire}}, \
-         send_back {{task,note}}, pause {{task}}, resume {{task}}, tell {{task,text}}, and cancel {{task}}. \
+         send_back {{task,note}}, pause {{task}}, resume {{task}}, tell {{task,text}}, \
+         set_priority {{task,priority}} (0-1000, larger runs first), \
+         set_dependencies {{task,depends_on}} (all must land first), and cancel {{task}}. \
          Propose no more than four useful actions; an empty actions array is correct when no action is needed. \
          Never invent task or hire ids. Do not propose shipping, releasing, changing files, or spending money. \
          Prefer unblocking existing work over creating more. Use plain text inside the JSON, not markdown.\n\n\
@@ -637,6 +669,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use studio_config::StudioPaths;
+    use studio_core::ids::TicketId;
     use studio_runtime::{Cost, FakeRuntime, Outcome, RunEvent, Runtime};
 
     struct Company {
@@ -691,6 +724,22 @@ mod tests {
         }
     }
 
+    async fn task(company: &Company, title: &str) -> String {
+        let made = company
+            .studio
+            .handle(Request::CreateTicket {
+                project: "shop".into(),
+                title: title.into(),
+                goal: String::new(),
+                hire: "dev".into(),
+                base: None,
+                detail: String::new(),
+            })
+            .await;
+        assert!(made.ok, "{:?}", made.error);
+        made.data["id"].as_str().unwrap().to_string()
+    }
+
     #[tokio::test]
     async fn a_supervised_review_proposes_work_and_approval_executes_it() {
         let company = company(
@@ -742,6 +791,75 @@ mod tests {
         assert_eq!(
             budget.data["spent_24h"]["by_ticket"]["shop/operations"],
             0.04
+        );
+    }
+
+    #[tokio::test]
+    async fn managers_change_priority_and_links_without_cycles() {
+        let company = company("Never called");
+        let first = task(&company, "First").await;
+        let second = task(&company, "Second").await;
+        company
+            .studio
+            .update_operations(|saved| {
+                saved.actions.push(ManagerAction {
+                    id: "a1".into(),
+                    review: "r1".into(),
+                    project: "shop".into(),
+                    lead: "nora".into(),
+                    title: "Prioritize second".into(),
+                    reason: String::new(),
+                    act: ManagerAct::SetPriority {
+                        task: second.clone(),
+                        priority: 900,
+                    },
+                    state: OperationState::Pending,
+                    at: now_ms(),
+                    resolved_at: None,
+                    result: String::new(),
+                });
+            })
+            .unwrap();
+        let approved = company
+            .studio
+            .handle(Request::DecideOperation {
+                action: "a1".into(),
+                approve: true,
+                note: None,
+            })
+            .await;
+        assert!(approved.ok, "{:?}", approved.error);
+        assert_eq!(
+            company
+                .studio
+                .ticket(&TicketId::new(&second))
+                .unwrap()
+                .priority,
+            900
+        );
+        company
+            .studio
+            .set_dependencies(&second, vec![first.clone()])
+            .unwrap();
+        assert_eq!(
+            company
+                .studio
+                .ticket(&TicketId::new(&second))
+                .unwrap()
+                .depends_on,
+            [TicketId::new(&first)]
+        );
+        assert!(
+            company
+                .studio
+                .set_dependencies(&first, vec![second])
+                .is_err()
+        );
+        assert!(
+            company
+                .studio
+                .set_priority(&first, studio_core::ticket::MAX_PRIORITY + 1)
+                .is_err()
         );
     }
 

@@ -103,6 +103,8 @@ impl Studio {
                 detail: new.detail,
                 source: new.source,
                 version: new.version,
+                priority: studio_core::ticket::DEFAULT_PRIORITY,
+                depends_on: Vec::new(),
             },
         )?;
         self.wake.notify_one();
@@ -193,6 +195,58 @@ impl Studio {
         let updated = self.append(&TicketId::new(ticket), event)?;
         self.wake.notify_one();
         Ok(Response::ok(updated))
+    }
+
+    pub(super) fn set_priority(
+        &self,
+        ticket: &str,
+        priority: u32,
+    ) -> Result<Response, StudioError> {
+        if priority > studio_core::ticket::MAX_PRIORITY {
+            return Err(other(format!(
+                "priority must be at most {}",
+                studio_core::ticket::MAX_PRIORITY
+            )));
+        }
+        self.simple(ticket, Event::PriorityChanged { priority })
+    }
+
+    pub(super) fn set_dependencies(
+        &self,
+        ticket: &str,
+        depends_on: Vec<String>,
+    ) -> Result<Response, StudioError> {
+        let target = self.ticket(&TicketId::new(ticket))?;
+        let mut normalized = Vec::new();
+        for id in depends_on {
+            let id = id.trim();
+            if id.is_empty() || normalized.iter().any(|known| known == id) {
+                continue;
+            }
+            if id == ticket {
+                return Err(other(format!("{ticket} cannot depend on itself")));
+            }
+            let dependency = self.ticket(&TicketId::new(id))?;
+            if dependency.project != target.project {
+                return Err(other(format!(
+                    "{id} is in {}, not {}",
+                    dependency.project, target.project
+                )));
+            }
+            normalized.push(id.to_string());
+        }
+        let tickets = lock(&self.store).tickets()?;
+        if creates_cycle(&tickets, ticket, &normalized) {
+            return Err(other(format!(
+                "those dependencies would cycle back to {ticket}"
+            )));
+        }
+        self.simple(
+            ticket,
+            Event::DependenciesChanged {
+                depends_on: normalized.into_iter().map(TicketId::new).collect(),
+            },
+        )
     }
 
     fn next_ticket_id(&self, project: &str) -> Result<TicketId, StudioError> {
@@ -349,4 +403,32 @@ impl Studio {
             .cloned()
             .collect()
     }
+}
+
+fn creates_cycle(tickets: &[Ticket], task: &str, depends_on: &[String]) -> bool {
+    let mut graph = std::collections::HashMap::new();
+    for ticket in tickets {
+        graph.insert(
+            ticket.id.to_string(),
+            ticket
+                .depends_on
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        );
+    }
+    graph.insert(task.to_string(), depends_on.to_vec());
+    let mut stack = depends_on.to_vec();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = stack.pop() {
+        if id == task {
+            return true;
+        }
+        if seen.insert(id.clone())
+            && let Some(next) = graph.get(&id)
+        {
+            stack.extend(next.iter().cloned());
+        }
+    }
+    false
 }
