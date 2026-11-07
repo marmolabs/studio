@@ -60,12 +60,14 @@ struct ModelAction {
 }
 
 impl Studio {
-    pub(crate) fn runtime_mode(&self) -> Result<RuntimeMode, StudioError> {
-        self.read_operations();
-        if let Some(problem) = lock(&self.operations_state.problem).clone() {
-            return Err(other(format!("new runs are stopped: {problem}")));
+    /// The run mode. An unreadable operations file counts as live mode: it
+    /// blocks manager reviews and changes to operations, nothing else.
+    pub(crate) fn runtime_mode(&self) -> RuntimeMode {
+        let saved = self.read_operations();
+        if lock(&self.operations_state.problem).is_some() {
+            return RuntimeMode::Live;
         }
-        Ok(self.read_operations().settings.mode)
+        saved.settings.mode
     }
 
     pub(super) fn operations(&self) -> OperationsView {
@@ -981,7 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn simulation_replaces_every_configured_runtime_with_zero_cost_replies() {
+    async fn simulation_replaces_the_runtime_of_manager_reviews_with_zero_cost_replies() {
         let company = company("Never called");
         company
             .studio
@@ -998,7 +1000,13 @@ mod tests {
         );
         assert!(operations.actions.is_empty());
         assert_eq!(operations.reviews[0].usd, 0.0);
-        assert!(company.studio.runtime("not-configured").is_ok());
+        assert!(
+            company
+                .studio
+                .conversation_runtime("not-configured")
+                .is_ok()
+        );
+        assert!(company.studio.runtime("not-configured").is_err());
     }
 
     #[test]
@@ -1042,9 +1050,11 @@ mod tests {
         let company = company("Never called");
         let path = company.studio.paths.data_dir.join("operations.json");
         std::fs::write(&path, "not json").unwrap();
+        let mut runtimes: HashMap<String, Arc<dyn Runtime>> = HashMap::new();
+        runtimes.insert("fake".into(), Arc::new(company.runtime.clone()));
         let reopened = Studio::open(
             StudioPaths::resolve(Some(company._home.path().to_path_buf())),
-            HashMap::new(),
+            runtimes,
         )
         .unwrap();
         assert!(reopened.operations().problem.is_some());
@@ -1053,7 +1063,12 @@ mod tests {
                 .set_operations(Some(true), None, None, None)
                 .is_err()
         );
-        assert!(reopened.runtime("fake").is_err());
+        let entry = reopened.project(&ProjectId::new("shop")).unwrap();
+        assert!(reopened.review_operations(&entry.name).is_err());
+        // Only reviews and changes to operations stop: runs go on, live.
+        assert!(reopened.runtime("fake").is_ok());
+        assert!(reopened.conversation_runtime("fake").is_ok());
+        assert_eq!(reopened.runtime_mode(), RuntimeMode::Live);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "not json");
     }
 

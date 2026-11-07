@@ -130,7 +130,9 @@ async fn go(
     else {
         return Err(format!("no budget left for {who}"));
     };
-    let runtime = studio.runtime(&hire.runtime).map_err(|e| e.to_string())?;
+    let runtime = studio
+        .conversation_runtime(&hire.runtime)
+        .map_err(|e| e.to_string())?;
     let mcp = if runtime.capabilities().mcp {
         write_config(studio, project, tools)
             .map_err(|e| format!("{who}'s tools could not be set up: {e}"))?
@@ -536,6 +538,26 @@ mod tests {
             tool: tool.into(),
             input,
         }
+    }
+
+    #[tokio::test]
+    async fn a_conversation_in_simulation_mode_costs_nothing_and_calls_no_model() {
+        let lead = Lead::new(FakeRuntime::new(script("Real words.", 0.07)));
+        let set = lead
+            .studio
+            .handle(Request::SetOperations {
+                autopilot: None,
+                review_minutes: None,
+                autonomy: None,
+                mode: Some(crate::api::RuntimeMode::Simulation),
+            })
+            .await;
+        assert!(set.ok, "{:?}", set.error);
+        let reply = run(&lead.studio, lead.talk()).await.unwrap();
+        assert!(reply.text.contains("Simulated response"), "{}", reply.text);
+        assert_eq!(reply.usd, 0.0);
+        assert!(lead.runtime.specs().is_empty());
+        assert_eq!(lead.spent().await["total"], 0.0);
     }
 
     #[tokio::test]

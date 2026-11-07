@@ -30,10 +30,6 @@ impl Runtime for SimulatedRuntime {
     fn start(&self, spec: RunSpec) -> Result<Run, RuntimeError> {
         let summary = if spec.prompt.contains("Return only a JSON object") {
             "{\"summary\":\"Simulation review complete. No model was called and no action is proposed.\",\"actions\":[]}".to_string()
-        } else if spec.prompt.contains("VERDICT: PASS") {
-            "Simulated review.\nVERDICT: PASS".to_string()
-        } else if spec.prompt.contains("DECISION: ALLOW") {
-            "Simulated approval.\nDECISION: ALLOW: simulation".to_string()
         } else {
             "Simulated response. No model was called and no changes were made.".to_string()
         };
@@ -61,5 +57,34 @@ impl Runtime for SimulatedRuntime {
                 .await;
         });
         Ok(Run::new(event_rx, control_tx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+    use super::*;
+
+    async fn said(prompt: &str) -> String {
+        let mut run = SimulatedRuntime
+            .start(RunSpec {
+                prompt: prompt.into(),
+                ..RunSpec::default()
+            })
+            .unwrap();
+        while let Some(event) = run.next().await {
+            if let RunEvent::Finished { summary, .. } = event {
+                return summary.unwrap();
+            }
+        }
+        panic!("no answer");
+    }
+
+    #[tokio::test]
+    async fn the_simulation_never_decides_a_permission_or_passes_work() {
+        let approval = said("Reply: DECISION: ALLOW|DENY|OWNER").await;
+        assert!(!approval.contains("ALLOW"), "{approval}");
+        let review = said("End with VERDICT: PASS or VERDICT: FAIL").await;
+        assert!(!review.contains("PASS"), "{review}");
     }
 }
