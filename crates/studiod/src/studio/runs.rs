@@ -13,7 +13,7 @@ use studio_core::budget::Allowance;
 use studio_core::event::Event;
 use studio_core::ids::{ProjectId, TicketId};
 use studio_core::rule::Hire;
-use studio_core::ticket::{HeldReason, Ticket, TicketState};
+use studio_core::ticket::{HeldReason, Ticket, TicketKind, TicketState};
 use tokio::sync::Notify;
 
 /// Why the studio wants a live run to stop.
@@ -333,6 +333,9 @@ impl Studio {
             project_day,
             ticket,
             hire,
+            // A plan costs what its brief and a few reads cost, no more.
+            run_cap: (ticket.kind == TicketKind::Plan && hire.id == ticket.hire)
+                .then_some(crate::planning::PLAN_USD),
         };
         Ok(budget::decide(
             &lock(&self.store),

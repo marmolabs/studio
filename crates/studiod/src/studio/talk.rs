@@ -347,7 +347,7 @@ impl Studio {
     }
 
     /// The tickets filed by the ticket `parent`, oldest first.
-    fn tickets_of(&self, parent: &TicketId) -> Vec<Ticket> {
+    pub(crate) fn tickets_of(&self, parent: &TicketId) -> Vec<Ticket> {
         let all = lock(&self.store).tickets().unwrap_or_default();
         all.into_iter()
             .filter(|t| t.parent.as_ref() == Some(parent))

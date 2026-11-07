@@ -11,6 +11,7 @@ pub mod export;
 mod gc;
 mod leadrun;
 mod notify;
+mod planning;
 mod quick;
 mod router;
 mod ruletest;
