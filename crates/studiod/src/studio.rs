@@ -715,6 +715,10 @@ impl Studio {
                 self.simple(&ticket, Event::ChangesRequested { detail: feedback })
             }
             Request::Resume { ticket } => self.simple(&ticket, Event::Resumed),
+            Request::SetPriority { ticket, priority } => self.set_priority(&ticket, priority),
+            Request::SetDependencies { ticket, depends_on } => {
+                self.set_dependencies(&ticket, depends_on)
+            }
             Request::Pause { ticket } => self.pause(&ticket),
             Request::TicketSpend { ticket } => {
                 let spent = lock(&self.store).ticket_spent(&TicketId::new(&ticket))?;

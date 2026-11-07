@@ -212,7 +212,10 @@ $0.25 each.
 **Company & decisions** opens the live map of goals and owned tasks, blockers,
 next steps and spend. Its scorecard shows delivery, cycle time, rework, cost per
 delivery, current blocked time and employee workload. Open a task for its result,
-visual proof, code diff and request-changes controls.
+visual proof, code diff and request-changes controls. Higher-priority tasks run
+first when their dependencies have landed. The graph names blockers and marks
+the critical path; managers can propose priority or dependency changes for your
+approval.
 
 ## Your first task
 

@@ -1,6 +1,10 @@
 use crate::ids::{AskId, HireId, ProjectId, RunId, TicketId};
-use crate::ticket::{FailureClass, HeldReason, TicketKind};
+use crate::ticket::{DEFAULT_PRIORITY, FailureClass, HeldReason, TicketKind};
 use serde::{Deserialize, Serialize};
+
+fn default_created_priority() -> u32 {
+    DEFAULT_PRIORITY
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -28,6 +32,10 @@ pub enum Event {
         /// towards.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        #[serde(default = "default_created_priority")]
+        priority: u32,
+        #[serde(default)]
+        depends_on: Vec<TicketId>,
     },
     Claimed,
     RunStarted {
@@ -70,6 +78,14 @@ pub enum Event {
         branch: String,
         files: Vec<String>,
     },
+    /// Changes scheduling without interrupting an active run.
+    PriorityChanged {
+        priority: u32,
+    },
+    /// Replaces the tickets that must land before this one starts.
+    DependenciesChanged {
+        depends_on: Vec<TicketId>,
+    },
 }
 
 impl Event {
@@ -94,6 +110,8 @@ impl Event {
             Event::Retried => "retried",
             Event::ChangesRequested { .. } => "changes_requested",
             Event::Conflicted { .. } => "conflicted",
+            Event::PriorityChanged { .. } => "priority_changed",
+            Event::DependenciesChanged { .. } => "dependencies_changed",
         }
     }
 }
@@ -120,6 +138,10 @@ mod tests {
             Event::Conflicted {
                 branch: "studio/goal/x".into(),
                 files: vec!["a.rs".into()],
+            },
+            Event::PriorityChanged { priority: 100 },
+            Event::DependenciesChanged {
+                depends_on: vec![TicketId::new("T-1")],
             },
         ];
         for event in events {

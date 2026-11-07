@@ -23,7 +23,8 @@ fn office() -> Value {
         },
         "tickets": [{
             "id":"SHOP-1", "project":"shop", "title":"Cart drawer", "goal":"Checkout",
-            "hire":"dev", "state":"working", "attempts":1, "base_branch":"main", "created_at":0,
+            "hire":"dev", "state":"queued", "attempts":1, "base_branch":"main", "created_at":0,
+            "priority":900, "depends_on":["SHOP-0"],
         }],
         "asks": [], "events": [], "spend": {"SHOP-1": 1.25}, "merged": [], "sizes": {},
         "today": {}, "judges": {},
@@ -173,6 +174,9 @@ async fn the_company_page_has_the_map_scorecard_and_decision_log() {
         "Cart drawer",
         "Delegate checkout",
         "Cost per delivery",
+        "Dependency graph",
+        "Blocked by SHOP-0",
+        "P900",
     ] {
         assert!(text.contains(expected), "{expected}: {text}");
     }

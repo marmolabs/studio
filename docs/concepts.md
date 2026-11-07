@@ -265,6 +265,24 @@ tasks instead of changing code, so it skips checks and review.
 In a lead's conversation, a milestone's tasks show as ticks in the rail beside
 the thread, and a goal's plan as a card of its tasks.
 
+## Priorities and dependencies
+
+Every task has a priority (50 by default, up to 1000); larger values run first,
+with older tasks winning ties. Dependencies are other tickets in the same
+project that must land before a task starts. Missing, queued, active, failed or
+cancelled dependencies block it; only landed ones are satisfied. Self-links and
+cycles are rejected when links are written, and cyclic legacy data simply cannot
+be scheduled until corrected.
+
+The scheduler still runs only one task per goal at a time. Changing priority does
+not preempt active work. Dependencies can be changed while a task is queued or
+failed, not after it starts. Both changes are events in the task's history.
+
+Managers can propose **Change priority** and **Change dependencies** through the
+same approval and autonomy flow as other actions. The company page shows unmet
+blockers, priority badges, the dependency graph and the longest open critical
+path.
+
 ## Goals
 
 A goal is a line of text given to a planner: the project's lead, or else a

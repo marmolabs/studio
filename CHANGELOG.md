@@ -7,6 +7,11 @@
 - Project leads can run persistent, budget-capped manager reviews and propose
   goals, tasks and task-management actions. HQ is the approval inbox for those
   proposals, and every decision and outcome is kept in an audit log.
+- Tasks have event-sourced priorities and same-project dependencies. The
+  scheduler runs only ready work, highest priority first; only landed
+  dependencies unblock it, and self-links or cycles are rejected. Managers can
+  propose scheduling changes, and the company page shows the dependency graph
+  and critical path.
 - Automatic reviews are opt-in, with configurable cadence and supervised,
   balanced and autonomous levels. Cancellation, shipping, publishing and budget
   changes always require the owner.
