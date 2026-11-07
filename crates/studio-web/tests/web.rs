@@ -1013,7 +1013,7 @@ async fn always_allow_approves_and_saves_a_rule_that_loads() {
         .text()
         .await
         .unwrap();
-    assert!(reply.contains("Allowed ASK-1."), "{reply}");
+    assert!(reply.contains("Allowed."), "{reply}");
     assert!(reply.contains("allow-game-cargo-test"), "{reply}");
     let saved = SAVED.lock().unwrap().clone();
     let (name, text) = saved
@@ -1079,7 +1079,7 @@ async fn denying_offers_to_make_a_rule() {
         &[("decision", "deny"), ("message", "no <b>tests</b>")],
     )
     .await;
-    assert!(reply.contains("Denied ASK-1."), "{reply}");
+    assert!(reply.contains("Denied."), "{reply}");
     assert!(reply.contains("Make this a rule"), "{reply}");
     assert!(
         reply.contains("/rules?new=1&amp;name=block-game-cargo-test"),
@@ -1092,7 +1092,7 @@ async fn denying_offers_to_make_a_rule() {
 async fn denying_a_question_offers_no_rule() {
     let web = Web::start().await;
     let reply = post_form(&web, "/asks/ASK-2", &[("decision", "deny")]).await;
-    assert!(reply.contains("Denied ASK-2."), "{reply}");
+    assert!(reply.contains("Denied."), "{reply}");
     assert!(!reply.contains("Make this a rule"), "{reply}");
 }
 

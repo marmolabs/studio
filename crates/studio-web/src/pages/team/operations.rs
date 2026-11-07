@@ -1,4 +1,6 @@
-use studiod::api::{Autonomy, ManagerAct, ManagerAction, OperationsSettings, RuntimeMode};
+use studiod::api::{
+    Autonomy, ManagerAct, ManagerAction, OperationState, OperationsSettings, RuntimeMode,
+};
 use topcoat::view::{View, component, view};
 
 use super::hq;
@@ -11,6 +13,7 @@ pub(super) async fn action_row(action: ManagerAction, by: String) -> topcoat::Re
         action.id
     );
     let detail = detail(&action.act);
+    let waiting = waiting_reason(&action);
     let task = action.act.task().map(|task| {
         let id = task.to_string();
         view! { <a href=(format!("/tickets/{id}")) class="hover:underline">(id)</a> }
@@ -24,6 +27,7 @@ pub(super) async fn action_row(action: ManagerAction, by: String) -> topcoat::Re
             if !action.reason.trim().is_empty() {
                 <span class="block">(action.reason.clone())</span>
             }
+            if let Some(waiting) = waiting { <span class="block">(waiting)</span> }
             if let Some(task) = task { <span class="block">"Task " (task)</span> }
         },
             <form class="contents" data-on:submit=(decision.clone())>
@@ -32,6 +36,13 @@ pub(super) async fn action_row(action: ManagerAction, by: String) -> topcoat::Re
             </form>
         )
     })
+}
+
+/// Why a pending action waits for the owner, when the engine says.
+pub(super) fn waiting_reason(action: &ManagerAction) -> Option<String> {
+    let why = action.result.trim();
+    (action.state == OperationState::Pending && !why.is_empty())
+        .then(|| format!("Waiting because: {why}"))
 }
 
 /// What an action would say or change, in words, so the owner knows what
@@ -125,8 +136,7 @@ pub(super) async fn controls(settings: OperationsSettings) -> topcoat::Result<im
 }
 
 /// What the simulation switch changes, and what it never does.
-const SIMULATION_NOTE: &str =
-    "Simulation affects only conversations, rooms and reviews, never coding work or approvals.";
+const SIMULATION_NOTE: &str = "Simulation affects only conversations, rooms, standups, setup and reviews, never coding work or approvals.";
 
 fn autonomy_name(autonomy: Autonomy) -> &'static str {
     match autonomy {
@@ -199,6 +209,38 @@ mod tests {
         assert_eq!(detail(&create), None);
         assert_eq!(detail(&ManagerAct::Pause { task: "S-1".into() }), None);
         assert_eq!(detail(&ManagerAct::Cancel { task: "S-1".into() }), None);
+    }
+
+    #[test]
+    fn a_pending_action_says_why_it_waits() {
+        let mut action = ManagerAction {
+            id: "A-1".into(),
+            review: "R-1".into(),
+            project: "shop".into(),
+            lead: "lead".into(),
+            title: "Add a cart".into(),
+            reason: String::new(),
+            act: ManagerAct::Pause { task: "S-1".into() },
+            state: OperationState::Pending,
+            at: 0,
+            resolved_at: None,
+            result: "over today's limit for automatic new work".into(),
+            automatic: false,
+        };
+        assert_eq!(
+            waiting_reason(&action).as_deref(),
+            Some("Waiting because: over today's limit for automatic new work")
+        );
+        action.result = "  ".into();
+        assert_eq!(waiting_reason(&action), None);
+        action.result = "Done".into();
+        action.state = OperationState::Executed;
+        assert_eq!(waiting_reason(&action), None);
+    }
+
+    #[test]
+    fn the_simulation_note_lists_what_is_simulated() {
+        assert!(SIMULATION_NOTE.contains("standups, setup and reviews"));
     }
 
     #[test]

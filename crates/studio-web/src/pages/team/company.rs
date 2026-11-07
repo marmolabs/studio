@@ -672,6 +672,10 @@ async fn manager_log(
             } else {
                 <ol class="m-0 flex list-none flex-col rounded-xl border border-line bg-bg-2 p-0 px-4">
                     for (action, lead) in actions.into_iter().take(30) {
+                        let note = operations::waiting_reason(&action).or_else(|| {
+                            (action.state != OperationState::Pending && !action.result.is_empty())
+                                .then(|| action.result.clone())
+                        });
                         <li class="border-t border-line py-3 first:border-t-0">
                             <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                                 <b class="text-[13.5px] font-semibold">(action.title)</b>
@@ -690,7 +694,7 @@ async fn manager_log(
                                     OperationState::Failed => "Failed",
                                 })</span>
                             </div>
-                            <p class="m-0 mt-1 text-[12.5px] text-fg-3">(action.act.label()) " · " (lead) if !action.result.is_empty() { " · " (action.result) }</p>
+                            <p class="m-0 mt-1 text-[12.5px] text-fg-3">(action.act.label()) " · " (lead) if let Some(note) = note { " · " (note) }</p>
                             if let Some(detail) = operations::detail(&action.act) {
                                 <p class="m-0 mt-1 whitespace-pre-wrap text-[12.5px] text-fg-2 [overflow-wrap:anywhere]">(detail)</p>
                             }

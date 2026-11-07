@@ -125,10 +125,10 @@ async fn decide(
         Ok(_) => {
             if let Some(draft) = draft {
                 let label = "Make this a rule".to_string();
-                return ui::rule_notice(cx, format!("Denied {ask}."), label, &draft).await;
+                return ui::rule_notice(cx, "Denied.".to_string(), label, &draft).await;
             }
             let done = if allow { "Allowed" } else { "Denied" };
-            let mut text = format!("{done} {ask}.");
+            let mut text = format!("{done}.");
             if unsent {
                 text.push_str(" Your note was not sent: a note goes only with Deny.");
             }
