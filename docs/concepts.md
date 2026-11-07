@@ -193,7 +193,10 @@ the configured interval (5 minutes to 24 hours). A review is told which
 proposals of its project still wait for you and is asked not to repeat them; a
 proposal identical to one that waits is dropped; at most 20 may wait in a
 project, and beyond that new ones are not added. An automatic review is skipped
-for a project that still has proposals waiting.
+for a project that still has proposals waiting. A review that fails is kept
+with what it cost, so the next automatic one waits its turn; the lead's
+conversation and the project room hear of it only the first time it fails in a
+row, and a review refused for budget is kept without a word.
 
 A review is also given the hires a task can be given (each one's id, name and
 role; never the leads or the front desk). A new task that names no hire, or a

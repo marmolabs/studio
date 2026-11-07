@@ -105,12 +105,37 @@ pub(crate) async fn run_with(
     go(studio, run, observe, TIMEOUT).await
 }
 
+/// `run`, also answering what the ledger recorded for the run: nothing when
+/// it never started, what it spent when it did, whether it answered or not.
+pub(crate) async fn run_costed(
+    studio: &Arc<Studio>,
+    run: LeadRun<'_>,
+) -> (Result<LeadReply, String>, f64) {
+    let mut spent = 0.0;
+    let result = go_costed(studio, run, &mut |_| {}, TIMEOUT, &mut spent).await;
+    (result, spent)
+}
+
+/// What a run says when it was refused for lack of budget, before the name.
+pub(crate) const NO_BUDGET: &str = "no budget left for";
+
 /// `run_with`, stopping the run after `limit`.
 async fn go(
     studio: &Arc<Studio>,
     lead: LeadRun<'_>,
     observe: &mut (dyn FnMut(&RunEvent) + Send),
     limit: Duration,
+) -> Result<LeadReply, String> {
+    go_costed(studio, lead, observe, limit, &mut 0.0).await
+}
+
+/// `go`, setting `spent` to what the run cost once it is in the ledger.
+async fn go_costed(
+    studio: &Arc<Studio>,
+    lead: LeadRun<'_>,
+    observe: &mut (dyn FnMut(&RunEvent) + Send),
+    limit: Duration,
+    spent: &mut f64,
 ) -> Result<LeadReply, String> {
     let LeadRun {
         project,
@@ -128,7 +153,7 @@ async fn go(
         .reserve_extra(project, hire, cap_usd, &task.to_string(), &task.to_string())
         .map_err(|error| error.to_string())?
     else {
-        return Err(format!("no budget left for {who}"));
+        return Err(format!("{NO_BUDGET} {who}"));
     };
     let runtime = studio
         .conversation_runtime(&hire.runtime)
@@ -202,6 +227,7 @@ async fn go(
             output_tokens,
         })
         .map_err(|e| e.to_string())?;
+    *spent = usd;
 
     if stopped {
         return Err(format!("{who} took too long"));

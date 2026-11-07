@@ -583,6 +583,9 @@ pub struct ManagerReview {
     pub at: u64,
     pub summary: String,
     pub usd: f64,
+    /// The review gave no answer: the summary says why.
+    #[serde(default)]
+    pub failed: bool,
 }
 
 /// What a manager proposes to do. The same command executes after approval.
