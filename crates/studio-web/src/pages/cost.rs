@@ -27,6 +27,26 @@ pub fn model_name(model: &str) -> String {
     model.to_string()
 }
 
+/// What a hire is called in a cost row: the name in its file, else its id
+/// with a capital, as a hire since removed has only that left.
+pub fn name_in(team: &[crate::client::Member], hire: &str) -> String {
+    let named = team
+        .iter()
+        .find(|m| m.id == hire)
+        .map(|m| m.name.trim())
+        .filter(|name| !name.is_empty());
+    match named {
+        Some(name) => name.to_string(),
+        None => {
+            let mut chars = hire.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+    }
+}
+
 fn calls(n: u64) -> String {
     format!("{n} {}", if n == 1 { "call" } else { "calls" })
 }
@@ -254,6 +274,19 @@ mod tests {
             calls,
             usd,
         }
+    }
+
+    #[test]
+    fn a_hire_is_called_by_its_name_or_its_id_with_a_capital() {
+        let team = [crate::client::Member {
+            id: "shop-lead".into(),
+            name: "Nora".into(),
+            role: "lead".into(),
+            model: "opus".into(),
+        }];
+        assert_eq!(name_in(&team, "shop-lead"), "Nora");
+        assert_eq!(name_in(&team, "gone"), "Gone");
+        assert_eq!(name_in(&team, ""), "");
     }
 
     #[test]

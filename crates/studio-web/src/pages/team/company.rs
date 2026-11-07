@@ -481,7 +481,9 @@ struct Spent {
 
 fn spent(office: &Office) -> Spent {
     Spent {
-        by_kind: cost::by_kind_rows(&office.kinds, &|hire| office.name_of(hire)),
+        by_kind: cost::by_kind_rows(&office.kinds, &|hire| {
+            cost::name_in(&office.status.team, hire)
+        }),
         by_project: cost::by_project_rows(&office.kinds),
         warning: studiod::api::warning(&office.kinds, "in the last 24 hours"),
     }

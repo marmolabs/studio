@@ -148,7 +148,7 @@ pub async fn gather(
         cost::read(&config.socket, own_ids),
         cost::read(&config.socket, goal_ids),
     );
-    let name_of = |hire: &str| office.name_of(hire);
+    let name_of = |hire: &str| cost::name_in(&office.status.team, hire);
     let costs = if goal.is_some() {
         cost::costs(vec![("The goal", scope, own)], &name_of)
     } else {
