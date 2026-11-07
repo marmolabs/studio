@@ -17,7 +17,7 @@ use studio_core::budget::run_spend;
 use studio_core::ids::TicketId;
 use studio_core::rule::Hire;
 use studio_runtime::{Cost, Outcome, Run, RunEvent, RunSpec};
-use studio_store::Spend;
+use studio_store::{Spend, SpendKind};
 
 /// How long a lead's run may take before it is stopped.
 const TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -70,6 +70,8 @@ pub(crate) struct LeadRun<'a> {
     /// studio, the project or the hire has less than this left for the day.
     pub cap_usd: f64,
     pub max_turns: u32,
+    /// What the run is for, as the ledger books it.
+    pub kind: SpendKind,
 }
 
 /// What the lead said at the end of its run, and what the run cost.
@@ -146,6 +148,7 @@ async fn go_costed(
         charge_task,
         cap_usd,
         max_turns,
+        kind,
     } = lead;
     let who = called(hire);
     let task = charge_task.map_or_else(|| talk_task(project), TicketId::new);
@@ -222,6 +225,7 @@ async fn go_costed(
             model: tally.model,
             session: tally.session,
             usd,
+            kind,
             reported,
             input_tokens,
             output_tokens,
@@ -499,6 +503,7 @@ mod tests {
                 charge_task: None,
                 cap_usd: 0.5,
                 max_turns: 8,
+                kind: SpendKind::Conversation,
             }
         }
 
@@ -761,6 +766,7 @@ mod tests {
                     charge_task: None,
                     cap_usd: 0.5,
                     max_turns: 8,
+                    kind: SpendKind::Conversation,
                 },
             )
             .await

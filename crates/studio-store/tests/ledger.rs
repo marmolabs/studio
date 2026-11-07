@@ -13,6 +13,7 @@ fn spend(at_ms: u64, ticket: &str, project: &str, hire: &str, session: &str, usd
         model: "haiku".into(),
         session: Some(session.into()),
         usd,
+        kind: studio_store::SpendKind::Coding,
         reported: true,
         input_tokens: 10,
         output_tokens: 20,
@@ -80,4 +81,35 @@ fn spend_by_local_day_lists_each_day_up_to_today() {
     let total: f64 = days.iter().map(|d| d.2).sum();
     assert!((total - 0.75).abs() < 1e-9);
     assert!(store.spend_by_local_day(now, 0).unwrap().is_empty());
+}
+
+#[test]
+fn spend_lines_split_by_kind_hire_and_model_for_a_window_and_tickets() {
+    use studio_store::SpendKind;
+    let mut store = Store::open_in_memory().unwrap();
+    let with = |at: u64, ticket: &str, kind: SpendKind, hire: &str, model: &str, usd: f64| {
+        let mut s = spend(at, ticket, "a", hire, "s", usd);
+        s.kind = kind;
+        s.model = model.into();
+        s
+    };
+    for s in [
+        with(100, "A-1", SpendKind::Coding, "dev", "sonnet", 1.0),
+        with(200, "A-1", SpendKind::Approval, "lead", "opus", 0.6),
+        with(300, "A-1", SpendKind::Approval, "lead", "opus", 0.6),
+        with(300, "A-2", SpendKind::Routing, "router", "haiku", 0.01),
+        with(50, "A-1", SpendKind::Coding, "dev", "sonnet", 9.0),
+    ] {
+        store.record_spend(&s).unwrap();
+    }
+    let lines = store.spend_lines(100, None).unwrap();
+    assert_eq!(lines.len(), 3);
+    assert_eq!((lines[0].kind, lines[0].calls), (SpendKind::Approval, 2));
+    assert_eq!((lines[1].kind, lines[1].calls), (SpendKind::Coding, 1));
+    assert!((lines[0].usd - 1.2).abs() < 1e-9);
+    let a1 = store.spend_lines(0, Some(&["A-1".to_string()])).unwrap();
+    assert!(a1.iter().all(|l| l.kind != SpendKind::Routing));
+    // What the ledger reads back keeps the kind.
+    let rows = store.ledger_since(200).unwrap();
+    assert_eq!(rows[0].kind, SpendKind::Approval);
 }

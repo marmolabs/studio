@@ -12,6 +12,7 @@ use super::lead_href;
 use super::talk::thread::Person;
 use crate::pages::activity::{self, Answer, Logged};
 use crate::pages::changes;
+use crate::pages::cost::{self, Costs};
 use crate::pages::office::{Office, floor};
 use crate::{AppConfig, client, diffstat, ui};
 
@@ -59,6 +60,8 @@ pub struct Sheet {
     pub review: Tile,
     pub protected: Tile,
     pub tasks: Vec<Row>,
+    /// What the work cost, split by kind of run.
+    pub costs: Costs,
     /// Screenshots and clips of each task, grouped by ticket id.
     pub evidence: Vec<(String, Vec<EvidenceFile>)>,
     pub added: u64,
@@ -98,6 +101,7 @@ struct Read {
     /// is exact.
     lines: Option<(u64, u64)>,
     tasks: Vec<Task>,
+    costs: Costs,
 }
 
 /// Reads what the sheet of `id` shows; none when the project has no such work.
@@ -128,6 +132,34 @@ pub async fn gather(
             .map(|ticket| ticket.id.to_string())
             .filter(|task| task != id),
     );
+    let goal_of = |ticket: &Ticket| cost::goal_ids(&office.tickets, ticket);
+    let (own_ids, goal_ids, scope) = match &goal {
+        Some(_) => (asked.clone(), Vec::new(), "on this goal"),
+        None => {
+            let task = office.ticket(id);
+            (
+                vec![id.to_string()],
+                task.map(goal_of).unwrap_or_default(),
+                "on this task",
+            )
+        }
+    };
+    let (own, whole) = tokio::join!(
+        cost::read(&config.socket, own_ids),
+        cost::read(&config.socket, goal_ids),
+    );
+    let name_of = |hire: &str| office.name_of(hire);
+    let costs = if goal.is_some() {
+        cost::costs(vec![("The goal", scope, own)], &name_of)
+    } else {
+        cost::costs(
+            vec![
+                ("This task", scope, own),
+                ("Its goal", "on its goal", whole),
+            ],
+            &name_of,
+        )
+    };
     let (diff, stats) = tokio::join!(
         client::call::<Option<String>>(
             &config.socket,
@@ -185,6 +217,7 @@ pub async fn gather(
         diff,
         lines,
         tasks,
+        costs,
     };
     Some(build(office, project, id, tint, goal.as_ref(), read))
 }
@@ -203,6 +236,7 @@ fn build(
         diff,
         lines,
         tasks,
+        costs,
     } = read;
     let rows: Vec<Row> = tasks
         .iter()
@@ -277,6 +311,7 @@ fn build(
         review: review_tile(office, &tasks),
         protected: protected_tile(&tasks),
         tasks: rows,
+        costs,
         evidence: tasks
             .iter()
             .filter(|task| !task.evidence.is_empty())
@@ -518,6 +553,7 @@ pub async fn sheet(work: Sheet) -> topcoat::Result<impl View> {
         review,
         protected,
         tasks,
+        costs,
         evidence,
         added,
         removed,
@@ -600,6 +636,12 @@ pub async fn sheet(work: Sheet) -> topcoat::Result<impl View> {
                             }
                         </ul>
                     </section>
+                    if !costs.parts.is_empty() {
+                        <section class="flex flex-col gap-2" aria-label="What it cost">
+                            <h3 class="text-[12px] font-medium uppercase text-fg-3">"What it cost"</h3>
+                            cost::costs_view(costs: costs)
+                        </section>
+                    }
                     for (task, captures) in evidence {
                         <section class="flex flex-col gap-2" aria-label=(format!("Evidence for {task}"))>
                             <h3 class="text-[12px] font-medium uppercase text-fg-3">"Visual proof · " (task.clone())</h3>

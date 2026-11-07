@@ -20,7 +20,7 @@ use studio_core::event::Event as TicketEvent;
 use studio_core::ticket::Ticket;
 use studiod::api::{
     AskView, OfficeView, OperationsView, ProjectView, Request, RoomSummary, SetupView, ShipCheck,
-    Standup,
+    SpendLine, Standup,
 };
 use topcoat::router::{error::redirect_permanent, response::Response, route};
 
@@ -40,6 +40,8 @@ pub struct Office {
     pub state_since: BTreeMap<String, u64>,
     /// Total spend of each ticket, including its live run.
     pub spend: BTreeMap<String, f64>,
+    /// What the last 24 hours cost, by kind of run, project, hire and model.
+    pub kinds: Vec<SpendLine>,
     /// Lines added and removed by each ready ticket, by id.
     pub sizes: HashMap<String, (u64, u64)>,
     /// Who is judging each ticket in review.
@@ -203,6 +205,7 @@ fn office_of(said: OfficeView, now: u64) -> topcoat::Result<Office> {
         recent,
         state_since: said.state_since,
         spend: said.spend,
+        kinds: said.kinds,
         sizes: said.sizes.into_iter().collect(),
         judges: said
             .judges

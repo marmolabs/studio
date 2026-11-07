@@ -990,6 +990,34 @@ fn print_budget(b: &Value) {
             println!("  reserved for {ticket}: {}", money(usd));
         }
     }
+    for line in kind_lines(&b["by_kind"]) {
+        println!("{line}");
+    }
+}
+
+/// The last 24 hours by kind of run, then a plain warning when approvals or
+/// routing cost more than the coding. Nothing when the ledger has no runs.
+fn kind_lines(by_kind: &Value) -> Vec<String> {
+    let lines: Vec<studiod::api::SpendLine> =
+        serde_json::from_value(by_kind.clone()).unwrap_or_default();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec!["Where the money went, last 24h".to_string()];
+    for total in studiod::api::by_kind(&lines) {
+        out.push(format!(
+            "  {:<16}{:>4} {:<6}{:>9}  {}",
+            total.kind.label(),
+            total.calls,
+            if total.calls == 1 { "call" } else { "calls" },
+            studiod::api::dollars(total.usd),
+            total.models.join(", ")
+        ));
+    }
+    if let Some(warning) = studiod::api::warning(&lines, "in the last 24 hours") {
+        out.push(warning);
+    }
+    out
 }
 
 fn print_asks(asks: &Value) {
@@ -1285,7 +1313,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        Command, Draft, draft_name, eta_text, no_change, nothing_to_show, parse_since,
+        Command, Draft, draft_name, eta_text, kind_lines, no_change, nothing_to_show, parse_since,
         put_project_in_studio, put_project_lead, release_lines, releases_lines, ruleable, run,
         status_lines,
     };
@@ -1295,6 +1323,27 @@ mod tests {
     use std::path::PathBuf;
     use studio_config::StudioPaths;
     use studiod::api::{Request, Response, socket_path};
+
+    #[test]
+    fn budget_shows_the_day_by_kind_and_warns_when_approvals_beat_coding() {
+        let by_kind = json!([
+            {"kind": "approval", "project": "shop", "hire": "lead", "model": "opus",
+             "calls": 19, "usd": 1.61},
+            {"kind": "coding", "project": "shop", "hire": "dev", "model": "sonnet",
+             "calls": 1, "usd": 1.0},
+        ]);
+        let lines = kind_lines(&by_kind);
+        assert_eq!(lines[0], "Where the money went, last 24h");
+        assert!(lines[1].contains("Approvals") && lines[1].contains("19 calls"));
+        assert!(lines[1].contains("$1.61") && lines[1].contains("opus"));
+        assert!(lines[2].contains("1 call ") && lines[2].contains("Coding"));
+        assert_eq!(
+            lines[3],
+            "Approvals cost $1.61 in the last 24 hours, more than the coding, $1.00."
+        );
+        assert!(kind_lines(&json!([])).is_empty());
+        assert!(kind_lines(&Value::Null).is_empty());
+    }
 
     /// A studio home in the temp folder, removed when dropped.
     struct Home {

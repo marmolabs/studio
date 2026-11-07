@@ -759,6 +759,14 @@ impl Studio {
                 }
                 Ok(Response::ok(spent))
             }
+            Request::SpendBreakdown { tickets, hours } => {
+                let since = match hours.unwrap_or(24) {
+                    h if tickets.is_empty() => now_ms().saturating_sub(h.saturating_mul(3_600_000)),
+                    _ => 0,
+                };
+                let only = (!tickets.is_empty()).then_some(tickets.as_slice());
+                Ok(Response::ok(lock(&self.store).spend_lines(since, only)?))
+            }
             Request::UpdatedAt => Ok(Response::ok(lock(&self.store).updated_at()?)),
             Request::Files { kind } => self.files(kind),
             Request::RuleFiles => Ok(Response::ok(self.rule_file_list())),
@@ -860,6 +868,7 @@ impl Studio {
                     },
                     "spent_24h": spent,
                     "runs_24h": runs,
+                    "by_kind": store.spend_lines(since, None)?,
                     "reserved": reservations,
                 })))
             }

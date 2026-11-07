@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use studio_core::ids::{ProjectId, TicketId};
 use studio_core::ticket::Ticket;
 use studio_runtime::RunEvent;
+use studio_store::SpendKind;
 
 /// The most a lead's turn may cost, in dollars.
 pub(crate) const TALK_USD: f64 = 0.50;
@@ -241,6 +242,7 @@ impl Studio {
             charge_task: None,
             cap_usd: TALK_USD,
             max_turns: TALK_TURNS,
+            kind: SpendKind::Conversation,
         };
         let reply = leadrun::run_with(self, run, &mut |event| watch.see(event)).await;
         let acted = watch.acted;
@@ -956,6 +958,7 @@ mod tests {
         assert_eq!(specs[0].max_turns, Some(12));
         let budget = shop.studio.handle(Request::Budget).await;
         assert_eq!(budget.data["spent_24h"]["by_ticket"]["shop/talk"], 0.07);
+        assert_eq!(budget.data["by_kind"][0]["kind"], "conversation");
     }
 
     #[tokio::test]

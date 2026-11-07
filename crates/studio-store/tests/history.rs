@@ -49,6 +49,7 @@ fn land(store: &mut Store, id: &str, hire: &str, claimed: u64, landed: u64, usd:
             model: "m".into(),
             session: Some(format!("s-{claimed}")),
             usd,
+            kind: studio_store::SpendKind::Coding,
             reported: true,
             input_tokens: 0,
             output_tokens: 0,

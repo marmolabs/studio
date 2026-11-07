@@ -25,6 +25,7 @@ use studio_config::{Checks, NewProject, ProjectConfig};
 use studio_core::ids::{HireId, ProjectId};
 use studio_core::rule::Hire;
 use studio_git::Repo;
+use studio_store::SpendKind;
 
 /// What a setup run may spend, in dollars.
 const SETUP_USD: f64 = 0.60;
@@ -374,6 +375,7 @@ impl Studio {
                 charge_task: None,
                 cap_usd: SETUP_USD,
                 max_turns: SETUP_TURNS,
+                kind: SpendKind::Setup,
             },
         )
         .await;
@@ -971,6 +973,7 @@ mod tests {
         // It is charged to the project's talk, like any lead run.
         let budget = ok(&lab.studio, Request::Budget).await;
         assert_eq!(budget["spent_24h"]["by_ticket"], json!({"shop/talk": 0.31}));
+        assert_eq!(budget["by_kind"][0]["kind"], "setup");
     }
 
     #[test]

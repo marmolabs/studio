@@ -22,6 +22,7 @@ use studio_config::config::ProjectEntry;
 use studio_core::ids::ProjectId;
 use studio_core::rule::Hire;
 use studio_core::ticket::Ticket;
+use studio_store::SpendKind;
 
 const REVIEW_USD: f64 = 0.75;
 const REVIEW_TURNS: u32 = 12;
@@ -331,6 +332,7 @@ impl Studio {
             charge_task: Some(&charge),
             cap_usd: REVIEW_USD,
             max_turns: REVIEW_TURNS,
+            kind: SpendKind::ManagerReview,
         };
         let at = now_ms();
         let (outcome, spent) = leadrun::run_costed(self, run).await;
@@ -1017,6 +1019,7 @@ mod tests {
             budget.data["spent_24h"]["by_ticket"]["shop/operations"],
             0.04
         );
+        assert_eq!(budget.data["by_kind"][0]["kind"], "manager_review");
     }
 
     const DRAWER: &str = r#"{"summary":"Checkout needs work.","actions":[{"title":"Build the drawer","act":{"do":"create_task","title":"Cart drawer","detail":"Keyboard accessible.","hire":"dev"}}]}"#;

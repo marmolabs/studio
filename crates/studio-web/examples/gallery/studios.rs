@@ -92,6 +92,7 @@ pub async fn open(dir: &Path) -> Result<Studios> {
 
     // The idle studio has the first two projects, each with its lead.
     let (idle_paths, idle_studio) = home(dir, "idle", &repos[..2], Brain::new(), true, &[])?;
+    seed_approval_day(&idle_paths)?;
     // The leadless one has the shop, which nobody leads; the hires are the
     // same, so there are leads to pick.
     let (leadless_paths, leadless_studio) =
@@ -130,6 +131,7 @@ pub async fn open(dir: &Path) -> Result<Studios> {
     let mut driver = Driver::new(Arc::clone(&busy_studio), brain, &repos);
     let ids = driver.busy_office().await?;
     seed_shop_talk(&busy_paths, &ids)?;
+    seed_costs(&busy_paths, &ids)?;
     Ok(Studios {
         busy: Live {
             studio: busy_studio,
@@ -330,11 +332,142 @@ fn earlier_days(paths: &StudioPaths) -> Result<()> {
             model: "sonnet".into(),
             session: None,
             usd: *usd,
+            kind: studio_store::SpendKind::Coding,
             reported: true,
             input_tokens: 0,
             output_tokens: 0,
         })?;
     }
+    Ok(())
+}
+
+/// The numbered id that follows `id`, by `n`: SHOP-12 and 2 make SHOP-14.
+fn after(id: &str, n: u64) -> String {
+    match id.rsplit_once('-') {
+        Some((project, number)) => format!("{project}-{}", number.parse().unwrap_or(0) + n),
+        None => id.to_string(),
+    }
+}
+
+/// Rows written into a studio's ledger, a little apart in time, as if from
+/// the hours before: the studio is open, so they are its own past.
+struct Past {
+    store: studio_store::Store,
+    at: u64,
+}
+
+impl Past {
+    fn open(paths: &StudioPaths, hours_ago: u64) -> Result<Past> {
+        Ok(Past {
+            store: studio_store::Store::open(paths.data_dir.join("studio.db"))?,
+            at: now_ms() - hours_ago * 3_600_000,
+        })
+    }
+
+    /// `calls` runs of one kind that cost `usd` together.
+    fn book(
+        &mut self,
+        ticket: &str,
+        project: &str,
+        (hire, model): (&str, &str),
+        kind: studio_store::SpendKind,
+        calls: u32,
+        usd: f64,
+    ) -> Result<()> {
+        for _ in 0..calls {
+            self.at += 90_000;
+            self.store.record_spend(&studio_store::Spend {
+                at_ms: self.at,
+                ticket_id: studio_core::ids::TicketId::new(ticket),
+                project: project.into(),
+                hire: hire.into(),
+                runtime: "claude-code".into(),
+                model: model.into(),
+                session: None,
+                usd: usd / f64::from(calls),
+                kind,
+                reported: true,
+                input_tokens: 0,
+                output_tokens: 0,
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// What the checkout goal's lead spent on one-word approvals, against a
+/// little coding, so the cost blocks have something to warn about; the other
+/// goals and the projects' talk cost what they usually do.
+fn seed_costs(paths: &StudioPaths, ids: &Ids) -> Result<()> {
+    use studio_store::SpendKind::{
+        Approval, Coding, Conversation, ManagerReview, Plan, Review, Routing, Standup,
+    };
+    let mut past = Past::open(paths, 6)?;
+    let (nora, dev, haiku) = (("nora", "opus"), ("dev", "sonnet"), "haiku");
+    // The checkout goal: a plan, a little coding, and nineteen approvals by
+    // the lead on the dearest model.
+    let goal = &ids.checkout_goal;
+    past.book(goal, "shop", ("producer", "sonnet"), Plan, 1, 0.62)?;
+    past.book(&after(goal, 1), "shop", dev, Coding, 1, 0.34)?;
+    past.book(&after(goal, 2), "shop", dev, Coding, 2, 0.52)?;
+    past.book(&after(goal, 2), "shop", nora, Approval, 19, 1.61)?;
+    past.book(
+        &after(goal, 1),
+        "shop",
+        ("reviewer", "opus"),
+        Review,
+        1,
+        0.18,
+    )?;
+    past.book(&after(goal, 3), "shop", ("router", haiku), Routing, 2, 0.01)?;
+    // The goal that is ready ships with its spend mostly in the coding.
+    let ready = &ids.ready_goal;
+    past.book(ready, "shop", ("producer", "sonnet"), Plan, 1, 0.4)?;
+    past.book(&after(ready, 1), "shop", dev, Coding, 3, 0.9)?;
+    past.book(&after(ready, 2), "shop", dev, Coding, 2, 0.6)?;
+    past.book(
+        &after(ready, 1),
+        "shop",
+        ("reviewer", "opus"),
+        Review,
+        1,
+        0.22,
+    )?;
+    past.book(
+        &after(ready, 2),
+        "shop",
+        ("approver", haiku),
+        Approval,
+        6,
+        0.03,
+    )?;
+    // The projects' talk, standups and manager reviews.
+    past.book("shop/talk", "shop", nora, Conversation, 6, 0.84)?;
+    past.book("shop/talk", "shop", ("nora", haiku), Standup, 4, 0.03)?;
+    past.book("shop/operations", "shop", nora, ManagerReview, 1, 0.31)?;
+    past.book(
+        "editor/talk",
+        "editor",
+        ("sam", "opus"),
+        Conversation,
+        3,
+        0.22,
+    )?;
+    past.book("editor/talk", "editor", ("sam", haiku), Standup, 4, 0.02)?;
+    Ok(())
+}
+
+/// A small goal that cost nine dollars: 57 one-word approvals by a lead on the
+/// dearest model, two plan runs, and about two dollars of coding and review.
+/// The company page says so at the top of what it spent.
+fn seed_approval_day(paths: &StudioPaths) -> Result<()> {
+    use studio_store::SpendKind::{Approval, Coding, Plan, Review};
+    let mut past = Past::open(paths, 8)?;
+    let (nora, dev) = (("nora", "opus"), ("dev", "sonnet"));
+    past.book("SHOP-1", "shop", ("producer", "sonnet"), Plan, 2, 2.08)?;
+    past.book("SHOP-2", "shop", dev, Coding, 3, 1.52)?;
+    past.book("SHOP-2", "shop", ("reviewer", "opus"), Review, 2, 0.46)?;
+    past.book("SHOP-2", "shop", nora, Approval, 57, 4.84)?;
     Ok(())
 }
 

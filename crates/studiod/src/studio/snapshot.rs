@@ -59,7 +59,7 @@ impl Studio {
     pub(super) fn office(self: &Arc<Self>) -> Result<Response, StudioError> {
         let now = now_ms();
         let since = now.saturating_sub(DAY_MS);
-        let (tickets, day, spent_24h, mut spend, state_since) = {
+        let (tickets, day, spent_24h, mut spend, state_since, kinds) = {
             let store = lock(&self.store);
             (
                 store.tickets()?,
@@ -67,6 +67,7 @@ impl Studio {
                 store.spent_since(since)?.total,
                 store.spent_by_ticket()?,
                 store.state_since()?,
+                store.spend_lines(since, None)?,
             )
         };
         for (ticket, usd) in lock(&self.metered).iter() {
@@ -108,6 +109,7 @@ impl Studio {
             events,
             state_since,
             spend,
+            kinds,
             merged: self.merged_among(&tickets),
             sizes,
             today,

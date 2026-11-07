@@ -9,7 +9,7 @@ use std::time::Duration;
 use studio_core::ids::TicketId;
 use studio_core::rule::Hire;
 use studio_runtime::{Outcome, RunEvent, RunSpec};
-use studio_store::Spend;
+use studio_store::{Spend, SpendKind};
 
 /// The most one quick call may cost.
 pub(crate) const QUICK_USD: f64 = 0.05;
@@ -57,11 +57,22 @@ pub(crate) async fn ask(
     cwd: &Path,
     prompt: &str,
 ) -> Result<Reply, String> {
-    ask_capped(studio, for_ticket, project, hire, cwd, prompt, QUICK_USD).await
+    ask_capped(
+        studio,
+        for_ticket,
+        project,
+        hire,
+        cwd,
+        prompt,
+        QUICK_USD,
+        SpendKind::Routing,
+    )
+    .await
 }
 
-/// `ask`, with the call allowed to cost at most `cap_usd`. It runs on the
-/// hire's configured runtime, in every mode.
+/// `ask`, with the call allowed to cost at most `cap_usd`, booked as `kind`.
+/// It runs on the hire's configured runtime, in every mode.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn ask_capped(
     studio: &Arc<Studio>,
     for_ticket: Option<&TicketId>,
@@ -70,9 +81,10 @@ pub(crate) async fn ask_capped(
     cwd: &Path,
     prompt: &str,
     cap_usd: f64,
+    kind: SpendKind,
 ) -> Result<Reply, String> {
     ask_on(
-        studio, false, for_ticket, project, hire, cwd, prompt, cap_usd,
+        studio, false, for_ticket, project, hire, cwd, prompt, cap_usd, kind,
     )
     .await
 }
@@ -97,6 +109,7 @@ pub(crate) async fn ask_conversation(
         cwd,
         prompt,
         cap_usd,
+        SpendKind::Standup,
     )
     .await?;
     studio
@@ -115,6 +128,7 @@ async fn ask_on(
     cwd: &Path,
     prompt: &str,
     cap_usd: f64,
+    kind: SpendKind,
 ) -> Result<Reply, String> {
     let role = &hire.role;
     let for_ticket = for_ticket.map(TicketId::to_string).unwrap_or_default();
@@ -238,6 +252,7 @@ async fn ask_on(
         model,
         session,
         usd,
+        kind,
         reported,
         input_tokens,
         output_tokens,
@@ -271,7 +286,17 @@ pub(crate) async fn ask_model_capped(
     prompt: &str,
     cap_usd: f64,
 ) -> Result<String, String> {
-    let reply = ask_capped(studio, Some(ticket), project, hire, cwd, prompt, cap_usd).await?;
+    let reply = ask_capped(
+        studio,
+        Some(ticket),
+        project,
+        hire,
+        cwd,
+        prompt,
+        cap_usd,
+        SpendKind::Approval,
+    )
+    .await?;
     studio
         .record_spend(&reply.charge(ticket))
         .map_err(|e| e.to_string())?;

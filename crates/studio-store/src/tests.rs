@@ -568,7 +568,7 @@ fn migrates_from_schema_version_1() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "4");
+    assert_eq!(version, "5");
     let index: i64 = conn
         .query_row(
             "SELECT count(*) FROM sqlite_master WHERE name = 'idx_events_at'",
@@ -665,4 +665,57 @@ fn max_ask_number_reads_opened_asks() {
             .unwrap();
     }
     assert_eq!(store.max_ask_number().unwrap(), 12);
+}
+
+#[test]
+fn migrates_a_ledger_without_kinds_from_schema_version_4() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("studio.db");
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO meta VALUES ('schema_version', '4');
+             CREATE TABLE ledger (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 at_ms INTEGER NOT NULL, ticket_id TEXT NOT NULL, project TEXT NOT NULL,
+                 hire TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL,
+                 session TEXT, usd REAL NOT NULL, reported INTEGER NOT NULL,
+                 input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL
+             );
+             INSERT INTO ledger (at_ms, ticket_id, project, hire, runtime, model, usd, reported,
+                                 input_tokens, output_tokens)
+             VALUES (1, 'shop/talk', 'shop', 'lead', 'claude', 'opus', 0.5, 1, 0, 0),
+                    (2, 'SHOP-1', 'shop', 'dev', 'claude', 'sonnet', 0.25, 1, 0, 0);",
+        )
+        .unwrap();
+    }
+    let mut store = Store::open(&path).unwrap();
+    let old = store.ledger_since(0).unwrap();
+    assert_eq!(old[0].kind, crate::SpendKind::Conversation);
+    assert_eq!(old[1].kind, crate::SpendKind::Earlier);
+    // New rows carry their kind next to the old ones.
+    store
+        .record_spend(&crate::Spend {
+            at_ms: 3,
+            ticket_id: tid("SHOP-1"),
+            project: "shop".into(),
+            hire: "approver".into(),
+            runtime: "claude".into(),
+            model: "haiku".into(),
+            session: None,
+            usd: 0.01,
+            kind: crate::SpendKind::Approval,
+            reported: true,
+            input_tokens: 0,
+            output_tokens: 0,
+        })
+        .unwrap();
+    let lines = store.spend_lines(0, None).unwrap();
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0].kind, crate::SpendKind::Conversation);
+    let only = store.spend_lines(0, Some(&["SHOP-1".to_string()])).unwrap();
+    assert_eq!(only.len(), 2);
+    assert!(only.iter().any(|l| l.kind == crate::SpendKind::Approval));
+    assert!(store.spend_lines(0, Some(&[])).unwrap().is_empty());
 }

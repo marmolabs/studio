@@ -268,6 +268,7 @@ mod tests {
             model: "m".into(),
             session: None,
             usd,
+            kind: studio_store::SpendKind::Coding,
             reported: true,
             input_tokens: 0,
             output_tokens: 0,

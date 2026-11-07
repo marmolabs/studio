@@ -32,6 +32,7 @@ use crate::{AppConfig, client, diffstat, live, markdown, ui};
 
 use super::activity::{self, Filer, Logged};
 use super::ask_card::ask_card;
+use super::cost::{self, Costs};
 use super::timeline::{exact, relative};
 use super::{changes, evidence};
 
@@ -60,6 +61,8 @@ struct Facts {
     cap: Option<f64>,
     /// Whether the ticket's goal branch is already merged into its base.
     merged: bool,
+    /// What the ticket and its goal cost, split by kind of run.
+    costs: Costs,
 }
 
 async fn facts(config: &AppConfig, id: &str) -> topcoat::Result<Facts> {
@@ -75,7 +78,26 @@ async fn facts(config: &AppConfig, id: &str) -> topcoat::Result<Facts> {
     let budget: Value = client::call(&config.socket, Request::Budget)
         .await
         .unwrap_or_default();
+    let goal_ids = cost::goal_ids(&tickets, &ticket);
+    let (own, whole) = tokio::join!(
+        cost::read(&config.socket, vec![id.to_string()]),
+        cost::read(&config.socket, goal_ids),
+    );
+    let costs = if ticket.kind == TicketKind::Plan {
+        cost::costs(vec![("This goal", "on this goal", whole)], &|h| {
+            h.to_string()
+        })
+    } else {
+        cost::costs(
+            vec![
+                ("This task", "on this task", own),
+                ("Its goal", "on its goal", whole),
+            ],
+            &|h| h.to_string(),
+        )
+    };
     Ok(Facts {
+        costs,
         filer: activity::filer(&ticket, &tickets),
         asks: asks.into_iter().filter(|a| a.ticket == id).collect(),
         events: ticket_events(&config.socket, id).await,
@@ -164,6 +186,7 @@ async fn fragments(
         cap: facts.cap,
         stages: stages(&ticket, &logged, since),
         files: changes.files.clone(),
+        costs: facts.costs.clone(),
     };
     let unreviewed = logged
         .iter()
@@ -328,7 +351,7 @@ fn built_from(facts: &Facts, files: &Changed, log_len: usize) -> String {
         now / 60_000
     };
     format!(
-        "{:?} {:?} {:?} {} {:?} {} {:?} {} {:?} {log_len} {clock}",
+        "{:?} {:?} {:?} {} {:?} {} {:?} {} {:?} {:?} {log_len} {clock}",
         facts.ticket,
         facts.filer,
         facts.asks,
@@ -338,6 +361,7 @@ fn built_from(facts: &Facts, files: &Changed, log_len: usize) -> String {
         facts.cap,
         facts.merged,
         files,
+        facts.costs,
     )
 }
 
@@ -954,6 +978,7 @@ struct Side {
     cap: Option<f64>,
     stages: Vec<Stage>,
     files: Vec<(String, u64, u64)>,
+    costs: Costs,
 }
 
 fn stage_ring(stage: &Stage) -> &'static str {
@@ -986,6 +1011,7 @@ async fn rail(ticket: Ticket, side: Side) -> topcoat::Result<impl View> {
         cap,
         stages,
         mut files,
+        costs,
     } = side;
     let goal = activity::goal_name(&ticket).map(|_| ticket.goal.clone());
     let link = goal_link(&ticket);
@@ -1032,6 +1058,13 @@ async fn rail(ticket: Ticket, side: Side) -> topcoat::Result<impl View> {
                         ui::prop(label: "Time", <span class="tabular-nums">(time)</span>)
                     }
                 </dl>
+                if !costs.parts.is_empty() {
+                    <div class="h-px bg-line"></div>
+                    <section aria-label="Where the money went">
+                        <h3 class=(RAIL_HEAD)>"Where the money went"</h3>
+                        cost::costs_view(costs: costs)
+                    </section>
+                }
                 <div class="h-px bg-line"></div>
                 <section aria-label="Progress">
                     <h3 class=(RAIL_HEAD)>"Progress"</h3>

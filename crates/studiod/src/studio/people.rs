@@ -18,6 +18,7 @@ use studio_config::config::ProjectEntry;
 use studio_core::ids::HireId;
 use studio_core::rule::Hire;
 use studio_core::ticket::Ticket;
+use studio_store::SpendKind;
 
 const TALK_USD: f64 = 0.25;
 const TALK_TURNS: u32 = 8;
@@ -152,6 +153,7 @@ impl Studio {
             charge_task: Some(&charge),
             cap_usd: TALK_USD,
             max_turns: TALK_TURNS,
+            kind: SpendKind::Conversation,
         };
         match leadrun::run(self, run).await {
             Ok(reply) if !reply.text.is_empty() => {
@@ -535,6 +537,7 @@ mod tests {
             json!({"shop/people/dev": 0.04})
         );
         assert_eq!(budget.data["spent_24h"]["by_hire"], json!({"dev": 0.04}));
+        assert_eq!(budget.data["by_kind"][0]["kind"], "conversation");
     }
 
     #[tokio::test]
