@@ -305,7 +305,7 @@ async fn the_settings_say_what_each_autonomy_level_does_and_what_simulation_touc
         "Supervised Every action waits for you.",
         "Balanced Feedback and messages to employees go ahead; everything else waits.",
         "Autonomous Task management goes ahead, and up to 3 new goals or tasks a day per project; cancelling still waits.",
-        "Simulation affects only conversations, rooms and reviews, never coding work or approvals.",
+        "Simulation affects only conversations, rooms, standups, setup and reviews, never coding work or approvals.",
     ] {
         assert!(text.contains(words), "{words}: {text}");
     }
