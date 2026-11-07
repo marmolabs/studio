@@ -190,7 +190,12 @@ the configured interval (5 minutes to 24 hours). A review is told which
 proposals of its project still wait for you and is asked not to repeat them; a
 proposal identical to one that waits is dropped; at most 20 may wait in a
 project, and beyond that new ones are not added. An automatic review is skipped
-for a project that still has proposals waiting. Shipping and publishing always
+for a project that still has proposals waiting.
+
+A review is also given the hires a task can be given (each one's id, name and
+role; never the leads or the front desk). A new task that names no hire, or a
+hire that does not exist or cannot take tasks, is kept and goes to the router
+when you approve it, as any new task with no hire does. Shipping and publishing always
 need the owner at every level. Actions are claimed atomically so concurrent
 approvals cannot execute them twice. An interrupted claim becomes failed on
 restart. If `operations.json` is unreadable, it is preserved, the UI shows the
