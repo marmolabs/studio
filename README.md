@@ -25,13 +25,13 @@ you to ship. Nothing is pushed, and agents never see your credentials.
 > on a repo you have backed up, keep its budget low, set a spending limit in
 > your Claude account too, and read what it ships before you do.
 
-<p align="center"><img src="docs/office.png" alt="HQ, the morning round-up: a sidebar with a lead for each project, and a standup from each lead with the questions to answer and the finished work to ship" width="900"></p>
+<p align="center"><img src="docs/office.png" alt="HQ, the morning round-up: a sidebar with a lead for each project and links to the company page and rooms, and a standup from each lead with a Run manager review button, the approvals to answer and the finished work to ship" width="900"></p>
 
 ## Talk to your leads
 
 The web UI is a team sidebar and a page for each thing you do.
 
-<p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and a note to Dev shows as a card. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
+<p align="center"><img src="docs/talk.png" alt="A conversation with Nora, the lead of the shop project: she answers a request to plan the checkout flow with a card of four tasks, and an approval card asks whether Dev may change a protected file. Beside the thread a rail shows who is at work, the milestone and what the project spent today" width="900"></p>
 
 - **HQ** is your morning round-up and approval inbox. Each lead has a line, its
   standup in a sentence or two, and under it the cards that wait for you: a
@@ -67,9 +67,11 @@ The web UI is a team sidebar and a page for each thing you do.
 - **The office** is the company floor. Pick a sign for its lead, or a person or
   their task for that employee's own card and conversation. **Studio** has the
   money limits, desks, hires, rules, office pause, manager autonomy controls,
-  and a simulation/live switch. Simulation gives new conversations and reviews
-  scripted replies with zero model cost. Automatic reviews are off by default;
-  cancellation, shipping and publishing always need you.
+  and a simulation/live switch. Simulation gives conversations, rooms,
+  standups, setup and reviews scripted replies at no model cost, while coding
+  work and approvals always use real models. Automatic reviews are off by
+  default. In Autonomous mode a lead may start at most 3 goals or tasks a day
+  per project on its own. Cancelling, shipping and publishing always need you.
 
 Adding a project is a conversation too: **New project** takes a folder and
 hires a lead for it. The lead reads the repository and shows how the project
