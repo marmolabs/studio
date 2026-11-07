@@ -484,7 +484,7 @@ async fn room_page(cx: &Cx) -> topcoat::Result<impl View> {
     }
     let conversation = rooms::read(config, &room, before).await;
     Ok(
-        view! { rooms::room_view(team: team, office: office, room: room, conversation: conversation) },
+        view! { rooms::room_view(team: team, office: office, room: room, conversation: conversation, before: before) },
     )
 }
 
@@ -841,6 +841,43 @@ mod tests {
     use serde_json::{Value, json};
     use studio_core::ticket::Ticket;
     use studiod::api::ProjectView;
+
+    /// The picture names a page asks for in `icon(name: ...)`, with the file
+    /// each is in.
+    fn icons_asked_for(dir: &std::path::Path, found: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                icons_asked_for(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                // The page itself, not its tests.
+                let page = text.split("#[cfg(test)]").next().unwrap_or_default();
+                for call in page.split("icon(name:").skip(1) {
+                    let args = call.split(')').next().unwrap_or_default();
+                    for name in args.split('"').skip(1).step_by(2) {
+                        found.push((name.to_string(), path.display().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_picture_a_team_page_draws_is_in_the_icon_sheet() {
+        let mut asked = Vec::new();
+        icons_asked_for(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages/team"),
+            &mut asked,
+        );
+        assert!(asked.len() > 10, "{asked:?}");
+        for (name, file) in asked {
+            assert!(
+                crate::statics::ICONS.contains(&format!("id=\"i-{name}\"")),
+                "{file} draws {name}, which the icon sheet does not have"
+            );
+        }
+    }
 
     fn ticket(id: &str, project: &str, state: Value, extra: Value) -> Ticket {
         let mut fields = json!({
