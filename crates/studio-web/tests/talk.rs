@@ -817,11 +817,13 @@ async fn an_employee_has_a_persistent_conversation_and_their_own_work() {
     assert!(by_id(&html, "composer").attr_has("data-on:submit", "/people/dev/talk"));
     let rail = by_id(&html, "person-rail").text();
     assert!(
-        rail.contains("Cart drawer") && rail.contains("shop · working"),
+        rail.contains("Cart drawer") && rail.contains("shop · Working"),
         "{rail}"
     );
     assert!(rail.contains("Add a discount field"), "{rail}");
     assert!(has_id(&html, "person-tell-SHOP-1"));
+    // The list a phone opens has its own ids.
+    assert!(has_id(&html, "person-phone-tell-SHOP-1"));
 
     web.post("/people/dev/talk", &[("text", "What is left?")])
         .await;

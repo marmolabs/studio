@@ -191,7 +191,7 @@ fn direct_peek(
             format!("Most recently: {} · {}", task.title, task.project),
         ),
         Some(task) => (
-            ui::shown(&task.state).to_string(),
+            ui::look(ui::shown(&task.state)).label.to_string(),
             format!("{} · {}", task.title, task.project),
         ),
         None => ("Free".to_string(), "No tasks assigned yet.".to_string()),
