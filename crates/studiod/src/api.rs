@@ -9,7 +9,10 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use studio_core::ticket::Ticket;
 
-pub use studio_store::{KindTotal, SpendKind, SpendLine, StoredEvent, by_kind, dollars, warning};
+pub use studio_store::{
+    KindTotal, SpendKind, SpendLine, StoredEvent, by_kind, dollars, model_name, model_names,
+    warning,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]

@@ -2,7 +2,7 @@
 //! calls each took and which model ran them. Shared by the company page, a
 //! task's page and Look closer.
 
-use studiod::api::{SpendLine, by_kind};
+use studiod::api::{SpendLine, by_kind, model_names};
 use topcoat::view::{View, component, view};
 
 use crate::ui;
@@ -14,17 +14,6 @@ pub struct CostRow {
     pub usd: f64,
     /// Calls, the model and who ran them, such as "19 calls · Opus · Nora".
     pub note: String,
-}
-
-/// A model as a person says it: "claude-opus-4-5" is Opus.
-pub fn model_name(model: &str) -> String {
-    let lower = model.to_lowercase();
-    for family in ["opus", "sonnet", "haiku"] {
-        if lower.contains(family) {
-            return format!("{}{}", family[..1].to_uppercase(), &family[1..]);
-        }
-    }
-    model.to_string()
 }
 
 /// What a hire is called in a cost row: the name in its file, else its id
@@ -73,7 +62,7 @@ pub fn by_kind_rows(lines: &[SpendLine], name_of: &dyn Fn(&str) -> String) -> Ve
                 }
             }
             hires.sort_by(|a, b| b.1.total_cmp(&a.1));
-            let models: Vec<String> = total.models.iter().map(|m| model_name(m)).collect();
+            let models = total.models;
             let who: Vec<String> = hires.iter().map(|(h, _)| name_of(h)).collect();
             let note = format!("{} · {} · {}", calls(total.calls), some(models), some(who));
             CostRow {
@@ -110,7 +99,7 @@ pub fn by_project_rows(lines: &[SpendLine]) -> Vec<CostRow> {
                 }
             }
             dearest.sort_by(|a, b| b.1.total_cmp(&a.1));
-            let models: Vec<String> = dearest.iter().map(|(m, _)| model_name(m)).collect();
+            let models = model_names(dearest.iter().map(|(m, _)| m.as_str()));
             CostRow {
                 label: project.to_string(),
                 usd: own.iter().map(|l| l.usd).sum(),
@@ -290,10 +279,17 @@ mod tests {
     }
 
     #[test]
-    fn models_are_named_as_people_say_them() {
-        assert_eq!(model_name("claude-opus-4-5-20251101"), "Opus");
-        assert_eq!(model_name("sonnet"), "Sonnet");
-        assert_eq!(model_name("fake-1"), "fake-1");
+    fn models_are_named_as_people_say_them_once() {
+        let lines = [
+            line(SpendKind::Coding, "shop", "dev", "claude-opus-5-5", 1, 2.0),
+            line(SpendKind::Coding, "shop", "dev", "opus", 1, 1.0),
+            line(SpendKind::Coding, "shop", "dev", "claude-haiku-5-5", 1, 0.5),
+        ];
+        assert_eq!(
+            by_kind_rows(&lines, &|h| h.into())[0].note,
+            "3 calls · Opus, Haiku · dev"
+        );
+        assert_eq!(by_project_rows(&lines)[0].note, "3 calls · Opus, Haiku");
     }
 
     #[test]

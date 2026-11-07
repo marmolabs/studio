@@ -31,7 +31,9 @@ mod costs;
 #[cfg(test)]
 mod tests;
 
-pub use costs::{KindTotal, SpendKind, SpendLine, by_kind, dollars, warning};
+pub use costs::{
+    KindTotal, SpendKind, SpendLine, by_kind, dollars, model_name, model_names, warning,
+};
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 

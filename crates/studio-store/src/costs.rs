@@ -101,13 +101,37 @@ pub struct SpendLine {
     pub usd: f64,
 }
 
+/// A model as a person says it: "claude-opus-5-5" is Opus. A name that is
+/// none of the families stays as it is.
+pub fn model_name(model: &str) -> String {
+    let lower = model.to_lowercase();
+    for family in ["opus", "sonnet", "haiku"] {
+        if lower.contains(family) {
+            return format!("{}{}", family[..1].to_uppercase(), &family[1..]);
+        }
+    }
+    model.to_string()
+}
+
+/// The models by their friendly names, each once, in the order given.
+pub fn model_names<'a>(models: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for model in models {
+        let name = model_name(model);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
 /// All the runs of one kind, added up.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KindTotal {
     pub kind: SpendKind,
     pub calls: u64,
     pub usd: f64,
-    /// The models that ran them, the dearest first.
+    /// The models that ran them by friendly name, the dearest first, each once.
     pub models: Vec<String>,
 }
 
@@ -140,7 +164,7 @@ pub fn by_kind(lines: &[SpendLine]) -> Vec<KindTotal> {
         .into_iter()
         .map(|(mut total, mut models)| {
             models.sort_by(|a, b| b.1.total_cmp(&a.1));
-            total.models = models.into_iter().map(|(m, _)| m).collect();
+            total.models = model_names(models.iter().map(|(m, _)| m.as_str()));
             total
         })
         .collect();
@@ -216,6 +240,22 @@ mod tests {
     }
 
     #[test]
+    fn models_are_named_as_people_say_them_once() {
+        assert_eq!(model_name("claude-opus-5-5"), "Opus");
+        assert_eq!(model_name("fake-1"), "fake-1");
+        assert_eq!(
+            model_names(["claude-opus-5-5", "opus", "sonnet", "claude-opus-5-5"]),
+            ["Opus", "Sonnet"]
+        );
+        let totals = by_kind(&[
+            line(SpendKind::Coding, "claude-opus-5-5", 1, 2.0),
+            line(SpendKind::Coding, "opus", 1, 1.0),
+            line(SpendKind::Coding, "sonnet", 1, 0.5),
+        ]);
+        assert_eq!(totals[0].models, ["Opus", "Sonnet"]);
+    }
+
+    #[test]
     fn kinds_add_up_dearest_first_with_their_models() {
         let totals = by_kind(&[
             line(SpendKind::Coding, "sonnet", 2, 1.0),
@@ -224,7 +264,7 @@ mod tests {
         ]);
         assert_eq!(totals[0].kind, SpendKind::Approval);
         assert_eq!(totals[0].calls, 19);
-        assert_eq!(totals[0].models, ["opus", "haiku"]);
+        assert_eq!(totals[0].models, ["Opus", "Haiku"]);
         assert_eq!(totals[1].kind, SpendKind::Coding);
     }
 
