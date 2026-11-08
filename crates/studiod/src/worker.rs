@@ -982,7 +982,12 @@ impl AgentRun<'_> {
                 | TicketState::Checking
                 | TicketState::Reviewing
         ) {
+            let login = reason == HeldReason::Auth;
             self.studio.append(self.id(), Event::Held { reason })?;
+            if login {
+                self.studio
+                    .say_login_needed(&self.ticket.project.0, &self.ticket.title);
+            }
         }
         Ok(AgentEnd::Stopped)
     }

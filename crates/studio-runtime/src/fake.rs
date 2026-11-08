@@ -1,6 +1,7 @@
 use crate::Runtime;
 use crate::run::{
-    Capabilities, Control, Cost, EnvReport, Outcome, Run, RunEvent, RunSpec, RuntimeError,
+    Capabilities, Control, Cost, EnvReport, LoginCommand, Outcome, Run, RunEvent, RunSpec,
+    RuntimeError,
 };
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,8 @@ pub struct FakeRuntime {
     sequence: Vec<Vec<RunEvent>>,
     no_cost_reports: bool,
     mcp: bool,
+    /// When set, the runtime logs in by running this command.
+    login: Option<LoginCommand>,
     /// When set, a run waits for this before finishing.
     hold: Option<Arc<Notify>>,
     received: Arc<Mutex<Vec<Control>>>,
@@ -51,6 +54,16 @@ impl FakeRuntime {
     /// Claims MCP support, so the studio hands its runs an MCP config.
     pub fn with_mcp(mut self) -> FakeRuntime {
         self.mcp = true;
+        self
+    }
+
+    /// Logs in by running `sh -c script`, a scripted stand-in for a login
+    /// command.
+    pub fn with_login_script(mut self, script: &str) -> FakeRuntime {
+        self.login = Some(LoginCommand {
+            program: "sh".into(),
+            args: vec!["-c".to_string(), script.to_string()],
+        });
         self
     }
 
@@ -105,6 +118,10 @@ impl Runtime for FakeRuntime {
             version: Some("fake".to_string()),
             problem: None,
         }
+    }
+
+    fn login_command(&self) -> Option<LoginCommand> {
+        self.login.clone()
     }
 
     fn start(&self, spec: RunSpec) -> Result<Run, RuntimeError> {

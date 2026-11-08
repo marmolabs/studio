@@ -163,7 +163,7 @@ impl Studio {
                 hire_id,
                 &format!("{} had nothing to say.", super::briefing::named(&hire)),
             ),
-            Err(why) => self.say_to_hire(hire_id, &sentence(&why)),
+            Err(why) => self.say_to_hire(hire_id, &sentence(&why.message)),
         }
         Some(upto)
     }

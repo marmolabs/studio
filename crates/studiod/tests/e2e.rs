@@ -3138,6 +3138,56 @@ async fn a_ticket_held_for_quota_tries_again_once_the_limit_resets() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_ticket_held_for_login_says_so_once_in_its_conversation() {
+    let setup = setup("");
+    let refused = vec![
+        RunEvent::Started {
+            session: "s1".into(),
+            model: Some("fake-1".into()),
+        },
+        RunEvent::Finished {
+            outcome: Outcome::Failed {
+                kind: FailureKind::Auth,
+                message: "Not logged in · Please run /login".into(),
+            },
+            session: Some("s1".into()),
+            cost: Cost::default(),
+            summary: None,
+        },
+    ];
+    let studio = studio(&setup, FakeRuntime::sequence(vec![refused]));
+    ok(&studio, create("Add a level")).await;
+    studio.spawn_scheduler();
+    until(async || state_of(&studio, "GAME-1").await["held"]["reason"] == "auth").await;
+    let said = async || {
+        let seen = ok(
+            &studio,
+            Request::Conversation {
+                project: "game".into(),
+                after: None,
+            },
+        )
+        .await;
+        seen["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["text"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    until(async || !said().await.is_empty()).await;
+    // The scheduler has had several passes; still only one message.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        said().await,
+        [
+            "The task \"Add a level\" is waiting: Claude Code isn't logged in on this computer. \
+             Type /login here to log in, then resume the task."
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn evidence_and_image_pairs_outlive_the_worktree() {
     let setup = setup("");
     write_project(

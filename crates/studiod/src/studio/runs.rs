@@ -253,6 +253,30 @@ impl Studio {
         Ok(resumed)
     }
 
+    /// Resumes each ticket held for want of a login, as the owner has now
+    /// logged in. Returns how many resumed.
+    pub fn resume_auth_held(&self) -> Result<usize, StudioError> {
+        let held = lock(&self.store).tickets_in("held")?;
+        let mut resumed = 0;
+        for ticket in held {
+            if ticket.state
+                != (TicketState::Held {
+                    reason: HeldReason::Auth,
+                })
+            {
+                continue;
+            }
+            self.append(&ticket.id, Event::Resumed)?;
+            crate::runlog::RunLog::new(&self.paths.data_dir, &ticket.id.to_string())
+                .note("resumed: logged in again");
+            resumed += 1;
+        }
+        if resumed > 0 {
+            self.wake.notify_one();
+        }
+        Ok(resumed)
+    }
+
     /// Resumes each ticket held for the provider's quota whose wait is over
     /// at `now`; see `quota_retry_at`. Returns how many resumed.
     pub fn resume_quota_held(&self, now: u64) -> Result<usize, StudioError> {

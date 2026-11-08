@@ -383,7 +383,7 @@ impl Studio {
         let proposed = self.setup_view(project).and_then(|view| view.proposal);
         let Some(proposal) = proposed else {
             return Err(match reply {
-                Err(why) => why,
+                Err(why) => why.message,
                 Ok(_) => format!("{who} finished without proposing how {project} runs"),
             });
         };
