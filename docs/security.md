@@ -56,6 +56,8 @@ only on a network you trust, never on public Wi-Fi, and run
 - Agents get only the studio's own MCP tools, not the MCP servers in your
   Claude settings, unless a hire sets `user_mcp: true`. A server that reads
   other people's messages (chat, email, issues) is a way to steer an agent.
+- Agent runs load the repo's own Claude Code settings and CLAUDE.md. They never
+  load your personal settings, plugins or memory.
 - Run logs and rules are plain files you can read.
 
 ## The approver and the router
