@@ -18,6 +18,9 @@
 - Company and project rooms provide persistent announcements and cross-team
   conversations. Mentioning a hire starts a read-only reply; plain announcements
   cost nothing.
+- Agent runs no longer load your personal Claude Code settings, plugins or
+  memory. They load only the repo's own settings and CLAUDE.md, which also
+  cuts the tokens each run reads.
 - The company page adds a live goal/task work map, owner and blocker details,
   ticket spend, a delivery and cost scorecard, employee workload, and the
   manager decision log.

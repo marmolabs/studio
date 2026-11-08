@@ -108,6 +108,12 @@ impl ClaudeCode {
         if spec.strict_mcp {
             args.push("--strict-mcp-config".to_string());
         }
+        if !spec.lean {
+            // Load the repo's own settings and CLAUDE.md, never the
+            // operator's personal ones.
+            args.push("--setting-sources".to_string());
+            args.push("project,local".to_string());
+        }
         if spec.lean {
             // `--tools ""` is no tools; `--setting-sources ""` is no user,
             // project or local settings, notes or memory.
@@ -188,6 +194,9 @@ impl Runtime for ClaudeCode {
             // one of the project's checks.
             .env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
             .env("BASH_MAX_TIMEOUT_MS", BASH_MAX_TIMEOUT_MS)
+            // Auto memory holds the operator's private notes. Agents must
+            // not read them.
+            .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -701,7 +710,8 @@ mod tests {
         ));
         assert!(args.contains("--allowedTools Read,Bash(git diff *)"));
         assert!(!args.contains("--bare"));
-        assert!(args.ends_with("--strict-mcp-config"));
+        assert!(args.contains("--strict-mcp-config"));
+        assert!(args.ends_with("--setting-sources project,local"));
     }
 
     #[test]
@@ -722,13 +732,28 @@ mod tests {
         let plain = ClaudeCode::args(&RunSpec::default());
         for flag in [
             "--tools",
-            "--setting-sources",
             "--system-prompt",
             "--disable-slash-commands",
             "--no-session-persistence",
         ] {
             assert!(!plain.contains(&flag.to_string()), "{flag}");
         }
+    }
+
+    #[test]
+    fn every_run_names_its_setting_sources_once() {
+        let count = |args: &[String]| args.iter().filter(|a| *a == "--setting-sources").count();
+        let plain = ClaudeCode::args(&RunSpec::default());
+        assert_eq!(count(&plain), 1);
+        let at = plain.iter().position(|a| a == "--setting-sources").unwrap();
+        assert_eq!(plain[at + 1], "project,local");
+        let lean = ClaudeCode::args(&RunSpec {
+            lean: true,
+            ..RunSpec::default()
+        });
+        assert_eq!(count(&lean), 1);
+        let at = lean.iter().position(|a| a == "--setting-sources").unwrap();
+        assert_eq!(lean[at + 1], "");
     }
 
     #[test]
