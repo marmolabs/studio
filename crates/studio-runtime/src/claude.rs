@@ -6,8 +6,8 @@
 
 use crate::Runtime;
 use crate::run::{
-    Capabilities, Control, Cost, EnvReport, FailureKind, Outcome, Question, Run, RunEvent, RunSpec,
-    RuntimeError,
+    Capabilities, Control, Cost, EnvReport, FailureKind, LoginCommand, Outcome, Question, Run,
+    RunEvent, RunSpec, RuntimeError,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -166,6 +166,15 @@ impl Runtime for ClaudeCode {
                 problem: Some(err.to_string()),
             },
         }
+    }
+
+    fn login_command(&self) -> Option<LoginCommand> {
+        let mut args = self.prefix_args.clone();
+        args.extend(["auth".to_string(), "login".to_string()]);
+        Some(LoginCommand {
+            program: self.program.clone(),
+            args,
+        })
     }
 
     fn start(&self, spec: RunSpec) -> Result<Run, RuntimeError> {
@@ -646,6 +655,13 @@ mod recorded;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn logs_in_with_the_clis_own_auth_login() {
+        let login = ClaudeCode::default().login_command().unwrap();
+        assert_eq!(login.program, PathBuf::from("claude"));
+        assert_eq!(login.args, ["auth", "login"]);
+    }
 
     #[test]
     fn classifies_failures() {

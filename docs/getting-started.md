@@ -129,6 +129,16 @@ acts on its own project's tasks. A project with no lead has nobody to talk to:
 its conversation has a card in place of the message box, and `studio talk` says
 to give it one (see [Give the project a lead](#give-the-project-a-lead)).
 
+If the studio says Claude Code isn't logged in on this computer, type `/login`
+in the conversation. The studio handles it itself and the lead never sees it:
+it runs Claude Code's own `claude auth login`, which opens the sign-in page in
+your browser, and posts the link in the conversation in case the browser didn't
+open. Sign in there and the studio says "Logged in.", resumes the tasks that
+were held for the login and answers any message you were waiting on, so there
+is no need to send it again. Only one login runs at a time. If it fails, the
+studio says so and tells you to run `claude` in a terminal and type `/login`
+there. The studio never reads your credentials; the CLI keeps them.
+
 A message costs about $0.10 to $0.25 on a strong model. Each reply is capped at
 $0.50 and counts against the project's daily limit, so a project that has spent
 its day's budget stops answering until the limit resets. Only one reply is

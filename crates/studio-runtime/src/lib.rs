@@ -14,8 +14,8 @@ mod simulation;
 pub use claude::ClaudeCode;
 pub use fake::FakeRuntime;
 pub use run::{
-    Capabilities, Control, Cost, EnvReport, FailureKind, Outcome, Question, Run, RunEvent, RunSpec,
-    RuntimeError,
+    Capabilities, Control, Cost, EnvReport, FailureKind, LoginCommand, Outcome, Question, Run,
+    RunEvent, RunSpec, RuntimeError,
 };
 pub use simulation::SimulatedRuntime;
 
@@ -24,6 +24,11 @@ pub trait Runtime: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     /// Is the runtime installed and usable? Never reads credentials.
     fn check_env(&self) -> EnvReport;
+    /// How the runtime logs itself in, if it can from here. By default it
+    /// can't.
+    fn login_command(&self) -> Option<LoginCommand> {
+        None
+    }
     /// Starts a run. Must be called from inside a tokio runtime.
     fn start(&self, spec: RunSpec) -> Result<Run, RuntimeError>;
 }

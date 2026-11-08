@@ -389,7 +389,10 @@ impl Studio {
             max_turns: ROOM_TURNS,
             kind: SpendKind::Room,
         };
-        leadrun::run(self, run).await.map(|reply| reply.text)
+        leadrun::run(self, run)
+            .await
+            .map(|reply| reply.text)
+            .map_err(|error| error.message)
     }
 }
 

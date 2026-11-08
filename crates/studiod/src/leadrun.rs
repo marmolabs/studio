@@ -16,7 +16,7 @@ use std::time::Duration;
 use studio_core::budget::run_spend;
 use studio_core::ids::TicketId;
 use studio_core::rule::Hire;
-use studio_runtime::{Cost, Outcome, Run, RunEvent, RunSpec};
+use studio_runtime::{Cost, FailureKind, Outcome, Run, RunEvent, RunSpec};
 use studio_store::{Spend, SpendKind};
 
 /// How long a lead's run may take before it is stopped.
@@ -83,6 +83,23 @@ pub(crate) struct LeadReply {
     pub usd: f64,
 }
 
+/// Why a lead's run gave no answer.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LeadError {
+    pub message: String,
+    /// The run failed because Claude Code isn't logged in.
+    pub login: bool,
+}
+
+impl From<String> for LeadError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            login: false,
+        }
+    }
+}
+
 /// The task a project's talk costs are charged to: `{project}/talk`. It is not
 /// a ticket; the ledger does not link to the tickets.
 pub(crate) fn talk_task(project: &str) -> TicketId {
@@ -93,7 +110,7 @@ pub(crate) fn talk_task(project: &str) -> TicketId {
 /// the run was refused for lack of budget, could not start, failed, was cut
 /// short with nothing said, or took more than ten minutes and was stopped.
 /// Once it has started, what it spent is recorded either way.
-pub(crate) async fn run(studio: &Arc<Studio>, run: LeadRun<'_>) -> Result<LeadReply, String> {
+pub(crate) async fn run(studio: &Arc<Studio>, run: LeadRun<'_>) -> Result<LeadReply, LeadError> {
     go(studio, run, &mut |_| {}, TIMEOUT).await
 }
 
@@ -103,7 +120,7 @@ pub(crate) async fn run_with(
     studio: &Arc<Studio>,
     run: LeadRun<'_>,
     observe: &mut (dyn FnMut(&RunEvent) + Send),
-) -> Result<LeadReply, String> {
+) -> Result<LeadReply, LeadError> {
     go(studio, run, observe, TIMEOUT).await
 }
 
@@ -114,7 +131,9 @@ pub(crate) async fn run_costed(
     run: LeadRun<'_>,
 ) -> (Result<LeadReply, String>, f64) {
     let mut spent = 0.0;
-    let result = go_costed(studio, run, &mut |_| {}, TIMEOUT, &mut spent).await;
+    let result = go_costed(studio, run, &mut |_| {}, TIMEOUT, &mut spent)
+        .await
+        .map_err(|error| error.message);
     (result, spent)
 }
 
@@ -127,7 +146,7 @@ async fn go(
     lead: LeadRun<'_>,
     observe: &mut (dyn FnMut(&RunEvent) + Send),
     limit: Duration,
-) -> Result<LeadReply, String> {
+) -> Result<LeadReply, LeadError> {
     go_costed(studio, lead, observe, limit, &mut 0.0).await
 }
 
@@ -138,7 +157,7 @@ async fn go_costed(
     observe: &mut (dyn FnMut(&RunEvent) + Send),
     limit: Duration,
     spent: &mut f64,
-) -> Result<LeadReply, String> {
+) -> Result<LeadReply, LeadError> {
     let LeadRun {
         project,
         hire,
@@ -156,7 +175,7 @@ async fn go_costed(
         .reserve_extra(project, hire, cap_usd, &task.to_string(), &task.to_string())
         .map_err(|error| error.to_string())?
     else {
-        return Err(format!("{NO_BUDGET} {who}"));
+        return Err(format!("{NO_BUDGET} {who}").into());
     };
     let runtime = studio
         .conversation_runtime(&hire.runtime)
@@ -234,25 +253,32 @@ async fn go_costed(
     *spent = usd;
 
     if stopped {
-        return Err(format!("{who} took too long"));
+        return Err(format!("{who} took too long").into());
     }
     let Some(Finish {
         outcome, summary, ..
     }) = finish
     else {
-        return Err(format!("{who} ended without an answer"));
+        return Err(format!("{who} ended without an answer").into());
     };
     let text = summary
         .map(|summary| summary.trim().to_string())
         .filter(|summary| !summary.is_empty())
         .unwrap_or_else(|| tally.said.trim().to_string());
     match outcome {
-        Outcome::Failed { message, .. } => Err(format!("{who} failed: {message}")),
+        Outcome::Failed {
+            kind: FailureKind::Auth,
+            message,
+        } => Err(LeadError {
+            message: format!("{who} failed: {message}"),
+            login: true,
+        }),
+        Outcome::Failed { message, .. } => Err(format!("{who} failed: {message}").into()),
         Outcome::MaxTurns if text.is_empty() => {
-            Err(format!("{who} ran out of turns before it could answer"))
+            Err(format!("{who} ran out of turns before it could answer").into())
         }
         Outcome::Budget if text.is_empty() => {
-            Err(format!("{who} ran out of money before it could answer"))
+            Err(format!("{who} ran out of money before it could answer").into())
         }
         _ => Ok(LeadReply { text, usd }),
     }
@@ -732,7 +758,7 @@ mod tests {
         // Less left in the day than the run may cost.
         let lead = Lead::with_day(FakeRuntime::new(script("Hi.", 0.07)), 0.4);
         let refused = run(&lead.studio, lead.talk()).await;
-        assert_eq!(refused, Err("no budget left for Nora".to_string()));
+        assert_eq!(refused, Err("no budget left for Nora".to_string().into()));
         assert!(lead.runtime.specs().is_empty());
         assert!(
             lead.spent().await["by_ticket"]
@@ -779,7 +805,7 @@ mod tests {
         }
         assert_eq!(lead.runtime.specs().len(), 1);
         let refused = run(&lead.studio, lead.talk()).await;
-        assert_eq!(refused, Err("no budget left for Nora".to_string()));
+        assert_eq!(refused, Err("no budget left for Nora".to_string().into()));
         assert_eq!(lead.runtime.specs().len(), 1);
         release.notify_one();
         assert!(first.await.unwrap().is_ok());
@@ -803,7 +829,7 @@ mod tests {
             ..lead.talk()
         };
         let refused = run(&lead.studio, run_it).await.unwrap_err();
-        assert!(refused.contains("elsewhere"), "{refused}");
+        assert!(refused.message.contains("elsewhere"), "{refused:?}");
         assert!(lead.runtime.specs().is_empty());
         assert!(
             lead.spent().await["by_ticket"]
@@ -912,8 +938,23 @@ mod tests {
             finished(failed, None, 0.03),
         ]));
         let error = run(&lead.studio, lead.talk()).await.unwrap_err();
-        assert_eq!(error, "Nora failed: the model fell over");
+        assert_eq!(error.message, "Nora failed: the model fell over");
+        assert!(!error.login);
         assert_eq!(lead.spent().await["by_ticket"], json!({"shop/talk": 0.03}));
+    }
+
+    #[tokio::test]
+    async fn a_run_that_is_not_logged_in_says_so() {
+        let failed = Outcome::Failed {
+            kind: studio_runtime::FailureKind::Auth,
+            message: "Not logged in · Please run /login".into(),
+        };
+        let lead = Lead::new(FakeRuntime::new(vec![
+            started(),
+            finished(failed, None, 0.0),
+        ]));
+        let error = run(&lead.studio, lead.talk()).await.unwrap_err();
+        assert!(error.login);
     }
 
     #[tokio::test]
@@ -933,7 +974,7 @@ mod tests {
             let lead = Lead::new(FakeRuntime::new(silent));
             let error = run(&lead.studio, lead.talk()).await.unwrap_err();
             assert_eq!(
-                error,
+                error.message,
                 format!("Nora ran out of {cut} before it could answer")
             );
             // Whatever came of it, it cost what it cost.
@@ -969,7 +1010,7 @@ mod tests {
             Duration::from_millis(150),
         )
         .await;
-        assert_eq!(late, Err("Nora took too long".to_string()));
+        assert_eq!(late, Err("Nora took too long".to_string().into()));
         assert!(lead.runtime.received().contains(&Control::Interrupt));
         assert_eq!(lead.spent().await["by_ticket"], json!({"shop/talk": 0.03}));
     }

@@ -110,6 +110,10 @@ did), the project's state (open goals with their tasks, what waits for you,
 work ready to ship, releases, today's results and spend) and the last 20
 messages. Its last words are its reply, and each tool it used leaves a card.
 
+The one message that is not for the lead is `/login`: the studio logs Claude
+Code in itself (see [Getting started](getting-started.md)) and the lead is not
+woken for it.
+
 One turn runs at a time for each project; a message sent meanwhile is answered
 by the next turn. A turn is capped at $0.50, counts against the project's daily
 limit, and is charged to the project as `<project>/talk`. A reply costs about

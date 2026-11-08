@@ -23,17 +23,47 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use studio_core::ids::{ProjectId, TicketId};
 use studio_core::ticket::Ticket;
-use studio_runtime::RunEvent;
+use studio_runtime::{LoginCommand, RunEvent};
 use studio_store::SpendKind;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
 /// The most a lead's turn may cost, in dollars.
 pub(crate) const TALK_USD: f64 = 0.50;
 
 /// The most turns of its own model a lead's turn may take.
 const TALK_TURNS: u32 = 12;
+
+/// What to do when Claude Code isn't logged in.
+const LOGIN_STEP: &str = "Type /login here to log in";
+
+/// What to do when the studio can't log in for you.
+const HAND_OFF: &str = "Open a terminal, run `claude`, and type /login there.";
+
+/// How long a login may wait for the owner to sign in.
+const LOGIN_WAIT: Duration = Duration::from_secs(600);
+
+/// Sends each line `from` prints to `to`.
+async fn forward(from: impl AsyncRead + Unpin, to: mpsc::UnboundedSender<String>) {
+    let mut lines = BufReader::new(from).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if to.send(line).is_err() {
+            return;
+        }
+    }
+}
+
+/// The first web link in a line of a command's output.
+fn link_in(line: &str) -> Option<&str> {
+    line.split_whitespace()
+        .find(|word| word.starts_with("https://") || word.starts_with("http://"))
+}
 
 /// What a project that has no lead is told, with where to give it one: its
 /// conversation in the web UI, or the CLI.
@@ -58,6 +88,8 @@ pub(super) struct State {
     turns: Mutex<HashMap<String, Turns>>,
     /// Held while the list of goals a lead started is read or changed.
     goals: Mutex<()>,
+    /// A login is running.
+    logging_in: Mutex<bool>,
 }
 
 /// One project's turns.
@@ -88,9 +120,113 @@ impl Studio {
         if self.lead_of(project).is_none() {
             return Err(other(no_lead(project)));
         }
+        if text == "/login" {
+            return self.login(project).map(Response::ok);
+        }
         let message = self.post(project, TalkFrom::Owner, text, None)?;
         self.wake_lead(project);
         Ok(Response::ok(message))
+    }
+
+    /// `/login` in a conversation: the studio logs in the lead's runtime
+    /// itself, and the lead never sees the message. Answers the studio's reply;
+    /// the rest of the login is told in the conversation as it goes.
+    fn login(self: &Arc<Self>, project: &str) -> Result<TalkMessage, StudioError> {
+        let command = self
+            .lead_of(project)
+            .and_then(|lead| self.runtime(&lead.runtime).ok())
+            .and_then(|runtime| runtime.login_command());
+        let Some(command) = command else {
+            return self.post(
+                project,
+                TalkFrom::Studio,
+                &format!("You asked to log in, but this can't be done from here. {HAND_OFF}"),
+                None,
+            );
+        };
+        {
+            let mut running = lock(&self.talk_state.logging_in);
+            if *running {
+                drop(running);
+                return self.post(
+                    project,
+                    TalkFrom::Studio,
+                    "A login is already running. Finish it in the browser, or wait for it to end.",
+                    None,
+                );
+            }
+            *running = true;
+        }
+        let said = self.post(
+            project,
+            TalkFrom::Studio,
+            "You asked to log in. The login page is opening in your browser.",
+            None,
+        );
+        let studio = Arc::clone(self);
+        let project = project.to_string();
+        tokio::spawn(async move {
+            let ended = studio.run_login(&project, &command).await;
+            *lock(&studio.talk_state.logging_in) = false;
+            match ended {
+                Ok(()) => studio.logged_in(&project),
+                Err(why) => studio.say(&project, &format!("Logging in failed: {why} {HAND_OFF}")),
+            }
+        });
+        said
+    }
+
+    /// Runs the login command, posting the link it prints. Fails with why.
+    async fn run_login(&self, project: &str, command: &LoginCommand) -> Result<(), String> {
+        let mut child = Command::new(&command.program)
+            .args(&command.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("the command couldn't start ({e})."))?;
+        let (lines, mut printed) = mpsc::unbounded_channel();
+        if let Some(stdout) = child.stdout.take() {
+            tokio::spawn(forward(stdout, lines.clone()));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(forward(stderr, lines));
+        }
+        let mut linked = false;
+        let watch = async {
+            while let Some(line) = printed.recv().await {
+                if let (false, Some(link)) = (linked, link_in(&line)) {
+                    linked = true;
+                    self.say(
+                        project,
+                        &format!("If the browser didn't open, open this link: {link}"),
+                    );
+                }
+            }
+            child.wait().await
+        };
+        match tokio::time::timeout(LOGIN_WAIT, watch).await {
+            Ok(Ok(status)) if status.success() => Ok(()),
+            Ok(Ok(_)) => Err("the sign-in didn't finish.".to_string()),
+            Ok(Err(e)) => Err(format!("the command broke off ({e}).")),
+            Err(_) => Err("nobody signed in in time.".to_string()),
+        }
+    }
+
+    /// The login worked: says so, resumes the tasks that waited for it and
+    /// wakes the lead if the owner is waiting for an answer.
+    fn logged_in(self: &Arc<Self>, project: &str) {
+        self.say(project, "Logged in.");
+        if let Err(e) = self.resume_auth_held() {
+            eprintln!("talk: {project}: {e}");
+        }
+        let answered = lock(&self.talk_state.turns)
+            .get(project)
+            .and_then(|turns| turns.answered);
+        if !self.unanswered(project, answered).is_empty() {
+            self.wake_lead(project);
+        }
     }
 
     /// `Request::Conversation`: the messages of the project's conversation,
@@ -253,9 +389,29 @@ impl Studio {
             // What it did is on the cards.
             Ok(_) if acted > 0 => {}
             Ok(_) => self.say(project, &format!("{} had nothing to say.", named(&lead))),
-            Err(why) => self.say(project, &sentence(&why)),
+            Err(why) if why.login => self.say(
+                project,
+                &format!(
+                    "{} can't answer: Claude Code isn't logged in on this computer. {LOGIN_STEP}, \
+                     then send your message again.",
+                    named(&lead)
+                ),
+            ),
+            Err(why) => self.say(project, &sentence(&why.message)),
         }
         Some(upto)
+    }
+
+    /// Tells the project's conversation that a task is held until Claude Code
+    /// is logged in.
+    pub(crate) fn say_login_needed(&self, project: &str, title: &str) {
+        self.say(
+            project,
+            &format!(
+                "The task \"{title}\" is waiting: Claude Code isn't logged in on this computer. \
+                 {LOGIN_STEP}, then resume the task."
+            ),
+        );
     }
 
     /// A message from the studio itself.
@@ -595,6 +751,8 @@ mod tests {
     use crate::api::{OfficeView, Request};
     use crate::studio::testing::studio;
     use serde_json::json;
+    use studio_core::event::Event;
+    use studio_core::ticket::{HeldReason, TicketState};
     use studio_runtime::{Cost, FakeRuntime, Outcome};
 
     fn lead(hire: &str) -> TalkFrom {
@@ -1206,6 +1364,121 @@ mod tests {
             broken.lines()[1],
             "studio: Nora failed: the model fell over."
         );
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_is_not_logged_in_says_how_to_log_in() {
+        let failed = Outcome::Failed {
+            kind: studio_runtime::FailureKind::Auth,
+            message: "Not logged in · Please run /login".into(),
+        };
+        let shop = shop(FakeRuntime::new(vec![
+            started(),
+            RunEvent::Finished {
+                outcome: failed,
+                session: None,
+                cost: Cost::default(),
+                summary: None,
+            },
+        ]));
+        shop.say("Hello").await;
+        until(|| shop.lines().len() == 2).await;
+        assert_eq!(
+            shop.lines()[1],
+            "studio: Nora can't answer: Claude Code isn't logged in on this computer. \
+             Type /login here to log in, then send your message again."
+        );
+    }
+
+    const HAND_OFF_LINE: &str = "Open a terminal, run `claude`, and type /login there.";
+
+    #[tokio::test]
+    async fn login_is_run_by_the_studio_and_never_reaches_the_lead() {
+        let shop = shop(
+            FakeRuntime::new(answers("Hi."))
+                .with_login_script("echo 'Open https://example.test/oauth to sign in'"),
+        );
+        // A message the lead hasn't answered, and an Auth-held task.
+        shop.studio
+            .post("shop", TalkFrom::Owner, "Any news?", None)
+            .unwrap();
+        let task = shop.task("Paint the sign").await;
+        let id = TicketId::new(&task);
+        shop.studio.append(&id, Event::Claimed).unwrap();
+        shop.studio
+            .append(
+                &id,
+                Event::Held {
+                    reason: HeldReason::Auth,
+                },
+            )
+            .unwrap();
+
+        let said = shop.say(" /login ").await;
+        assert_eq!(said.from, TalkFrom::Studio);
+        until(|| shop.lines().iter().any(|l| l == "nora: Hi.")).await;
+
+        let lines = shop.lines();
+        assert!(lines.iter().any(|l| l.contains("opening in your browser")));
+        assert!(
+            lines.contains(
+                &"studio: If the browser didn't open, open this link: https://example.test/oauth"
+                    .to_string()
+            )
+        );
+        assert!(lines.contains(&"studio: Logged in.".to_string()));
+        // The lead was woken for the earlier message, and never saw /login.
+        let specs = shop.runtime.specs();
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].prompt.contains("Any news?"));
+        assert!(!specs[0].prompt.contains("/login"));
+        assert!(!lines.iter().any(|l| l == "owner: /login"));
+        let ticket = shop.studio.ticket(&id).unwrap();
+        assert!(!matches!(ticket.state, TicketState::Held { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_login_that_fails_hands_off_to_the_terminal() {
+        let shop = shop(FakeRuntime::new(answers("Hi.")).with_login_script("exit 1"));
+        shop.say("/login").await;
+        until(|| shop.lines().len() == 2).await;
+        let lines = shop.lines();
+        assert_eq!(
+            lines[1],
+            format!("studio: Logging in failed: the sign-in didn't finish. {HAND_OFF_LINE}")
+        );
+        assert!(shop.runtime.specs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_runtime_that_cannot_log_in_hands_off_to_the_terminal() {
+        let shop = shop(FakeRuntime::new(answers("Hi.")));
+        let said = shop.say("/login").await;
+        assert_eq!(said.from, TalkFrom::Studio);
+        assert!(said.text.ends_with(HAND_OFF_LINE), "{}", said.text);
+        assert_eq!(shop.lines().len(), 1);
+        assert!(shop.runtime.specs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_second_login_while_one_runs_is_refused() {
+        let shop = shop(FakeRuntime::new(answers("Hi.")).with_login_script("sleep 1"));
+        shop.say("/login").await;
+        let second = shop.say("/login").await;
+        assert!(second.text.starts_with("A login is already running"));
+        until(|| shop.lines().iter().any(|l| l == "studio: Logged in.")).await;
+        // Once it has ended, another may start.
+        let third = shop.say("/login").await;
+        assert!(third.text.contains("opening in your browser"));
+    }
+
+    #[test]
+    fn a_link_is_found_in_a_line_of_output() {
+        assert_eq!(
+            link_in("If it didn't open, visit: https://claude.ai/oauth?x=1 now"),
+            Some("https://claude.ai/oauth?x=1")
+        );
+        assert_eq!(link_in("Opening browser to sign in"), None);
     }
 
     #[tokio::test]

@@ -40,6 +40,11 @@
   hires' own runtimes. Reviews no longer repeat what waits for approval, are
   told which hires can take a task, and autonomy starts at most 3 new goals or
   tasks a day per project. "company" is reserved as a room name.
+- Typing `/login` in a conversation now logs Claude Code in: the studio runs
+  `claude auth login`, posts the sign-in link, then resumes tasks held for the
+  login and answers waiting messages. The lead never sees `/login`.
+- When Claude Code isn't logged in, a lead's conversation and a held task now
+  say plainly to type `/login` instead of showing the raw error.
 
 ## 0.1.0
 

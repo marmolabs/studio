@@ -42,6 +42,14 @@ pub struct Capabilities {
     pub reports_cost: bool,
 }
 
+/// The program that logs a runtime in, which opens the sign-in page in the
+/// owner's browser and keeps the credentials itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginCommand {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnvReport {
     pub installed: bool,
